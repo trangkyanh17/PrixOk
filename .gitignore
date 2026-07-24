@@ -15,3 +15,35 @@ cookies.txt
 downloads/*
 *.session
 __pycache__/
+
+# Local secrets
+config.py
+config.env
+rclone.conf
+rclone.conf.*
+cookies.txt
+*.session
+*.session-journal
+accounts/
+service_accounts/
+
+# Backups and logs
+*.bak
+*.bak-*
+*.bak.*
+*.backup
+*.backup-*
+*.log
+log.txt
+rlog.txt
+
+# Runtime data
+downloads/
+__pycache__/
+*.pyc
+qBittorrent/data/
+qBittorrent/config/lockfile
+qBittorrent/config/rss/
+qBittorrent/config/categories.json
+qBittorrent/config/qBittorrent-data.conf
+qBittorrent/config/watched_folders.json
