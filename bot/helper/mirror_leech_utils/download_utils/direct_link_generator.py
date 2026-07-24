@@ -56,6 +56,8 @@ def direct_link_generator(link):
         return mediafire(link)
     elif "osdn.net" in domain:
         return osdn(link)
+    elif "sourceforge.net" in domain:
+        return sourceforge(link)
     elif "github.com" in domain:
         return github(link)
     elif "transfer.it" in domain:
@@ -226,6 +228,35 @@ def direct_link_generator(link):
     else:
         raise DirectDownloadLinkException(f"No Direct link function found for {link}")
 
+
+def sourceforge(url):
+    """Convert a SourceForge file page into its download endpoint."""
+    parsed = urlparse(url)
+    parts = [part for part in parsed.path.split("/") if part]
+
+    try:
+        projects_index = parts.index("projects")
+        files_index = parts.index("files")
+        project = parts[projects_index + 1]
+        file_parts = parts[files_index + 1:]
+    except (ValueError, IndexError) as error:
+        raise DirectDownloadLinkException(
+            "ERROR: Invalid SourceForge file URL"
+        ) from error
+
+    if file_parts and file_parts[-1].lower() == "download":
+        file_parts.pop()
+
+    if not project or not file_parts:
+        raise DirectDownloadLinkException(
+            "ERROR: SourceForge file path not found"
+        )
+
+    file_path = "/".join(file_parts)
+    return (
+        f"https://downloads.sourceforge.net/project/"
+        f"{project}/{file_path}"
+    )
 
 def get_captcha_token(session, params):
     recaptcha_api = "https://www.google.com/recaptcha/api2"

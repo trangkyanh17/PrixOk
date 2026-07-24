@@ -470,28 +470,40 @@ class Mirror(TaskListener):
                             return
                         elif "No Direct link function found" in e:
                             # MLTB_JD_DEEPDECRYPT_FALLBACK
-                            if jdownloader.is_connected:
-                                LOGGER.info(
-                                    "Không có resolver nội bộ; "
-                                    "chuyển link sang JDownloader deepDecrypt"
-                                )
-                                self.is_jd = True
-                            elif any(
+                            jd_domains = (
+                                "mega.nz",
+                                "mega.co.nz",
+                                "mega.io",
+                                "filecrypt.cc",
+                                "filecrypt.co",
+                                "linkcrypt.ws",
+                                "dl-protect.link",
+                                "protected.to",
+                            )
+
+                            if any(
                                 domain in self.link.lower()
-                                for domain in (
-                                    "mega.nz",
-                                    "mega.co.nz",
-                                    "mega.io",
-                                )
+                                for domain in jd_domains
                             ):
-                                await send_message(
-                                    self.message,
-                                    "Link MEGA cần JDownloader nhưng "
-                                    "JDownloader chưa được kết nối. "
-                                    "Hãy cấu hình JD_EMAIL và JD_PASS.",
+                                if jdownloader.is_connected:
+                                    LOGGER.info(
+                                        "Host cần decrypter; chuyển link "
+                                        "sang JDownloader deepDecrypt"
+                                    )
+                                    self.is_jd = True
+                                else:
+                                    await send_message(
+                                        self.message,
+                                        "Link này cần JDownloader nhưng "
+                                        "JDownloader chưa kết nối.",
+                                    )
+                                    await self.remove_from_same_dir()
+                                    return
+                            else:
+                                LOGGER.info(
+                                    "Không có resolver nội bộ; giữ URL "
+                                    "gốc để aria2 xử lý"
                                 )
-                                await self.remove_from_same_dir()
-                                return
                     except Exception as e:
                         await send_message(self.message, e)
                         await self.remove_from_same_dir()
