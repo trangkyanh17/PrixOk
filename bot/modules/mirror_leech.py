@@ -21,6 +21,7 @@ from ..helper.ext_utils.links_utils import (
     is_gdrive_id,
 )
 from ..helper.listeners.task_listener import TaskListener
+from ..core.jdownloader_booter import jdownloader
 from ..helper.mirror_leech_utils.download_utils.aria2_download import (
     add_aria2_download,
 )
@@ -467,6 +468,30 @@ class Mirror(TaskListener):
                             await send_message(self.message, e)
                             await self.remove_from_same_dir()
                             return
+                        elif "No Direct link function found" in e:
+                            # MLTB_JD_DEEPDECRYPT_FALLBACK
+                            if jdownloader.is_connected:
+                                LOGGER.info(
+                                    "Không có resolver nội bộ; "
+                                    "chuyển link sang JDownloader deepDecrypt"
+                                )
+                                self.is_jd = True
+                            elif any(
+                                domain in self.link.lower()
+                                for domain in (
+                                    "mega.nz",
+                                    "mega.co.nz",
+                                    "mega.io",
+                                )
+                            ):
+                                await send_message(
+                                    self.message,
+                                    "Link MEGA cần JDownloader nhưng "
+                                    "JDownloader chưa được kết nối. "
+                                    "Hãy cấu hình JD_EMAIL và JD_PASS.",
+                                )
+                                await self.remove_from_same_dir()
+                                return
                     except Exception as e:
                         await send_message(self.message, e)
                         await self.remove_from_same_dir()

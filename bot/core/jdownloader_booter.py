@@ -78,14 +78,25 @@ class JDownloader(MyJdApi):
                         f"/JDownloader/{filename}", "/JDownloader/JDownloader.jar"
                     )
                     break
-            await rmtree("/JDownloader/update")
-            await rmtree("/JDownloader/tmp")
+            if await path.exists("/JDownloader/update"):
+                await rmtree("/JDownloader/update")
+            if await path.exists("/JDownloader/tmp"):
+                await rmtree("/JDownloader/tmp")
         cmd = "java -Dsun.jnu.encoding=UTF-8 -Dfile.encoding=UTF-8 -Djava.awt.headless=true -jar /JDownloader/JDownloader.jar"
         self.is_connected = True
-        _, __, code = await cmd_exec(cmd, shell=True)
+        stdout, stderr, code = await cmd_exec(cmd, shell=True)
         self.is_connected = False
+
+        if stdout:
+            LOGGER.info(f"JDownloader output:\n{stdout[-4000:]}")
+        if stderr:
+            LOGGER.error(f"JDownloader error:\n{stderr[-4000:]}")
+
         if code != -9:
-            await self.boot()
+            self.error = f"JDownloader exited with code {code}"
+            LOGGER.error(
+                f"{self.error}. Automatic restart disabled to prevent a loop."
+            )
 
 
 jdownloader = JDownloader()

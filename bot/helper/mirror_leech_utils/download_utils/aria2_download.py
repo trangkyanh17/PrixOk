@@ -15,6 +15,28 @@ from ...telegram_helper.message_utils import send_status_message, send_message
 
 async def add_aria2_download(listener, dpath, header, ratio, seed_time):
     a2c_opt = {"dir": dpath}
+
+    # MLTB_FAST_HTTP_OPTIONS
+    # Tăng số kết nối cho HTTP(S), nhưng không áp dụng cho torrent/magnet.
+    if (
+        isinstance(listener.link, str)
+        and listener.link.startswith(("http://", "https://"))
+    ):
+        a2c_opt.update(
+            {
+                "split": "16",
+                "max-connection-per-server": "16",
+                "min-split-size": "4M",
+                "continue": "true",
+                "max-tries": "20",
+                "retry-wait": "2",
+                "connect-timeout": "20",
+                "timeout": "60",
+                "file-allocation": "none",
+                "http-accept-gzip": "true",
+                "reuse-uri": "true",
+            }
+        )
     if listener.name:
         a2c_opt["out"] = listener.name
     if header:
