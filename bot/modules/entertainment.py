@@ -61,8 +61,8 @@ QUALITY_TABLE = [
     ("Hoàn hảo", 1.70, 8),
 ]
 
-FISH_COOLDOWN = 30
-MINE_COOLDOWN = 45
+FISH_COOLDOWN = 60
+MINE_COOLDOWN = 60
 
 _user_locks: dict[int, Lock] = {}
 
@@ -269,8 +269,8 @@ async def fish(_, message):
         rarity = item["rarity"]
         xp = RARITY_XP[rarity]
         now = time()
-        path = f"inventory.fish.{item['id']}"
 
+        # Cá được quy đổi thành xu ngay lập tức và không lưu vào kho đồ.
         await collection.update_one(
             {"_id": user_id},
             {
@@ -279,34 +279,26 @@ async def fish(_, message):
                     "username": message.from_user.username or "",
                     "updated_at": now,
                     "cooldowns.fish": now,
-                    f"{path}.name": item["name"],
-                    f"{path}.scientific_name": item["scientific_name"],
-                    f"{path}.habitat": item["habitat"],
-                    f"{path}.rarity": rarity,
-                    f"{path}.protected": bool(item["protected"]),
-                    f"{path}.last_value": value,
-                    f"{path}.last_weight": weight,
+                    "last_fish.name": item["name"],
+                    "last_fish.rarity": rarity,
+                    "last_fish.weight": weight,
+                    "last_fish.value": value,
+                    "last_fish.caught_at": now,
                 },
                 "$inc": {
                     "coins": value,
                     "xp": xp,
                     "stats.fish_count": 1,
                     "stats.fish_value": value,
-                    f"{path}.quantity": 1,
-                    f"{path}.total_value": value,
                 },
-                "$max": {
-                    f"{path}.best_value": value,
-                    f"{path}.max_weight": weight,
+                "$unset": {
+                    "inventory.fish": "",
                 },
             },
         )
 
-        action = (
-            "Phát hiện và ghi nhận vào bộ sưu tập"
-            if item["protected"]
-            else "Câu được"
-        )
+        action = "Ghi nhận cá bảo tồn" if item["protected"] else "Câu được"
+        money_label = "Thưởng bảo tồn" if item["protected"] else "Đã bán tự động"
         text = (
             f"🎣 <b>{location}</b>\n\n"
             f"{RARITY_EMOJIS[rarity]} {action}: <b>{escape(item['name'])}</b>\n"
@@ -314,7 +306,7 @@ async def fish(_, message):
             f"✨ Độ hiếm: <b>{RARITY_LABELS[rarity]}</b>\n"
             f"⚖️ Trọng lượng: <b>{_format_decimal(weight)} kg</b>\n"
             f"🏅 Chất lượng: <b>{quality_name}</b>\n"
-            f"💰 Phần thưởng: <b>{_format_number(value)} xu</b>\n"
+            f"💰 {money_label}: <b>{_format_number(value)} xu</b>\n"
             f"⭐ Kinh nghiệm: <b>+{xp} XP</b>"
         )
         await send_message(message, text)
@@ -516,13 +508,13 @@ async def game_inventory(_, message):
     grand_total = 0
 
     if show_fish:
-        fish_items = inventory.get("fish", {})
-        if fish_items:
-            lines, total = _inventory_lines(fish_items, "🎣 Bộ sưu tập cá")
-            sections.append("\n".join(lines))
-            grand_total += total
-        else:
-            sections.append("<b>🎣 Bộ sưu tập cá</b>\nChưa có chiến lợi phẩm.")
+        stats = user.get("stats", {})
+        sections.append(
+            "<b>🎣 Câu cá tự động bán</b>\n"
+            "Cá câu được được đổi thành xu ngay lập tức, không lưu trong kho.\n"
+            f"Số cá đã câu: <b>{_format_number(int(stats.get('fish_count', 0)))}</b>\n"
+            f"Tổng xu đã nhận: <b>{_format_number(int(stats.get('fish_value', 0)))} xu</b>"
+        )
 
     if show_minerals:
         mineral_items = inventory.get("minerals", {})
@@ -540,7 +532,7 @@ async def game_inventory(_, message):
 
     text = (
         "\n\n".join(sections)
-        + f"\n\n📦 Tổng giá trị đã nhận: <b>{_format_number(grand_total)} xu</b>"
+        + f"\n\n📦 Tổng giá trị khoáng sản đang lưu: <b>{_format_number(grand_total)} xu</b>"
     )
     await send_message(message, text)
 
