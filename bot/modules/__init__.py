@@ -34,6 +34,13 @@ from .status import task_status, status_pages
 from .users_settings import get_users_settings, edit_user_settings, send_user_settings
 from .ytdlp import ytdl, ytdl_leech
 from .gallery_dl import gallery_dl, gallery_dl_leech
+from .entertainment import (
+    fish,
+    mine,
+    game_profile,
+    game_inventory,
+    game_top,
+)
 
 __all__ = [
     "send_bot_settings",
@@ -91,4 +98,9 @@ __all__ = [
     "ytdl_leech",
     "gallery_dl",
     "gallery_dl_leech",
+    "fish",
+    "mine",
+    "game_profile",
+    "game_inventory",
+    "game_top",
 ]

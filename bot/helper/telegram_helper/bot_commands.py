@@ -44,3 +44,8 @@ class BotCommands:
     SelectCommand = f"sel{i}"
     RssCommand = f"rss{i}"
     NzbSearchCommand = f"nzbsearch{i}"
+    FishCommand = f"fish{i}"
+    MineCommand = f"mine{i}"
+    GameProfileCommand = [f"profile{i}", f"pf{i}"]
+    InventoryCommand = [f"inventory{i}", f"inv{i}"]
+    GameTopCommand = f"top{i}"

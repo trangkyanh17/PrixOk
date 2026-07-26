@@ -273,6 +273,50 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            fish,
+            filters=command(BotCommands.FishCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            mine,
+            filters=command(BotCommands.MineCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            game_profile,
+            filters=command(
+                BotCommands.GameProfileCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            game_inventory,
+            filters=command(
+                BotCommands.InventoryCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            game_top,
+            filters=command(
+                BotCommands.GameTopCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             torrent_search,
             filters=command(BotCommands.SearchCommand, case_sensitive=True)
             & CustomFilters.authorized,
