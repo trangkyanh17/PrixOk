@@ -1335,7 +1335,7 @@ async def attack_boss(_, message):
                         user_update["$inc"].get("stats.deaths", 0) + 1
                     )
                     retaliation_lines.append(
-                        "💀 Mày đã gục ngã; cần chờ <b>3 phút</b> "
+                        "💀 Mày đã gục ngã; cần chờ <b>1 phút</b> "
                         "để đánh boss tiếp."
                     )
                 else:
