@@ -273,6 +273,320 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            fish,
+            filters=command(BotCommands.FishCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            mine,
+            filters=command(BotCommands.MineCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            game_profile,
+            filters=command(
+                BotCommands.GameProfileCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            game_inventory,
+            filters=command(
+                BotCommands.InventoryCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            game_top,
+            filters=command(
+                BotCommands.GameTopCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            tai_xiu,
+            filters=command(
+                BotCommands.TaiXiuCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            no_hu,
+            filters=command(
+                BotCommands.NoHuCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            dice_bet,
+            filters=command(
+                BotCommands.DiceBetCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            shipper_job,
+            filters=command(
+                BotCommands.ShipperCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            rocket_launch,
+            filters=command(
+                BotCommands.RocketCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            buy_luck_buff,
+            filters=command(
+                BotCommands.LuckShopCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            redeem_code,
+            filters=command(
+                BotCommands.RedeemCodeCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            drop_coins,
+            filters=command(
+                BotCommands.DropCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            pickup_drop,
+            filters=command(
+                BotCommands.PickupCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            pay_coins,
+            filters=command(
+                BotCommands.PayCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            account_stats,
+            filters=command(
+                BotCommands.GameStatsCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            equipment_shop,
+            filters=command(
+                BotCommands.EquipmentShopCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            buy_equipment,
+            filters=command(
+                BotCommands.BuyEquipmentCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            equip_item,
+            filters=command(
+                BotCommands.EquipCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            merge_equipment,
+            filters=command(
+                BotCommands.MergeEquipmentCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            repair_equipment,
+            filters=command(
+                BotCommands.RepairEquipmentCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            summon_boss,
+            filters=command(
+                BotCommands.SummonBossCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            boss_status,
+            filters=command(
+                BotCommands.BossStatusCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            attack_boss,
+            filters=command(
+                BotCommands.AttackBossCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            create_code,
+            filters=command(
+                BotCommands.CreateCodeCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            delete_code,
+            filters=command(
+                BotCommands.DeleteCodeCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            set_coins,
+            filters=command(
+                BotCommands.SetCoinsCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            allow_group,
+            filters=command(
+                BotCommands.AllowGroupCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            delete_group,
+            filters=command(
+                BotCommands.DeleteGroupCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            gift_coins,
+            filters=command(
+                BotCommands.GiftCoinsCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            set_luck,
+            filters=command(
+                BotCommands.LuckyCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            reset_luck,
+            filters=command(
+                BotCommands.UnluckyCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             torrent_search,
             filters=command(BotCommands.SearchCommand, case_sensitive=True)
             & CustomFilters.authorized,
