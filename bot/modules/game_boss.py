@@ -221,6 +221,42 @@ def _find_boss(raw: str):
     return None
 
 
+
+async def _expire_boss_if_needed(bosses, chat_id: int):
+    """Đánh dấu boss hết hạn và trả về trạng thái mới nhất."""
+    now = time()
+
+    boss = await bosses.find_one({"_id": int(chat_id)})
+    if boss is None:
+        return None
+
+    if (
+        boss.get("status") == "active"
+        and float(boss.get("expires_at", 0) or 0) <= now
+    ):
+        updated = await bosses.find_one_and_update(
+            {
+                "_id": int(chat_id),
+                "status": "active",
+                "expires_at": {"$lte": now},
+            },
+            {
+                "$set": {
+                    "status": "expired",
+                    "expired_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
+        if updated is not None:
+            return updated
+
+        return await bosses.find_one({"_id": int(chat_id)})
+
+    return boss
+
+
 def _boss_catalog_text() -> str:
     lines = [
         "👹 <b>Danh sách boss có thể chỉ định</b>",
