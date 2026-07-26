@@ -13,7 +13,7 @@ from pymongo import DESCENDING
 from ..helper.ext_utils.bot_utils import new_task
 from ..helper.ext_utils.db_handler import database
 from ..helper.telegram_helper.message_utils import send_message
-from .game_common import ensure_user
+from .game_common import MAX_PLAYER_LEVEL, ensure_user, player_level
 
 
 RNG = SystemRandom()
@@ -396,15 +396,19 @@ async def game_profile(_, message):
     user = await _get_user(collection, message)
     coins = int(user.get("coins", 0))
     xp = int(user.get("xp", 0))
-    level = xp // 100 + 1
-    progress = xp % 100
+    level = player_level(user)
+    progress_text = (
+        "TỐI ĐA"
+        if level >= MAX_PLAYER_LEVEL
+        else f"{xp % 100}/100 XP"
+    )
     stats = user.get("stats", {})
 
     text = (
         f"👤 <b>Hồ sơ của {escape(_display_name(message))}</b>\n\n"
         f"💰 Số dư: <b>{_format_number(coins)} xu</b>\n"
-        f"⭐ Cấp độ: <b>{level}</b>\n"
-        f"📈 Kinh nghiệm: <b>{progress}/100 XP</b>\n\n"
+        f"⭐ Cấp độ: <b>{level}/{MAX_PLAYER_LEVEL}</b>\n"
+        f"📈 Kinh nghiệm: <b>{progress_text}</b>\n\n"
         f"🎣 Số lần câu: <b>{_format_number(int(stats.get('fish_count', 0)))}</b>\n"
         f"🐟 Tổng thưởng câu cá: "
         f"<b>{_format_number(int(stats.get('fish_value', 0)))} xu</b>\n"
