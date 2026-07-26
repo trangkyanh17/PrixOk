@@ -17,8 +17,14 @@ USER_LOCKS: dict[int, Lock] = {}
 CHAT_LOCKS: dict[int, Lock] = {}
 TRANSFER_LOCK = Lock()
 
-LUCK_BUFF_PRICE = 20_000
-LUCK_BUFF_SECONDS = 86_400
+BUFF_SECONDS = 28_800
+
+LUCK_BUFF_PRICE = 24_000
+XP_BUFF_PRICE = 2_000_000
+ATTACK_BUFF_PRICE = 10_000_000
+DEFENSE_BUFF_PRICE = 10_000_000
+DODGE_BUFF_PRICE = 30_000_000
+LUCK_BUFF_SECONDS = BUFF_SECONDS
 
 STARTING_COINS = 2_000_000
 PLAYER_MAX_HP = 2_000
@@ -35,6 +41,9 @@ BASE_PLAYER_DODGE = 0.01
 DODGE_PER_LEVEL = 0.0005
 MAX_PLAYER_DODGE = 0.35
 HP_PER_LEVEL = 500
+
+BASE_HP_REGEN_PER_SECOND = 20
+HP_REGEN_PER_LEVEL = 30
 
 EQUIPMENT_PART_LABELS = {
     "helmet": "Mũ",
@@ -132,6 +141,29 @@ def player_max_hp_for_level(level: int) -> int:
     return PLAYER_MAX_HP + (capped - 1) * HP_PER_LEVEL
 
 
+def player_hp_regen_for_level(level: int) -> int:
+    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
+    return BASE_HP_REGEN_PER_SECOND + (capped - 1) * HP_REGEN_PER_LEVEL
+
+
+def buff_active(user_doc: dict[str, Any], field: str) -> bool:
+    return float(user_doc.get(field, 0) or 0) > time()
+
+
+def buff_remaining(user_doc: dict[str, Any], field: str) -> int:
+    return max(0, int(float(user_doc.get(field, 0) or 0) - time()))
+
+
+def xp_multiplier(user_doc: dict[str, Any]) -> float:
+    return 2.0 if buff_active(user_doc, "xp_buff_until") else 1.0
+
+
+def capped_xp_gain(user_doc: dict[str, Any], base_xp: int | float) -> int:
+    current_xp = min(MAX_PLAYER_XP, int(user_doc.get("xp", 0) or 0))
+    requested = max(0, int(round(float(base_xp) * xp_multiplier(user_doc))))
+    return max(0, min(MAX_PLAYER_XP, current_xp + requested) - current_xp)
+
+
 def player_attack_for_level(level: int) -> int:
     capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
     return BASE_PLAYER_ATTACK + (capped - 1) * ATTACK_PER_LEVEL
@@ -151,15 +183,24 @@ def player_dodge_for_level(level: int) -> float:
 
 
 def player_attack(user_doc: dict[str, Any]) -> int:
-    return player_attack_for_level(player_level(user_doc))
+    value = player_attack_for_level(player_level(user_doc))
+    return value * 2 if buff_active(user_doc, "attack_buff_until") else value
 
 
 def player_defense(user_doc: dict[str, Any]) -> int:
-    return player_defense_for_level(player_level(user_doc))
+    value = player_defense_for_level(player_level(user_doc))
+    return value * 2 if buff_active(user_doc, "defense_buff_until") else value
 
 
 def player_dodge(user_doc: dict[str, Any]) -> float:
-    return player_dodge_for_level(player_level(user_doc))
+    value = player_dodge_for_level(player_level(user_doc))
+    if buff_active(user_doc, "dodge_buff_until"):
+        return min(MAX_PLAYER_DODGE * 1.5, value * 1.5)
+    return value
+
+
+def player_hp_regen(user_doc: dict[str, Any]) -> int:
+    return player_hp_regen_for_level(player_level(user_doc))
 
 
 def player_hp_state(user_doc: dict[str, Any]) -> tuple[int, int, int]:
@@ -269,7 +310,13 @@ async def ensure_user(collection, user) -> dict[str, Any]:
                 "xp": 0,
                 "hp": PLAYER_MAX_HP,
                 "max_hp": PLAYER_MAX_HP,
+                "hp_regen_at": now,
                 "dead_until": 0,
+                "luck_buff_until": 0,
+                "xp_buff_until": 0,
+                "attack_buff_until": 0,
+                "defense_buff_until": 0,
+                "dodge_buff_until": 0,
                 "equipment_parts": {},
                 "created_at": now,
                 "stats": {
@@ -325,6 +372,50 @@ async def ensure_user(collection, user) -> dict[str, Any]:
         repairs["hp"] = max_hp
     if "dead_until" not in doc:
         repairs["dead_until"] = 0
+
+    for buff_field in (
+        "luck_buff_until",
+        "xp_buff_until",
+        "attack_buff_until",
+        "defense_buff_until",
+        "dodge_buff_until",
+    ):
+        if buff_field not in doc:
+            repairs[buff_field] = 0
+
+    stored_hp = max(
+        0,
+        min(
+            max_hp,
+            int(repairs.get("hp", doc.get("hp", max_hp)) or 0),
+        ),
+    )
+    dead_until = float(
+        repairs.get("dead_until", doc.get("dead_until", 0)) or 0
+    )
+    regen_at_raw = doc.get("hp_regen_at")
+
+    if regen_at_raw is None:
+        repairs["hp_regen_at"] = now
+    elif stored_hp <= 0:
+        if dead_until and dead_until <= now:
+            repairs["hp"] = max_hp
+            repairs["dead_until"] = 0
+            repairs["hp_regen_at"] = now
+        elif float(regen_at_raw or now) < now:
+            repairs["hp_regen_at"] = now
+    elif stored_hp < max_hp:
+        elapsed = max(0, int(now - float(regen_at_raw or now)))
+        if elapsed:
+            healed = min(
+                max_hp,
+                stored_hp + elapsed * player_hp_regen(doc),
+            )
+            repairs["hp"] = healed
+            repairs["hp_regen_at"] = now
+    elif float(regen_at_raw or now) < now:
+        repairs["hp_regen_at"] = now
+
     if not isinstance(doc.get("equipment_parts"), dict):
         repairs["equipment_parts"] = {}
 
@@ -564,8 +655,8 @@ def equipped_set_stats(user_doc: dict[str, Any]) -> dict[str, Any] | None:
 
 def luck_multiplier(user_doc: dict[str, Any]) -> float:
     multiplier = 1.0
-    if float(user_doc.get("luck_buff_until", 0) or 0) > time():
-        multiplier *= 1.25
+    if buff_active(user_doc, "luck_buff_until"):
+        multiplier *= 2.0
     admin_percent = max(
         0.0,
         min(100.0, float(user_doc.get("luck_admin_percent", 0) or 0)),
