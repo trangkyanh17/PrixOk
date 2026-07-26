@@ -13,6 +13,7 @@ from pymongo import DESCENDING
 from ..helper.ext_utils.bot_utils import new_task
 from ..helper.ext_utils.db_handler import database
 from ..helper.telegram_helper.message_utils import send_message
+from .game_common import ensure_user
 
 
 RNG = SystemRandom()
@@ -171,31 +172,7 @@ async def _require_collection(message):
 
 
 async def _get_user(collection, message) -> dict[str, Any]:
-    user_id = message.from_user.id
-    now = time()
-    await collection.update_one(
-        {"_id": user_id},
-        {
-            "$setOnInsert": {
-                "coins": 0,
-                "xp": 0,
-                "created_at": now,
-                "stats": {
-                    "fish_count": 0,
-                    "mine_count": 0,
-                    "fish_value": 0,
-                    "mine_value": 0,
-                },
-            },
-            "$set": {
-                "display_name": _display_name(message),
-                "username": message.from_user.username or "",
-                "updated_at": now,
-            },
-        },
-        upsert=True,
-    )
-    return await collection.find_one({"_id": user_id}) or {}
+    return await ensure_user(collection, message.from_user)
 
 
 def _fish_location(raw: str | None) -> tuple[str, list[dict[str, Any]]]:
