@@ -102,7 +102,10 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.TaiXiuCommand, "[tai|xiu] [xu|all]."),
         _row(BotCommands.NoHuCommand, "[xu|all]."),
         _row(BotCommands.DiceBetCommand, "[1-6] [xu|all]."),
-        _row(BotCommands.LuckShopCommand, "Mua buff may mắn 24 giờ."),
+        _row(
+            BotCommands.LuckShopCommand,
+            "Shop bùa 8 giờ: mayman, exp, tancong, phongthu hoặc nedon.",
+        ),
         _row(BotCommands.RedeemCodeCommand, "[mã] để nhận quà."),
         _row(BotCommands.PayCommand, "[@user|ID] [xu|all]."),
         _row(BotCommands.DropCommand, "[xu|all] để thả rương trong nhóm."),
@@ -135,6 +138,7 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         "Cấp tối đa 500 · Cấp 1: 2.000 HP, 100 tấn công, "
         "200 phòng thủ, 1% né.",
         "Mỗi cấp: +500 HP · +40 tấn công · +50 phòng thủ.",
+        "Hồi HP: 20 HP/s ở cấp 1 · mỗi cấp tăng thêm 30 HP/s.",
         "Bị boss hạ: chờ 1 phút để đánh tiếp.",
     ]
 )

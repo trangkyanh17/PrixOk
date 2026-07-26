@@ -19,6 +19,7 @@ from .game_common import (
     PLAYER_RESPAWN_SECONDS,
     add_coins,
     boss_collection,
+    capped_xp_gain,
     chat_lock,
     effective_set_stats,
     ensure_message_user,
@@ -31,6 +32,7 @@ from .game_common import (
     player_defense_for_level,
     player_dodge,
     player_dodge_for_level,
+    player_hp_regen_for_level,
     player_hp_state,
     player_level,
     player_level_from_xp,
@@ -250,9 +252,9 @@ def _roll_attack_loot(user_doc: dict, boss: dict):
     loot_multiplier = 5 if is_super else 1
 
     old_xp = min(MAX_PLAYER_XP, int(user_doc.get("xp", 0) or 0))
-    requested_xp = (2 + ceil(boss_tier / 2)) * loot_multiplier
-    new_xp = min(MAX_PLAYER_XP, old_xp + requested_xp)
-    xp_gain = max(0, new_xp - old_xp)
+    base_xp = (2 + ceil(boss_tier / 2)) * loot_multiplier
+    xp_gain = capped_xp_gain(user_doc, base_xp)
+    new_xp = min(MAX_PLAYER_XP, old_xp + xp_gain)
     old_level = player_level_from_xp(old_xp)
     new_level = player_level_from_xp(new_xp)
 
@@ -407,7 +409,8 @@ def _roll_attack_loot(user_doc: dict, boss: dict):
             f"❤️ HP tối đa <b>{format_number(new_max_hp)}</b> · "
             f"⚔️ Tấn công <b>{format_number(player_attack_for_level(new_level))}</b> · "
             f"🛡 Phòng thủ <b>{format_number(player_defense_for_level(new_level))}</b> · "
-            f"💨 Né <b>{player_dodge_for_level(new_level) * 100:.2f}%</b>."
+            f"💨 Né <b>{player_dodge_for_level(new_level) * 100:.2f}%</b> · "
+            f"💚 Hồi <b>{format_number(player_hp_regen_for_level(new_level))} HP/s</b>."
         )
 
     inc = {key: value for key, value in inc.items() if value != 0}
@@ -1262,6 +1265,7 @@ async def attack_boss(_, message):
                 "updated_at": now,
                 "hp": hp,
                 "max_hp": max_hp,
+                "hp_regen_at": now,
             },
             "$inc": {
                 "stats.boss_damage": damage,

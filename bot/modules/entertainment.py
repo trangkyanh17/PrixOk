@@ -13,7 +13,12 @@ from pymongo import DESCENDING
 from ..helper.ext_utils.bot_utils import new_task
 from ..helper.ext_utils.db_handler import database
 from ..helper.telegram_helper.message_utils import send_message
-from .game_common import MAX_PLAYER_LEVEL, ensure_user, player_level
+from .game_common import (
+    MAX_PLAYER_LEVEL,
+    capped_xp_gain,
+    ensure_user,
+    player_level,
+)
 
 
 RNG = SystemRandom()
@@ -244,7 +249,7 @@ async def fish(_, message):
             ),
         )
         rarity = item["rarity"]
-        xp = RARITY_XP[rarity]
+        xp = capped_xp_gain(user, RARITY_XP[rarity])
         now = time()
 
         # Cá được quy đổi thành xu ngay lập tức và không lưu vào kho đồ.
@@ -331,7 +336,7 @@ async def mine(_, message):
             ),
         )
         rarity = item["rarity"]
-        xp = RARITY_XP[rarity]
+        xp = capped_xp_gain(user, RARITY_XP[rarity])
         now = time()
         path = f"inventory.minerals.{item['id']}"
 

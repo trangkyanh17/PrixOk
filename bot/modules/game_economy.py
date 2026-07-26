@@ -11,10 +11,16 @@ from ..helper.ext_utils.bot_utils import new_task, update_user_ldata
 from ..helper.ext_utils.db_handler import database
 from ..helper.telegram_helper.message_utils import send_message
 from .game_common import (
+    ATTACK_BUFF_PRICE,
+    BUFF_SECONDS,
+    DEFENSE_BUFF_PRICE,
+    DODGE_BUFF_PRICE,
     LUCK_BUFF_PRICE,
-    LUCK_BUFF_SECONDS,
     TRANSFER_LOCK,
+    XP_BUFF_PRICE,
     add_coins,
+    buff_remaining,
+    capped_xp_gain,
     code_collection,
     display_name,
     drop_collection,
@@ -30,6 +36,7 @@ from .game_common import (
     player_attack,
     player_defense,
     player_dodge,
+    player_hp_regen,
     player_hp_state,
     player_level,
     require_game_collection,
@@ -325,6 +332,7 @@ async def shipper_job(_, message):
         vip = RNG.random() < min(0.30, 0.10 * luck_multiplier(user_doc))
         if vip:
             reward = int(round(reward * 2.5))
+        xp = capped_xp_gain(user_doc, 8 if vip else 4)
 
         now = time()
         await collection.update_one(
@@ -336,7 +344,7 @@ async def shipper_job(_, message):
                 },
                 "$inc": {
                     "coins": reward,
-                    "xp": 8 if vip else 4,
+                    "xp": xp,
                     "stats.shipper_count": 1,
                 },
             },
@@ -348,7 +356,9 @@ async def shipper_job(_, message):
     await send_message(
         message,
         f"🛵 <b>{title}</b>\n\n"
-        f"Hoàn thành chuyến giao hàng và nhận <b>{format_number(reward)} xu</b>.",
+        f"Hoàn thành chuyến giao hàng và nhận "
+        f"<b>{format_number(reward)} xu</b>.\n"
+        f"⭐ Kinh nghiệm: <b>+{xp} XP</b>.",
     )
 
 
@@ -402,6 +412,7 @@ async def rocket_launch(_, message):
             label = "Tên lửa mất tín hiệu"
             xp = 1
 
+        xp = capped_xp_gain(user_doc, xp)
         now = time()
         await collection.update_one(
             {"_id": message.from_user.id},
@@ -424,10 +435,94 @@ async def rocket_launch(_, message):
         if reward
         else "Không nhận được xu."
     )
+    xp_line = f"\n⭐ Kinh nghiệm: <b>+{xp} XP</b>."
     await send_message(
         message,
-        f"🚀 <b>{label}</b>\n\n{reward_line}{luck_line}",
+        f"🚀 <b>{label}</b>\n\n{reward_line}{xp_line}{luck_line}",
     )
+
+
+BUFF_SHOP = {
+    "mayman": {
+        "aliases": {"mayman", "luck", "lucky"},
+        "name": "Bùa x2 May Mắn",
+        "emoji": "🍀",
+        "price": LUCK_BUFF_PRICE,
+        "field": "luck_buff_until",
+        "effect": "Nhân đôi hệ số may mắn",
+    },
+    "exp": {
+        "aliases": {"exp", "xp"},
+        "name": "Bùa x2 EXP",
+        "emoji": "⭐",
+        "price": XP_BUFF_PRICE,
+        "field": "xp_buff_until",
+        "effect": "Nhân đôi EXP nhận được",
+    },
+    "tancong": {
+        "aliases": {"tancong", "attack", "atk"},
+        "name": "Bùa x2 Tấn Công",
+        "emoji": "⚔️",
+        "price": ATTACK_BUFF_PRICE,
+        "field": "attack_buff_until",
+        "effect": "Nhân đôi tấn công cơ bản",
+    },
+    "phongthu": {
+        "aliases": {"phongthu", "defense", "def"},
+        "name": "Bùa x2 Phòng Thủ",
+        "emoji": "🛡",
+        "price": DEFENSE_BUFF_PRICE,
+        "field": "defense_buff_until",
+        "effect": "Nhân đôi phòng thủ cơ bản",
+    },
+    "nedon": {
+        "aliases": {"nedon", "dodge", "ne"},
+        "name": "Bùa x1.5 Né Đòn",
+        "emoji": "💨",
+        "price": DODGE_BUFF_PRICE,
+        "field": "dodge_buff_until",
+        "effect": "Nhân 1,5 tỉ lệ né đòn",
+    },
+}
+
+
+def _find_buff(raw: str):
+    key = raw.strip().lower()
+    for buff_id, item in BUFF_SHOP.items():
+        if key == buff_id or key in item["aliases"]:
+            return buff_id, item
+    return None
+
+
+def _duration_text(seconds: int) -> str:
+    if seconds <= 0:
+        return "Không hoạt động"
+    return f"{seconds // 3600}h {(seconds % 3600) // 60}p"
+
+
+def _buff_shop_text(user_doc: dict) -> str:
+    lines = [
+        "🔮 <b>SHOP BÙA 8 GIỜ</b>",
+        "",
+        "Mua bằng: <code>/shopmayman loại_bùa</code>",
+        "",
+    ]
+    for buff_id, item in BUFF_SHOP.items():
+        remaining = buff_remaining(user_doc, item["field"])
+        lines.append(
+            f"{item['emoji']} <b>{item['name']}</b> — "
+            f"<b>{format_number(item['price'])} xu</b>\n"
+            f"   ID: <code>{buff_id}</code> · {item['effect']}\n"
+            f"   Trạng thái: <b>{_duration_text(remaining)}</b>"
+        )
+    lines.extend(
+        [
+            "",
+            "Mua lại cùng loại sẽ cộng thêm 8 giờ vào thời gian còn lại.",
+            "Có thể kích hoạt nhiều loại bùa cùng lúc.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 @new_task
@@ -436,33 +531,65 @@ async def buy_luck_buff(_, message):
     if collection is None or await require_user(message) is None:
         return
 
+    parts = (message.text or "").split()
     async with user_lock(message.from_user.id):
         user_doc = await ensure_message_user(collection, message)
         if user_doc is None:
             return
-        if await reserve_coins(
-            collection,
-            message.from_user.id,
-            LUCK_BUFF_PRICE,
-        ) is None:
+
+        if len(parts) == 1:
+            await send_message(message, _buff_shop_text(user_doc))
+            return
+
+        if len(parts) != 2:
             await send_message(
                 message,
-                f"❌ Buff x1.25 may mắn giá "
-                f"<b>{format_number(LUCK_BUFF_PRICE)} xu</b>.",
+                "Cách dùng: <code>/shopmayman</code> hoặc "
+                "<code>/shopmayman exp</code>.",
             )
             return
 
-        current_until = float(user_doc.get("luck_buff_until", 0) or 0)
-        new_until = max(time(), current_until) + LUCK_BUFF_SECONDS
+        found = _find_buff(parts[1])
+        if found is None:
+            await send_message(
+                message,
+                "❌ Loại bùa hợp lệ: "
+                "<code>mayman</code>, <code>exp</code>, "
+                "<code>tancong</code>, <code>phongthu</code>, "
+                "<code>nedon</code>.",
+            )
+            return
+
+        _, item = found
+        if await reserve_coins(
+            collection,
+            message.from_user.id,
+            int(item["price"]),
+        ) is None:
+            await send_message(
+                message,
+                f"❌ {item['name']} giá "
+                f"<b>{format_number(item['price'])} xu</b>.",
+            )
+            return
+
+        current_until = float(user_doc.get(item["field"], 0) or 0)
+        new_until = max(time(), current_until) + BUFF_SECONDS
         await collection.update_one(
             {"_id": message.from_user.id},
-            {"$set": {"luck_buff_until": new_until, "updated_at": time()}},
+            {
+                "$set": {
+                    item["field"]: new_until,
+                    "updated_at": time(),
+                }
+            },
         )
 
     await send_message(
         message,
-        f"🍀 Đã mua buff <b>x1.25 may mắn</b> trong 24 giờ với "
-        f"<b>{format_number(LUCK_BUFF_PRICE)} xu</b>.",
+        f"{item['emoji']} Đã mua <b>{item['name']}</b> với "
+        f"<b>{format_number(item['price'])} xu</b>.\n"
+        f"⏱ Hiệu lực được cộng thêm: <b>8 giờ</b>.",
     )
 
 
@@ -724,6 +851,7 @@ async def account_stats(_, message):
     defense = player_defense(user_doc)
     dodge = player_dodge(user_doc)
     hp, max_hp, respawn_remaining = player_hp_state(user_doc)
+    hp_regen = player_hp_regen(user_doc)
     hp_status = (
         f"Đang hồi sinh, còn {respawn_remaining // 60}p "
         f"{respawn_remaining % 60}s"
@@ -731,15 +859,18 @@ async def account_stats(_, message):
         else "Sẵn sàng chiến đấu"
     )
     multiplier = luck_multiplier(user_doc)
-    buff_remaining = max(
-        0,
-        int(float(user_doc.get("luck_buff_until", 0) or 0) - time()),
-    )
+    active_buff_lines = []
+    for item in BUFF_SHOP.values():
+        remaining = buff_remaining(user_doc, item["field"])
+        if remaining:
+            active_buff_lines.append(
+                f"{item['emoji']} {item['name']}: "
+                f"<b>{_duration_text(remaining)}</b>"
+            )
     buff_text = (
-        f"Còn {buff_remaining // 3600}h "
-        f"{(buff_remaining % 3600) // 60}p"
-        if buff_remaining
-        else "Không hoạt động"
+        "\n".join(active_buff_lines)
+        if active_buff_lines
+        else "Không có bùa đang hoạt động"
     )
 
     await send_message(
@@ -752,6 +883,7 @@ async def account_stats(_, message):
         f"🛡 Phòng thủ cơ bản: <b>{format_number(defense)}</b>\n"
         f"💨 Né đòn: <b>{dodge * 100:.2f}%</b>\n"
         f"❤️ HP: <b>{format_number(hp)}/{format_number(max_hp)}</b> — {hp_status}\n"
+        f"💚 Hồi HP: <b>{format_number(hp_regen)} HP/giây</b>\n"
         f"🎮 Ván cược: <b>{played}</b>\n"
         f"✅ Thắng: <b>{won}</b> · "
         f"❌ Thua: <b>{int(stats.get('games_lost', 0))}</b>\n"
@@ -759,7 +891,7 @@ async def account_stats(_, message):
         f"💹 Lãi/lỗ cược: "
         f"<b>{format_number(int(stats.get('bet_profit', 0)))} xu</b>\n"
         f"🍀 Hệ số may mắn: <b>x{multiplier:.2f}</b>\n"
-        f"⏱ Buff 24h: <b>{buff_text}</b>\n\n"
+        f"🔮 <b>Bùa đang hoạt động</b>\n{buff_text}\n\n"
         f"{equipment_summary(user_doc)}\n\n"
         f"👹 Sát thương boss: "
         f"<b>{format_number(int(stats.get('boss_damage', 0)))}</b>\n"
