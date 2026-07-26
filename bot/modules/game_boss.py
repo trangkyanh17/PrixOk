@@ -12,7 +12,11 @@ from pyrogram.enums import ChatType
 from ..helper.ext_utils.bot_utils import new_task
 from ..helper.telegram_helper.message_utils import send_message
 from .game_common import (
+    EQUIPMENT_PART_LABELS,
     EQUIPMENT_SETS,
+    MAX_PLAYER_LEVEL,
+    MAX_PLAYER_XP,
+    PLAYER_RESPAWN_SECONDS,
     add_coins,
     boss_collection,
     chat_lock,
@@ -21,10 +25,19 @@ from .game_common import (
     equipped_set_stats,
     format_number,
     new_set_state,
+    player_attack,
+    player_attack_for_level,
+    player_defense,
+    player_defense_for_level,
+    player_dodge,
+    player_dodge_for_level,
+    player_hp_state,
+    player_level,
+    player_level_from_xp,
+    player_max_hp_for_level,
     require_game_collection,
     require_user,
     reserve_coins,
-    remaining_seconds,
     set_state,
     user_lock,
 )
@@ -34,7 +47,23 @@ RNG = SystemRandom()
 BOSS_RANDOM_SUMMON_COST = 20_000
 BOSS_TARGETED_SUMMON_COST = 70_000
 BOSS_LIFETIME = 1_800
-BOSS_ATTACK_COOLDOWN = 15
+BOSS_ATTACK_COOLDOWN = 0
+
+BOSS_PART_TYPES = ("helmet", "armor", "weapon")
+BOSS_COIN_DROP_BASE_CHANCE = 0.30
+BOSS_COIN_DROP_TIER_CHANCE = 0.015
+BOSS_PART_DROP_BASE_CHANCE = 0.010
+BOSS_PART_DROP_TIER_CHANCE = 0.0018
+BOSS_SET_DROP_BASE_CHANCE = 0.00005
+BOSS_SET_DROP_TIER_CHANCE = 0.00005
+
+SUPER_BOSS_RANDOM_CHANCE = 0.01
+SUPER_BOSS_TARGETED_CHANCE = 0.03
+SUPER_BOSS_STAT_MULTIPLIER = 50
+SUPER_BOSS_REWARD_MULTIPLIER = 20
+SUPER_BOSS_EXECUTION_COST = 50_000_000
+SUPER_BOSS_PAID_REWARD_RATE = 0.05
+BOSS_DEFENSE_SCALE = 5_000
 
 # Hợp nhất luôn tiêu hao set nguyên liệu. Tỉ lệ thành công phụ thuộc chênh lệch tier.
 MERGE_BASE_CHANCE = 65
@@ -192,6 +221,199 @@ BOSS_TEMPLATES = [
 ]
 
 
+def _boss_tier(boss: dict) -> int:
+    boss_id = str(boss.get("boss_id") or boss.get("id") or "")
+    for index, template in enumerate(BOSS_TEMPLATES, start=1):
+        if template["id"] == boss_id:
+            return index
+    stored = int(boss.get("tier", 1) or 1)
+    return max(1, min(len(BOSS_TEMPLATES), stored))
+
+
+def _equipment_set_for_boss(boss_tier: int) -> str:
+    target_tier = max(1, min(7, ceil(int(boss_tier) / 2)))
+    candidates = [
+        set_id
+        for set_id, template in EQUIPMENT_SETS.items()
+        if int(template["tier"]) in {target_tier, max(1, target_tier - 1)}
+    ]
+    weights = [
+        75 if int(EQUIPMENT_SETS[set_id]["tier"]) == target_tier else 25
+        for set_id in candidates
+    ]
+    return RNG.choices(candidates, weights=weights, k=1)[0]
+
+
+def _roll_attack_loot(user_doc: dict, boss: dict):
+    boss_tier = _boss_tier(boss)
+    is_super = bool(boss.get("is_super", False))
+    loot_multiplier = 5 if is_super else 1
+
+    old_xp = min(MAX_PLAYER_XP, int(user_doc.get("xp", 0) or 0))
+    requested_xp = (2 + ceil(boss_tier / 2)) * loot_multiplier
+    new_xp = min(MAX_PLAYER_XP, old_xp + requested_xp)
+    xp_gain = max(0, new_xp - old_xp)
+    old_level = player_level_from_xp(old_xp)
+    new_level = player_level_from_xp(new_xp)
+
+    inc: dict[str, int] = {
+        "stats.boss_hits": 1,
+    }
+    if xp_gain:
+        inc["xp"] = xp_gain
+        inc["stats.boss_xp"] = xp_gain
+
+    set_values: dict[str, object] = {}
+    lines = (
+        [f"⭐ Nhận <b>+{xp_gain} XP</b>."]
+        if xp_gain
+        else ["⭐ Đã đạt cấp tối đa, không nhận thêm XP."]
+    )
+
+    coin_chance = min(
+        0.80 if is_super else 0.55,
+        (
+            BOSS_COIN_DROP_BASE_CHANCE
+            + boss_tier * BOSS_COIN_DROP_TIER_CHANCE
+        )
+        * (2.0 if is_super else 1.0),
+    )
+    if RNG.random() < coin_chance:
+        coin_drop = (
+            RNG.randint(75 * boss_tier, 175 * boss_tier)
+            * loot_multiplier
+        )
+        inc["coins"] = inc.get("coins", 0) + coin_drop
+        inc["stats.boss_coin_drops"] = (
+            inc.get("stats.boss_coin_drops", 0) + coin_drop
+        )
+        lines.append(f"💰 Boss rơi <b>{format_number(coin_drop)} xu</b>.")
+
+    set_id = _equipment_set_for_boss(boss_tier)
+    template = EQUIPMENT_SETS[set_id]
+    owned_sets = user_doc.get("equipment_sets", {})
+    if not isinstance(owned_sets, dict):
+        owned_sets = {}
+
+    full_set_chance = min(
+        0.006 if is_super else 0.0012,
+        (
+            BOSS_SET_DROP_BASE_CHANCE
+            + boss_tier * BOSS_SET_DROP_TIER_CHANCE
+        )
+        * (5.0 if is_super else 1.0),
+    )
+    part_chance = min(
+        0.15 if is_super else 0.04,
+        (
+            BOSS_PART_DROP_BASE_CHANCE
+            + boss_tier * BOSS_PART_DROP_TIER_CHANCE
+        )
+        * (4.0 if is_super else 1.0),
+    )
+
+    if RNG.random() < full_set_chance:
+        if set_id not in owned_sets:
+            set_values[f"equipment_sets.{set_id}"] = new_set_state(set_id)
+            if not user_doc.get("equipped_set"):
+                set_values["equipped_set"] = set_id
+            inc["stats.boss_set_drops"] = (
+                inc.get("stats.boss_set_drops", 0) + 1
+            )
+            lines.append(
+                f"🎁 <b>SIÊU HIẾM:</b> Rơi nguyên "
+                f"<b>{escape(template['name'])}</b>!"
+            )
+        else:
+            salvage = max(5_000, int(template["price"]) // 3)
+            inc["coins"] = inc.get("coins", 0) + salvage
+            inc["stats.boss_coin_drops"] = (
+                inc.get("stats.boss_coin_drops", 0) + salvage
+            )
+            lines.append(
+                f"♻️ Trùng {escape(template['name'])}; quy đổi "
+                f"<b>{format_number(salvage)} xu</b>."
+            )
+    elif RNG.random() < part_chance:
+        part = RNG.choice(BOSS_PART_TYPES)
+        if set_id in owned_sets:
+            salvage = max(1_000, int(template["price"]) // 40)
+            inc["coins"] = inc.get("coins", 0) + salvage
+            inc["stats.boss_coin_drops"] = (
+                inc.get("stats.boss_coin_drops", 0) + salvage
+            )
+            lines.append(
+                f"♻️ Rơi {EQUIPMENT_PART_LABELS[part]} "
+                f"{escape(template['name'])} nhưng đã sở hữu set; "
+                f"đổi <b>{format_number(salvage)} xu</b>."
+            )
+        else:
+            current_parts = user_doc.get("equipment_parts", {})
+            if not isinstance(current_parts, dict):
+                current_parts = {}
+            current_set_parts = current_parts.get(set_id, {})
+            if not isinstance(current_set_parts, dict):
+                current_set_parts = {}
+
+            deltas = {name: 0 for name in BOSS_PART_TYPES}
+            deltas[part] += 1
+            inc["stats.boss_part_drops"] = (
+                inc.get("stats.boss_part_drops", 0) + 1
+            )
+            lines.append(
+                f"🧩 Rơi <b>{EQUIPMENT_PART_LABELS[part]} "
+                f"{escape(template['name'])}</b>."
+            )
+
+            projected = {
+                name: max(
+                    0,
+                    int(current_set_parts.get(name, 0) or 0)
+                    + deltas[name],
+                )
+                for name in BOSS_PART_TYPES
+            }
+            if all(projected[name] >= 1 for name in BOSS_PART_TYPES):
+                for name in BOSS_PART_TYPES:
+                    deltas[name] -= 1
+                set_values[f"equipment_sets.{set_id}"] = new_set_state(set_id)
+                if not user_doc.get("equipped_set"):
+                    set_values["equipped_set"] = set_id
+                inc["stats.boss_set_drops"] = (
+                    inc.get("stats.boss_set_drops", 0) + 1
+                )
+                lines.append(
+                    f"🛠 Đủ Mũ + Giáp + Vũ khí: tự động ghép thành "
+                    f"<b>{escape(template['name'])}</b>."
+                )
+
+            for name, delta in deltas.items():
+                if delta:
+                    path = f"equipment_parts.{set_id}.{name}"
+                    inc[path] = inc.get(path, 0) + delta
+
+    if new_level > old_level:
+        old_max_hp = player_max_hp_for_level(old_level)
+        new_max_hp = player_max_hp_for_level(new_level)
+        hp_gain = new_max_hp - old_max_hp
+        current_hp, _, _ = player_hp_state(user_doc)
+
+        set_values["max_hp"] = new_max_hp
+        if current_hp > 0:
+            set_values["hp"] = min(new_max_hp, current_hp + hp_gain)
+
+        lines.append(
+            f"🆙 Lên cấp <b>{new_level}/{MAX_PLAYER_LEVEL}</b>! "
+            f"❤️ HP tối đa <b>{format_number(new_max_hp)}</b> · "
+            f"⚔️ Tấn công <b>{format_number(player_attack_for_level(new_level))}</b> · "
+            f"🛡 Phòng thủ <b>{format_number(player_defense_for_level(new_level))}</b> · "
+            f"💨 Né <b>{player_dodge_for_level(new_level) * 100:.2f}%</b>."
+        )
+
+    inc = {key: value for key, value in inc.items() if value != 0}
+    return inc, set_values, lines
+
+
 def _select_boss():
     return RNG.choices(
         BOSS_TEMPLATES,
@@ -232,6 +454,7 @@ async def _expire_boss_if_needed(bosses, chat_id: int):
 
     if (
         boss.get("status") == "active"
+        and not bool(boss.get("is_super", False))
         and float(boss.get("expires_at", 0) or 0) <= now
     ):
         updated = await bosses.find_one_and_update(
@@ -270,7 +493,7 @@ def _boss_catalog_text() -> str:
     for index, template in enumerate(BOSS_TEMPLATES, start=1):
         lines.append(
             f"{index}. {template['emoji']} <b>{escape(template['name'])}</b>\n"
-            f"   ID: <code>{template['id']}</code> · "
+            f"   Cấp: <b>{index}</b> · ID: <code>{template['id']}</code> · "
             f"HP {format_number(template['hp'])} · "
             f"thưởng {format_number(template['reward'])} xu"
         )
@@ -755,6 +978,26 @@ async def summon_boss(_, message):
         summon_cost = BOSS_TARGETED_SUMMON_COST
         summon_mode = "Chỉ định"
 
+    super_chance = (
+        SUPER_BOSS_RANDOM_CHANCE
+        if summon_mode == "Ngẫu nhiên"
+        else SUPER_BOSS_TARGETED_CHANCE
+    )
+    is_super = RNG.random() < super_chance
+    boss_tier = _boss_tier(template)
+    stat_multiplier = SUPER_BOSS_STAT_MULTIPLIER if is_super else 1
+    reward_multiplier = SUPER_BOSS_REWARD_MULTIPLIER if is_super else 1
+
+    base_attack_min = 80 + boss_tier * 35
+    base_attack_max = 120 + boss_tier * 55
+    base_defense = 40 + boss_tier * 20
+
+    boss_hp = int(template["hp"]) * stat_multiplier
+    boss_reward = int(template["reward"]) * reward_multiplier
+    boss_attack_min = base_attack_min * stat_multiplier
+    boss_attack_max = base_attack_max * stat_multiplier
+    boss_defense = base_defense * stat_multiplier
+
     if not _group_required(message):
         await send_message(message, "❌ Boss chỉ có thể được gọi trong nhóm.")
         return
@@ -785,11 +1028,16 @@ async def summon_boss(_, message):
         document = {
             "_id": message.chat.id,
             "boss_id": template["id"],
+            "tier": boss_tier,
             "name": template["name"],
             "emoji": template["emoji"],
-            "hp": template["hp"],
-            "max_hp": template["hp"],
-            "reward": template["reward"],
+            "hp": boss_hp,
+            "max_hp": boss_hp,
+            "reward": boss_reward,
+            "attack_min": boss_attack_min,
+            "attack_max": boss_attack_max,
+            "defense": boss_defense,
+            "is_super": is_super,
             "wear_min": template["wear_min"],
             "wear_max": template["wear_max"],
             "status": "active",
@@ -797,7 +1045,7 @@ async def summon_boss(_, message):
             "summon_cost": summon_cost,
             "summoner_id": message.from_user.id,
             "summoned_at": now,
-            "expires_at": now + BOSS_LIFETIME,
+            "expires_at": None if is_super else now + BOSS_LIFETIME,
             "damage": {},
         }
         try:
@@ -810,15 +1058,29 @@ async def summon_boss(_, message):
             await add_coins(collection, message.from_user.id, summon_cost)
             raise
 
+    super_title = " 🌌 <b>SIÊU CẤP</b>" if is_super else ""
+    lifetime_text = "Vĩnh viễn đến khi bị hạ" if is_super else "30 phút"
+    execute_text = (
+        f"\n💳 Dùng <code>/ketlieuboss</code> để trả "
+        f"<b>{format_number(SUPER_BOSS_EXECUTION_COST)} xu</b> kết liễu ngay; "
+        f"chỉ nhận 5% phần thưởng."
+        if is_super
+        else ""
+    )
     await send_message(
         message,
-        f"{template['emoji']} <b>{escape(template['name'])} xuất hiện!</b>\n\n"
+        f"{template['emoji']} <b>{escape(template['name'])} xuất hiện!</b>"
+        f"{super_title}\n\n"
         f"🎯 Kiểu gọi: <b>{summon_mode}</b>\n"
         f"💸 Phí triệu hồi: <b>{format_number(summon_cost)} xu</b>\n"
-        f"❤️ HP: <b>{format_number(template['hp'])}</b>\n"
-        f"💰 Kho thưởng: <b>{format_number(template['reward'])} xu</b>\n"
-        f"⏳ Tồn tại: <b>30 phút</b>\n"
-        f"⚔️ Dùng <code>/danhboss</code> để tấn công.",
+        f"❤️ HP: <b>{format_number(boss_hp)}</b>\n"
+        f"⚔️ Tấn công: <b>{format_number(boss_attack_min)}–"
+        f"{format_number(boss_attack_max)}</b>\n"
+        f"🛡 Phòng thủ: <b>{format_number(boss_defense)}</b>\n"
+        f"💰 Kho thưởng: <b>{format_number(boss_reward)} xu</b>\n"
+        f"⏳ Tồn tại: <b>{lifetime_text}</b>\n"
+        f"⚔️ Dùng <code>/danhboss</code> để tấn công."
+        f"{execute_text}",
     )
 
 
@@ -847,16 +1109,39 @@ async def boss_status(_, message):
         f"{index}. <code>{user_id}</code>: {format_number(value)} sát thương"
         for index, (user_id, value) in enumerate(top, start=1)
     ]
-    remain = max(0, int(float(boss["expires_at"]) - time()))
+    is_super = bool(boss.get("is_super", False))
+    if is_super:
+        lifetime_text = "Vĩnh viễn đến khi bị hạ"
+    else:
+        remain = max(0, int(float(boss["expires_at"]) - time()))
+        lifetime_text = f"{remain // 60} phút {remain % 60} giây"
 
+    super_line = "🌌 <b>Boss siêu cấp x50</b>\n" if is_super else ""
+    execute_line = (
+        f"\n💳 Kết liễu trả phí: <code>/ketlieuboss</code> — "
+        f"{format_number(SUPER_BOSS_EXECUTION_COST)} xu, nhận 5% thưởng."
+        if is_super
+        else ""
+    )
     await send_message(
         message,
         f"{boss['emoji']} <b>{escape(boss['name'])}</b>\n\n"
-        f"❤️ HP: <b>{format_number(max(0, boss['hp']))}/{format_number(boss['max_hp'])}</b>\n"
+        f"{super_line}"
+        f"🏷 Cấp boss: <b>{_boss_tier(boss)}</b>\n"
+        f"❤️ HP: <b>{format_number(max(0, boss['hp']))}/"
+        f"{format_number(boss['max_hp'])}</b>\n"
+        f"⚔️ Tấn công: <b>{format_number(boss.get('attack_min', 0))}–"
+        f"{format_number(boss.get('attack_max', 0))}</b>\n"
+        f"🛡 Phòng thủ: <b>{format_number(boss.get('defense', 0))}</b>\n"
         f"💰 Kho thưởng: <b>{format_number(boss['reward'])} xu</b>\n"
-        f"⏳ Còn: <b>{remain // 60} phút {remain % 60} giây</b>\n"
+        f"⏳ Còn: <b>{lifetime_text}</b>\n"
         f"👥 Người tham chiến: <b>{len(damage)}</b>\n\n"
-        + ("🏅 <b>Top sát thương</b>\n" + "\n".join(top_lines) if top_lines else "Chưa có ai tấn công."),
+        + (
+            "🏅 <b>Top sát thương</b>\n" + "\n".join(top_lines)
+            if top_lines
+            else "Chưa có ai tấn công."
+        )
+        + execute_line,
     )
 
 
@@ -902,33 +1187,63 @@ async def attack_boss(_, message):
         user_doc = await ensure_message_user(collection, message)
         if user_doc is None:
             return
-        remaining = remaining_seconds(user_doc.get("cooldowns", {}).get("boss_attack"), BOSS_ATTACK_COOLDOWN)
-        if remaining:
-            await send_message(message, f"⏳ Chờ <b>{remaining} giây</b> để đánh tiếp.")
-            return
+
+        now = time()
+        hp, max_hp, respawn_remaining = player_hp_state(user_doc)
+        revive_line = ""
+        if hp <= 0:
+            if respawn_remaining > 0:
+                await send_message(
+                    message,
+                    f"💀 Mày đã hết máu. Chờ <b>{respawn_remaining // 60} phút "
+                    f"{respawn_remaining % 60} giây</b> để hồi sinh.",
+                )
+                return
+            hp = max_hp
+            revive_line = (
+                f"✨ Đã hồi sinh với <b>{format_number(max_hp)} HP</b>.\n"
+            )
 
         boss = await _expire_boss_if_needed(bosses, message.chat.id)
         if not boss or boss.get("status") != "active":
             await send_message(message, "Không có boss hoạt động.")
             return
 
-        xp = int(user_doc.get("xp", 0))
-        level = xp // 100 + 1
         gear = equipped_set_stats(user_doc)
         attack_multiplier = gear["attack"] if gear else 1.0
         crit_chance = gear["crit"] if gear else 0.02
-        base_damage = 100 + level * 12
-        damage = int(round(base_damage * attack_multiplier * RNG.uniform(0.85, 1.15)))
+        raw_damage = int(
+            round(
+                player_attack(user_doc)
+                * attack_multiplier
+                * RNG.uniform(0.85, 1.15)
+            )
+        )
         critical = RNG.random() < crit_chance
         if critical:
-            damage = int(round(damage * 2.0))
+            raw_damage = int(round(raw_damage * 2.0))
 
-        now = time()
+        boss_defense = max(0, int(boss.get("defense", 0) or 0))
+        damage = max(
+            1,
+            ceil(
+                raw_damage
+                * BOSS_DEFENSE_SCALE
+                / (BOSS_DEFENSE_SCALE + boss_defense)
+            ),
+        )
+
         updated = await bosses.find_one_and_update(
             {"_id": message.chat.id, "status": "active", "hp": {"$gt": 0}},
             {
-                "$inc": {"hp": -damage, f"damage.{message.from_user.id}": damage},
-                "$set": {"last_hitter": message.from_user.id, "last_attack_at": now},
+                "$inc": {
+                    "hp": -damage,
+                    f"damage.{message.from_user.id}": damage,
+                },
+                "$set": {
+                    "last_hitter": message.from_user.id,
+                    "last_attack_at": now,
+                },
             },
             return_document=ReturnDocument.AFTER,
         )
@@ -936,89 +1251,312 @@ async def attack_boss(_, message):
             await send_message(message, "Boss vừa bị hạ bởi người khác.")
             return
 
-        user_update = {
-            "$set": {"cooldowns.boss_attack": now, "updated_at": now},
-            "$inc": {"stats.boss_damage": damage, "xp": 3},
+        loot_inc, loot_set, loot_lines = _roll_attack_loot(user_doc, updated)
+        if "max_hp" in loot_set:
+            max_hp = int(loot_set["max_hp"])
+        if "hp" in loot_set:
+            hp = int(loot_set["hp"])
+
+        user_update: dict = {
+            "$set": {
+                "updated_at": now,
+                "hp": hp,
+                "max_hp": max_hp,
+            },
+            "$inc": {
+                "stats.boss_damage": damage,
+                **loot_inc,
+            },
         }
-        wear_line = ""
-        if gear is not None:
-            raw_wear = RNG.randint(
-                int(boss.get("wear_min", 10)),
-                int(boss.get("wear_max", 20)),
-            )
-            wear_parts = []
+        user_update["$set"].update(loot_set)
 
-            if gear["armor_active"]:
-                armor_wear = max(
+        retaliation_lines = []
+        wear_lines = []
+
+        # Boss chỉ phản đòn khi còn sống sau cú đánh.
+        if int(updated["hp"]) > 0:
+            dodge = player_dodge(user_doc)
+            if RNG.random() < dodge:
+                retaliation_lines.append(
+                    f"💨 <b>NÉ ĐÒN THÀNH CÔNG!</b> Tỉ lệ né: "
+                    f"<b>{dodge * 100:.2f}%</b>."
+                )
+                user_update["$set"]["dead_until"] = 0
+            else:
+                attack_min = int(
+                    updated.get(
+                        "attack_min",
+                        80 + _boss_tier(updated) * 35,
+                    )
+                )
+                attack_max = int(
+                    updated.get(
+                        "attack_max",
+                        120 + _boss_tier(updated) * 55,
+                    )
+                )
+                raw_player_damage = RNG.randint(attack_min, attack_max)
+                defense = player_defense(user_doc)
+                protection = (
+                    int(gear["protection"])
+                    if gear is not None and gear["armor_active"]
+                    else 0
+                )
+
+                after_defense = (
+                    raw_player_damage
+                    * 1_000
+                    / (1_000 + max(0, defense))
+                )
+                hp_damage = max(
                     1,
-                    ceil(raw_wear * (1.0 - gear["protection"] / 100.0)),
+                    ceil(after_defense * (1.0 - protection / 100.0)),
                 )
-                new_armor_durability = max(
-                    0,
-                    int(gear["armor_durability"]) - armor_wear,
-                )
-                user_update["$set"][
-                    f"equipment_sets.{gear['id']}.armor_durability"
-                ] = new_armor_durability
-                wear_parts.append(
-                    f"🛡 Giáp mất <b>{armor_wear}</b> bền "
-                    f"({format_number(new_armor_durability)}/"
-                    f"{format_number(gear['armor_max_durability'])})"
-                )
-                if new_armor_durability == 0:
-                    wear_parts.append("⚠️ Áo giáp đã hỏng; bảo vệ về 0%")
+                new_hp = max(0, hp - hp_damage)
+                user_update["$set"]["hp"] = new_hp
 
-            if gear["weapon_active"]:
-                weapon_wear = max(1, ceil(raw_wear * 0.45))
-                new_weapon_durability = max(
-                    0,
-                    int(gear["weapon_durability"]) - weapon_wear,
+                retaliation_lines.append(
+                    f"👹 Boss phản đòn <b>{format_number(hp_damage)} sát thương</b>."
                 )
-                user_update["$set"][
-                    f"equipment_sets.{gear['id']}.weapon_durability"
-                ] = new_weapon_durability
-                wear_parts.append(
-                    f"⚔️ Vũ khí mất <b>{weapon_wear}</b> bền "
-                    f"({format_number(new_weapon_durability)}/"
-                    f"{format_number(gear['weapon_max_durability'])})"
+                retaliation_lines.append(
+                    f"🛡 Phòng thủ {format_number(defense)} · "
+                    f"bảo vệ trang bị {protection}%."
                 )
-                if new_weapon_durability == 0:
-                    wear_parts.append("⚠️ Vũ khí đã hỏng; sát thương trở về x1.00")
+                retaliation_lines.append(
+                    f"❤️ HP còn <b>{format_number(new_hp)}/"
+                    f"{format_number(max_hp)}</b>."
+                )
 
-            if wear_parts:
-                wear_line = "\n" + "\n".join(wear_parts)
+                if new_hp <= 0:
+                    user_update["$set"]["dead_until"] = (
+                        now + PLAYER_RESPAWN_SECONDS
+                    )
+                    user_update["$inc"]["stats.deaths"] = (
+                        user_update["$inc"].get("stats.deaths", 0) + 1
+                    )
+                    retaliation_lines.append(
+                        "💀 Mày đã gục ngã; cần chờ <b>3 phút</b> "
+                        "để đánh boss tiếp."
+                    )
+                else:
+                    user_update["$set"]["dead_until"] = 0
 
-        await collection.update_one({"_id": message.from_user.id}, user_update)
+                if gear is not None:
+                    raw_wear = RNG.randint(
+                        int(updated.get("wear_min", 10)),
+                        int(updated.get("wear_max", 20)),
+                    )
+
+                    if gear["armor_active"]:
+                        armor_wear = max(
+                            1,
+                            ceil(raw_wear * (1.0 - protection / 100.0)),
+                        )
+                        new_armor_durability = max(
+                            0,
+                            int(gear["armor_durability"]) - armor_wear,
+                        )
+                        user_update["$set"][
+                            f"equipment_sets.{gear['id']}.armor_durability"
+                        ] = new_armor_durability
+                        wear_lines.append(
+                            f"🛡 Giáp mất <b>{armor_wear}</b> bền "
+                            f"({format_number(new_armor_durability)}/"
+                            f"{format_number(gear['armor_max_durability'])})"
+                        )
+                        if new_armor_durability == 0:
+                            wear_lines.append(
+                                "⚠️ Áo giáp đã hỏng; bảo vệ về 0%."
+                            )
+
+                    if gear["weapon_active"]:
+                        weapon_wear = max(1, ceil(raw_wear * 0.45))
+                        new_weapon_durability = max(
+                            0,
+                            int(gear["weapon_durability"]) - weapon_wear,
+                        )
+                        user_update["$set"][
+                            f"equipment_sets.{gear['id']}.weapon_durability"
+                        ] = new_weapon_durability
+                        wear_lines.append(
+                            f"⚔️ Vũ khí mất <b>{weapon_wear}</b> bền "
+                            f"({format_number(new_weapon_durability)}/"
+                            f"{format_number(gear['weapon_max_durability'])})"
+                        )
+                        if new_weapon_durability == 0:
+                            wear_lines.append(
+                                "⚠️ Vũ khí đã hỏng; sát thương trở về x1.00."
+                            )
+        else:
+            user_update["$set"]["dead_until"] = 0
+
+        await collection.update_one(
+            {"_id": message.from_user.id},
+            user_update,
+        )
+
+    crit_text = " 💥 <b>CHÍ MẠNG</b>" if critical else ""
+    defense_text = (
+        f"🛡 Phòng thủ boss hấp thụ "
+        f"<b>{format_number(max(0, raw_damage - damage))}</b> sát thương."
+        if boss_defense
+        else ""
+    )
+    combat_lines = [
+        revive_line.rstrip(),
+        f"⚔️ Gây <b>{format_number(damage)}</b> sát thương.{crit_text}",
+        defense_text,
+        *loot_lines,
+        *retaliation_lines,
+        *wear_lines,
+    ]
+    combat_text = "\n".join(line for line in combat_lines if line)
 
     if int(updated["hp"]) > 0:
-        crit_text = " 💥 <b>CHÍ MẠNG</b>" if critical else ""
         await send_message(
             message,
-            f"⚔️ Gây <b>{format_number(damage)}</b> sát thương.{crit_text}\n"
-            f"❤️ Boss còn <b>{format_number(updated['hp'])}/{format_number(updated['max_hp'])}</b> HP."
-            f"{wear_line}",
+            combat_text
+            + "\n"
+            + f"❤️ Boss còn <b>{format_number(updated['hp'])}/"
+            f"{format_number(updated['max_hp'])}</b> HP.",
         )
         return
 
     defeated = await bosses.find_one_and_update(
-        {"_id": message.chat.id, "status": "active", "hp": {"$lte": 0}},
-        {"$set": {"status": "defeated", "defeated_at": time(), "hp": 0}},
+        {
+            "_id": message.chat.id,
+            "status": "active",
+            "hp": {"$lte": 0},
+        },
+        {
+            "$set": {
+                "status": "defeated",
+                "defeated_at": time(),
+                "hp": 0,
+            }
+        },
         return_document=ReturnDocument.AFTER,
     )
     if defeated is None:
         return
 
-    rewards = await _distribute_boss_rewards(collection, defeated, message.from_user.id)
+    rewards = await _distribute_boss_rewards(
+        collection,
+        defeated,
+        message.from_user.id,
+    )
     reward_lines = [
         f"{index}. <code>{user_id}</code> — {format_number(reward)} xu · "
         f"{format_number(total_damage)} sát thương"
-        for index, (user_id, reward, total_damage) in enumerate(rewards[:10], start=1)
+        for index, (user_id, reward, total_damage) in enumerate(
+            rewards[:10],
+            start=1,
+        )
     ]
+    super_text = (
+        "\n🌌 Đây là boss siêu cấp: kho thưởng đã được nhân 20."
+        if bool(defeated.get("is_super", False))
+        else ""
+    )
     await send_message(
         message,
-        f"🏆 <b>{escape(defeated['name'])} đã bị tiêu diệt!</b>\n\n"
-        f"Người kết liễu: <b>{escape(message.from_user.first_name or str(message.from_user.id))}</b>\n"
-        f"Kho thưởng: <b>{format_number(defeated['reward'])} xu</b>\n"
-        f"{wear_line}\n\n<b>Phân phối phần thưởng</b>\n"
+        combat_text
+        + "\n\n"
+        + f"🏆 <b>{escape(defeated['name'])} đã bị tiêu diệt!</b>"
+        f"{super_text}\n\n"
+        f"Người kết liễu: "
+        f"<b>{escape(message.from_user.first_name or str(message.from_user.id))}</b>\n"
+        f"Kho thưởng: <b>{format_number(defeated['reward'])} xu</b>\n\n"
+        f"<b>Phân phối phần thưởng</b>\n"
         + "\n".join(reward_lines),
+    )
+
+
+@new_task
+async def execute_super_boss(_, message):
+    collection = await require_game_collection(message)
+    bosses = boss_collection()
+    if collection is None or bosses is None or await require_user(message) is None:
+        return
+    if not _group_required(message):
+        await send_message(message, "❌ Lệnh này chỉ dùng trong nhóm.")
+        return
+
+    async with chat_lock(message.chat.id):
+        boss = await bosses.find_one(
+            {
+                "_id": message.chat.id,
+                "status": "active",
+            }
+        )
+        if not boss:
+            await send_message(message, "❌ Không có boss hoạt động.")
+            return
+        if not bool(boss.get("is_super", False)):
+            await send_message(
+                message,
+                "❌ Chỉ có thể trả phí kết liễu boss siêu cấp.",
+            )
+            return
+
+        await ensure_message_user(collection, message)
+        reserved = await reserve_coins(
+            collection,
+            message.from_user.id,
+            SUPER_BOSS_EXECUTION_COST,
+        )
+        if reserved is None:
+            await send_message(
+                message,
+                f"❌ Cần <b>{format_number(SUPER_BOSS_EXECUTION_COST)} xu</b> "
+                "để kết liễu boss siêu cấp.",
+            )
+            return
+
+        defeated = await bosses.find_one_and_update(
+            {
+                "_id": message.chat.id,
+                "status": "active",
+                "is_super": True,
+            },
+            {
+                "$set": {
+                    "status": "paid_defeated",
+                    "hp": 0,
+                    "paid_defeated_at": time(),
+                    "paid_defeated_by": message.from_user.id,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if defeated is None:
+            await add_coins(
+                collection,
+                message.from_user.id,
+                SUPER_BOSS_EXECUTION_COST,
+            )
+            await send_message(
+                message,
+                "❌ Boss đã bị xử lý trước đó; 50.000.000 xu đã được hoàn lại.",
+            )
+            return
+
+        paid_reward = max(
+            1,
+            int(
+                int(defeated["reward"])
+                * SUPER_BOSS_PAID_REWARD_RATE
+            ),
+        )
+        await add_coins(collection, message.from_user.id, paid_reward)
+
+    await send_message(
+        message,
+        f"💳 <b>{escape(message.from_user.first_name or str(message.from_user.id))}</b> "
+        f"đã trả <b>{format_number(SUPER_BOSS_EXECUTION_COST)} xu</b> "
+        f"để kết liễu ngay {defeated['emoji']} "
+        f"<b>{escape(defeated['name'])}</b>.\n\n"
+        f"🎁 Phần thưởng trả phí: <b>{format_number(paid_reward)} xu</b> "
+        f"(5% kho thưởng siêu cấp).\n"
+        "⚠️ Không phân phối kho thưởng theo sát thương và không rơi trang bị.",
     )

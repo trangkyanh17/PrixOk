@@ -71,6 +71,7 @@ from .game_boss import (
     summon_boss,
     boss_status,
     attack_boss,
+    execute_super_boss,
 )
 
 __all__ = [
@@ -161,4 +162,5 @@ __all__ = [
     "summon_boss",
     "boss_status",
     "attack_boss",
+    "execute_super_boss",
 ]

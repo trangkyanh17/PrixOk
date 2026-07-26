@@ -20,6 +20,28 @@ TRANSFER_LOCK = Lock()
 LUCK_BUFF_PRICE = 20_000
 LUCK_BUFF_SECONDS = 86_400
 
+STARTING_COINS = 2_000_000
+PLAYER_MAX_HP = 2_000
+PLAYER_RESPAWN_SECONDS = 180
+XP_PER_LEVEL = 100
+MAX_PLAYER_LEVEL = 500
+MAX_PLAYER_XP = (MAX_PLAYER_LEVEL - 1) * XP_PER_LEVEL
+
+BASE_PLAYER_ATTACK = 100
+ATTACK_PER_LEVEL = 12
+BASE_PLAYER_DEFENSE = 200
+DEFENSE_PER_LEVEL = 2
+BASE_PLAYER_DODGE = 0.01
+DODGE_PER_LEVEL = 0.0005
+MAX_PLAYER_DODGE = 0.35
+HP_PER_LEVEL = 20
+
+EQUIPMENT_PART_LABELS = {
+    "helmet": "Mũ",
+    "armor": "Giáp",
+    "weapon": "Vũ khí",
+}
+
 # Thứ tự tier được giữ đúng theo yêu cầu: nhôm → đồng → bạc → sắt → vàng
 # → kim cương → graphine. Mỗi người chỉ có một set đang sử dụng.
 EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
@@ -94,6 +116,58 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
         "description": "Tier tối thượng, siêu nhẹ và siêu bền.",
     },
 }
+
+
+def player_level_from_xp(xp: int | float) -> int:
+    raw_level = int(xp) // XP_PER_LEVEL + 1
+    return max(1, min(MAX_PLAYER_LEVEL, raw_level))
+
+
+def player_level(user_doc: dict[str, Any]) -> int:
+    return player_level_from_xp(int(user_doc.get("xp", 0) or 0))
+
+
+def player_max_hp_for_level(level: int) -> int:
+    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
+    return PLAYER_MAX_HP + (capped - 1) * HP_PER_LEVEL
+
+
+def player_attack_for_level(level: int) -> int:
+    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
+    return BASE_PLAYER_ATTACK + (capped - 1) * ATTACK_PER_LEVEL
+
+
+def player_defense_for_level(level: int) -> int:
+    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
+    return BASE_PLAYER_DEFENSE + (capped - 1) * DEFENSE_PER_LEVEL
+
+
+def player_dodge_for_level(level: int) -> float:
+    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
+    return min(
+        MAX_PLAYER_DODGE,
+        BASE_PLAYER_DODGE + (capped - 1) * DODGE_PER_LEVEL,
+    )
+
+
+def player_attack(user_doc: dict[str, Any]) -> int:
+    return player_attack_for_level(player_level(user_doc))
+
+
+def player_defense(user_doc: dict[str, Any]) -> int:
+    return player_defense_for_level(player_level(user_doc))
+
+
+def player_dodge(user_doc: dict[str, Any]) -> float:
+    return player_dodge_for_level(player_level(user_doc))
+
+
+def player_hp_state(user_doc: dict[str, Any]) -> tuple[int, int, int]:
+    max_hp = player_max_hp_for_level(player_level(user_doc))
+    hp = max(0, min(max_hp, int(user_doc.get("hp", max_hp) or 0)))
+    dead_until = float(user_doc.get("dead_until", 0) or 0)
+    respawn_remaining = max(0, int(dead_until - time())) if hp <= 0 else 0
+    return hp, max_hp, respawn_remaining
 
 
 def format_number(value: int | float) -> str:
@@ -191,8 +265,12 @@ async def ensure_user(collection, user) -> dict[str, Any]:
         {"_id": int(user.id)},
         {
             "$setOnInsert": {
-                "coins": 0,
+                "coins": STARTING_COINS,
                 "xp": 0,
+                "hp": PLAYER_MAX_HP,
+                "max_hp": PLAYER_MAX_HP,
+                "dead_until": 0,
+                "equipment_parts": {},
                 "created_at": now,
                 "stats": {
                     "fish_count": 0,
@@ -213,6 +291,12 @@ async def ensure_user(collection, user) -> dict[str, Any]:
                     "equipment_merge_failed": 0,
                     "equipment_armor_repairs": 0,
                     "equipment_weapon_repairs": 0,
+                    "boss_hits": 0,
+                    "boss_xp": 0,
+                    "boss_coin_drops": 0,
+                    "boss_part_drops": 0,
+                    "boss_set_drops": 0,
+                    "deaths": 0,
                 },
                 "equipment_sets": {},
                 "equipped_set": None,
@@ -230,6 +314,35 @@ async def ensure_user(collection, user) -> dict[str, Any]:
     doc = await collection.find_one({"_id": int(user.id)}) or {}
 
     repairs: dict[str, Any] = {}
+
+    max_hp = player_max_hp_for_level(player_level(doc))
+    stored_max_hp = max(1, int(doc.get("max_hp", max_hp) or max_hp))
+    if stored_max_hp != max_hp:
+        repairs["max_hp"] = max_hp
+    if "hp" not in doc:
+        repairs["hp"] = max_hp
+    elif int(doc.get("hp", 0) or 0) > max_hp:
+        repairs["hp"] = max_hp
+    if "dead_until" not in doc:
+        repairs["dead_until"] = 0
+    if not isinstance(doc.get("equipment_parts"), dict):
+        repairs["equipment_parts"] = {}
+
+    stat_defaults = {
+        "boss_hits": 0,
+        "boss_xp": 0,
+        "boss_coin_drops": 0,
+        "boss_part_drops": 0,
+        "boss_set_drops": 0,
+        "deaths": 0,
+    }
+    stats_doc = doc.get("stats")
+    if not isinstance(stats_doc, dict):
+        stats_doc = {}
+    for stat_key, default_value in stat_defaults.items():
+        if stat_key not in stats_doc:
+            repairs[f"stats.{stat_key}"] = default_value
+
     sets = doc.get("equipment_sets")
     if not isinstance(sets, dict):
         repairs["equipment_sets"] = {}
@@ -465,14 +578,46 @@ def luck_retry_chance(user_doc: dict[str, Any]) -> float:
     return min(0.50, max(0.0, luck_multiplier(user_doc) - 1.0) * 0.35)
 
 
+def equipment_parts_summary(user_doc: dict[str, Any]) -> str:
+    parts = user_doc.get("equipment_parts", {})
+    if not isinstance(parts, dict):
+        return "🧩 Mảnh boss: <b>Chưa có</b>"
+
+    lines = []
+    for set_id, template in EQUIPMENT_SETS.items():
+        set_parts = parts.get(set_id, {})
+        if not isinstance(set_parts, dict):
+            continue
+        counts = {
+            part: max(0, int(set_parts.get(part, 0) or 0))
+            for part in EQUIPMENT_PART_LABELS
+        }
+        if not any(counts.values()):
+            continue
+        detail = " · ".join(
+            f"{EQUIPMENT_PART_LABELS[part]} {counts[part]}"
+            for part in EQUIPMENT_PART_LABELS
+        )
+        lines.append(
+            f"<code>{set_id}</code> — <b>{escape(template['name'])}</b>: {detail}"
+        )
+
+    if not lines:
+        return "🧩 Mảnh boss: <b>Chưa có</b>"
+    return "🧩 <b>Mảnh trang bị từ boss</b>\n" + "\n".join(lines)
+
+
 def equipment_summary(user_doc: dict[str, Any]) -> str:
     sets = user_doc.get("equipment_sets", {})
     owned_count = len(sets) if isinstance(sets, dict) else 0
     stats = equipped_set_stats(user_doc)
+    parts_text = equipment_parts_summary(user_doc)
+
     if stats is None:
         return (
             "🧰 Set đang dùng: <b>Chưa trang bị</b>\n"
-            f"📦 Số set sở hữu: <b>{owned_count}</b>"
+            f"📦 Số set sở hữu: <b>{owned_count}</b>\n"
+            f"{parts_text}"
         )
 
     armor_status = "Hoạt động" if stats["armor_active"] else "Hỏng"
@@ -491,7 +636,8 @@ def equipment_summary(user_doc: dict[str, Any]) -> str:
         f"🧬 Cấp hợp nhất: <b>+{stats['merge_level']}</b>\n"
         f"🔩 Đã sửa: giáp <b>{stats['armor_repairs']}</b> · "
         f"vũ khí <b>{stats['weapon_repairs']}</b>\n"
-        f"📦 Số set sở hữu: <b>{owned_count}</b>"
+        f"📦 Số set sở hữu: <b>{owned_count}</b>\n"
+        f"{parts_text}"
     )
 
 

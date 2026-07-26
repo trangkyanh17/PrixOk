@@ -26,6 +26,12 @@ from .game_common import (
     luck_retry_chance,
     parse_coin_amount,
     parse_positive_int,
+    MAX_PLAYER_LEVEL,
+    player_attack,
+    player_defense,
+    player_dodge,
+    player_hp_state,
+    player_level,
     require_game_collection,
     require_user,
     reserve_coins,
@@ -713,7 +719,17 @@ async def account_stats(_, message):
     won = int(stats.get("games_won", 0))
     win_rate = (won / played * 100.0) if played else 0.0
     xp = int(user_doc.get("xp", 0))
-    level = xp // 100 + 1
+    level = player_level(user_doc)
+    attack = player_attack(user_doc)
+    defense = player_defense(user_doc)
+    dodge = player_dodge(user_doc)
+    hp, max_hp, respawn_remaining = player_hp_state(user_doc)
+    hp_status = (
+        f"Đang hồi sinh, còn {respawn_remaining // 60}p "
+        f"{respawn_remaining % 60}s"
+        if respawn_remaining
+        else "Sẵn sàng chiến đấu"
+    )
     multiplier = luck_multiplier(user_doc)
     buff_remaining = max(
         0,
@@ -730,7 +746,12 @@ async def account_stats(_, message):
         message,
         f"📊 <b>Thống kê của {escape(display_name(message))}</b>\n\n"
         f"💰 Số dư: <b>{format_number(int(user_doc.get('coins', 0)))} xu</b>\n"
-        f"⭐ Cấp độ: <b>{level}</b> — {xp % 100}/100 XP\n"
+        f"⭐ Cấp độ: <b>{level}/{MAX_PLAYER_LEVEL}</b> — "
+        f"{'TỐI ĐA' if level >= MAX_PLAYER_LEVEL else f'{xp % 100}/100 XP'}\n"
+        f"⚔️ Tấn công cơ bản: <b>{format_number(attack)}</b>\n"
+        f"🛡 Phòng thủ cơ bản: <b>{format_number(defense)}</b>\n"
+        f"💨 Né đòn: <b>{dodge * 100:.2f}%</b>\n"
+        f"❤️ HP: <b>{format_number(hp)}/{format_number(max_hp)}</b> — {hp_status}\n"
         f"🎮 Ván cược: <b>{played}</b>\n"
         f"✅ Thắng: <b>{won}</b> · "
         f"❌ Thua: <b>{int(stats.get('games_lost', 0))}</b>\n"

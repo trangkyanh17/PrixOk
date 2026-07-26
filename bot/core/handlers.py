@@ -507,6 +507,16 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            execute_super_boss,
+            filters=command(
+                BotCommands.ExecuteBossCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             create_code,
             filters=command(
                 BotCommands.CreateCodeCommand,

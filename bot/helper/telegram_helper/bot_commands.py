@@ -76,3 +76,4 @@ class BotCommands:
     SummonBossCommand = f"goiboss{i}"
     BossStatusCommand = f"boss{i}"
     AttackBossCommand = f"danhboss{i}"
+    ExecuteBossCommand = f"ketlieuboss{i}"
