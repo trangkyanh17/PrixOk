@@ -18,7 +18,11 @@ from .game_common import (
     NORMAL_GAME_REWARD_XP_MULTIPLIER,
     capped_xp_gain,
     ensure_user,
+    game_luck_factor,
+    normal_game_coin_reward,
     player_level,
+    player_level_from_xp,
+    player_xp_progress,
 )
 
 
@@ -112,16 +116,22 @@ def _pick_weighted(options: list[Any], weights: list[float]) -> Any:
     return RNG.choices(options, weights=weights, k=1)[0]
 
 
-def _pick_loot(pool: list[dict[str, Any]]) -> dict[str, Any]:
+def _pick_loot(pool: list[dict[str, Any]], user_doc: dict[str, Any]) -> dict[str, Any]:
     available_rarities = [
         rarity
         for rarity in RARITY_WEIGHTS
         if any(item["rarity"] == rarity for item in pool)
     ]
-    rarity = _pick_weighted(
-        available_rarities,
-        [RARITY_WEIGHTS[value] for value in available_rarities],
-    )
+    luck = game_luck_factor(user_doc)
+    weights = []
+    for rarity in available_rarities:
+        weight = RARITY_WEIGHTS[rarity]
+        if rarity in {"rare", "epic", "legendary", "mythic"}:
+            weight *= luck
+        elif rarity == "uncommon":
+            weight *= 1.0 + (luck - 1.0) * 0.5
+        weights.append(weight)
+    rarity = _pick_weighted(available_rarities, weights)
     candidates = [item for item in pool if item["rarity"] == rarity]
     return RNG.choice(candidates)
 
@@ -133,11 +143,17 @@ def _skewed_value(minimum: float, maximum: float) -> tuple[float, float]:
     return round(value, 3), ratio
 
 
-def _pick_quality() -> tuple[str, float]:
-    name, multiplier, _ = _pick_weighted(
-        QUALITY_TABLE,
-        [row[2] for row in QUALITY_TABLE],
-    )
+def _pick_quality(user_doc: dict[str, Any]) -> tuple[str, float]:
+    luck = game_luck_factor(user_doc)
+    weights = []
+    for name, _, weight in QUALITY_TABLE:
+        adjusted = float(weight)
+        if name == "Hoàn hảo":
+            adjusted *= luck
+        elif name == "Tốt":
+            adjusted *= 1.0 + (luck - 1.0) * 0.75
+        weights.append(adjusted)
+    name, multiplier, _ = _pick_weighted(QUALITY_TABLE, weights)
     return name, multiplier
 
 
@@ -233,12 +249,12 @@ async def fish(_, message):
 
         parts = (message.text or "").split(maxsplit=1)
         location, pool = _fish_location(parts[1] if len(parts) > 1 else None)
-        item = _pick_loot(pool)
+        item = _pick_loot(pool, user)
         weight, size_ratio = _skewed_value(
             float(item["min_weight"]),
             float(item["max_weight"]),
         )
-        quality_name, quality_multiplier = _pick_quality()
+        quality_name, quality_multiplier = _pick_quality(user)
 
         size_multiplier = 0.75 + size_ratio * 1.50
         value = max(
@@ -250,6 +266,7 @@ async def fish(_, message):
             ),
         )
         value *= NORMAL_GAME_REWARD_XP_MULTIPLIER
+        value = normal_game_coin_reward(user, value)
         rarity = item["rarity"]
         xp = capped_xp_gain(
             user,
@@ -323,7 +340,7 @@ async def mine(_, message):
 
         parts = (message.text or "").split(maxsplit=1)
         location, pool = _mine_location(parts[1] if len(parts) > 1 else None)
-        item = _pick_loot(pool)
+        item = _pick_loot(pool, user)
         mass, mass_ratio = _skewed_value(
             float(item["min_mass"]),
             float(item["max_mass"]),
@@ -341,6 +358,7 @@ async def mine(_, message):
             ),
         )
         value *= NORMAL_GAME_REWARD_XP_MULTIPLIER
+        value = normal_game_coin_reward(user, value)
         rarity = item["rarity"]
         xp = capped_xp_gain(
             user,
@@ -411,10 +429,11 @@ async def game_profile(_, message):
     coins = int(user.get("coins", 0))
     xp = int(user.get("xp", 0))
     level = player_level(user)
+    xp_progress, xp_required = player_xp_progress(xp)
     progress_text = (
         "TỐI ĐA"
         if level >= MAX_PLAYER_LEVEL
-        else f"{xp % 100}/100 XP"
+        else f"{xp_progress}/{xp_required} XP"
     )
     stats = user.get("stats", {})
 
@@ -564,7 +583,7 @@ async def game_top(_, message):
         marker = medals[index - 1] if index <= 3 else f"{index}."
         name = escape(str(row.get("display_name") or row["_id"]))
         coins = _format_number(int(row.get("coins", 0)))
-        level = int(row.get("xp", 0)) // 100 + 1
+        level = player_level_from_xp(int(row.get("xp", 0)))
         lines.append(
             f"{marker} <b>{name}</b> — {coins} xu · cấp {level}"
         )

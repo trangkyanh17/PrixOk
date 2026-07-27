@@ -93,11 +93,11 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.MineCommand, "Đào mỏ; thêm metal hoặc nonmetal."),
         _row(BotCommands.ShipperCommand, "Làm nhiệm vụ giao hàng."),
         _row(BotCommands.RocketCommand, "Phóng tên lửa nhận xu và XP."),
-        "4 hoạt động trên nhận x3 xu và x3 XP cơ bản; thưởng boss giữ nguyên.",
+        "4 hoạt động trên nhận x9 xu và x9 XP cơ bản; thưởng boss giữ nguyên.",
         _row(BotCommands.GameProfileCommand, "Xem hồ sơ game."),
         _row(BotCommands.InventoryCommand, "Xem kho; thêm fish hoặc minerals."),
         _row(BotCommands.GameTopCommand, "Xem bảng xếp hạng."),
-        _row(BotCommands.GameStatsCommand, "Xem chỉ số V5/V6 đầy đủ."),
+        _row(BotCommands.GameStatsCommand, "Xem đầy đủ chỉ số nhân vật."),
         "",
         "<b>Cược, may mắn và chuyển xu</b>",
         _row(BotCommands.TaiXiuCommand, "[tai|xiu] [xu|all]."),
@@ -105,7 +105,7 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.DiceBetCommand, "[1-6] [xu|all]."),
         _row(
             BotCommands.LuckShopCommand,
-            "Shop bùa 8 giờ: mayman, exp, tancong, phongthu hoặc nedon.",
+            "Shop bùa 8 giờ: mayman, exp, tien, tancong, phongthu hoặc nedon.",
         ),
         _row(BotCommands.RedeemCodeCommand, "[mã] để nhận quà."),
         _row(BotCommands.PayCommand, "[@user|ID] [xu|all]."),
@@ -136,10 +136,10 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.DeleteGroupCommand, "Gỡ quyền nhóm."),
         "",
         "<b>Chỉ số nhân vật</b>",
-        "Cấp tối đa 500 · Cấp 1: 2.000 HP, 100 tấn công, "
+        "Cấp tối đa 2.000 · Cấp 1: 2.000 HP, 100 tấn công, "
         "200 phòng thủ, 1% né.",
-        "Mỗi cấp: +500 HP · +40 tấn công · +50 phòng thủ.",
-        "Hồi HP: 20 HP/s ở cấp 1 · mỗi cấp tăng thêm 30 HP/s.",
+        "Từ cấp 1.000: mức tăng HP, tấn công, phòng thủ và hồi HP được nhân đôi.",
+        "Từ cấp 1.000: XP cần lên cấp tăng dần; EXP nhận được còn 20%.",
         "Bị boss hạ: chờ 1 phút để đánh tiếp.",
     ]
 )
