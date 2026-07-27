@@ -28,6 +28,8 @@ from .game_common import (
     drop_collection,
     ensure_message_user,
     ensure_user,
+    entertainment_enabled,
+    entertainment_guard,
     equipment_summary,
     format_number,
     luck_multiplier,
@@ -47,6 +49,7 @@ from .game_common import (
     require_game_collection,
     require_user,
     reserve_coins,
+    set_entertainment_enabled,
     resolve_target,
     remaining_seconds,
     user_lock,
@@ -145,6 +148,7 @@ async def _finish_bet(
 
 
 @new_task
+@entertainment_guard
 async def tai_xiu(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -206,6 +210,7 @@ async def tai_xiu(_, message):
 
 
 @new_task
+@entertainment_guard
 async def no_hu(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -255,6 +260,7 @@ async def no_hu(_, message):
 
 
 @new_task
+@entertainment_guard
 async def dice_bet(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -313,6 +319,7 @@ async def dice_bet(_, message):
 
 
 @new_task
+@entertainment_guard
 async def shipper_job(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -376,6 +383,7 @@ async def shipper_job(_, message):
 
 
 @new_task
+@entertainment_guard
 async def rocket_launch(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -552,6 +560,7 @@ def _buff_shop_text(user_doc: dict) -> str:
 
 
 @new_task
+@entertainment_guard
 async def buy_luck_buff(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -620,6 +629,7 @@ async def buy_luck_buff(_, message):
 
 
 @new_task
+@entertainment_guard
 async def redeem_code(_, message):
     collection = await require_game_collection(message)
     codes = code_collection()
@@ -675,6 +685,7 @@ async def redeem_code(_, message):
 
 
 @new_task
+@entertainment_guard
 async def drop_coins(_, message):
     collection = await require_game_collection(message)
     drops = drop_collection()
@@ -738,6 +749,7 @@ async def drop_coins(_, message):
 
 
 @new_task
+@entertainment_guard
 async def pickup_drop(_, message):
     collection = await require_game_collection(message)
     drops = drop_collection()
@@ -792,6 +804,7 @@ async def pickup_drop(_, message):
 
 
 @new_task
+@entertainment_guard
 async def pay_coins(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -859,6 +872,7 @@ async def pay_coins(_, message):
 
 
 @new_task
+@entertainment_guard
 async def account_stats(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -915,7 +929,7 @@ async def account_stats(_, message):
         f"🛡 Phòng thủ cơ bản: <b>{format_number(defense)}</b>\n"
         f"💨 Né đòn: <b>{dodge * 100:.2f}%</b>\n"
         f"❤️ HP: <b>{format_number(hp)}/{format_number(max_hp)}</b> — {hp_status}\n"
-        f"💚 Hồi HP: <b>{format_number(hp_regen)} HP/giây</b>\n"
+        f"💚 Hồi HP: <b>{format_number(hp_regen)} HP/5 giây</b>\n"
         f"🎮 Ván cược: <b>{played}</b>\n"
         f"✅ Thắng: <b>{won}</b> · "
         f"❌ Thua: <b>{int(stats.get('games_lost', 0))}</b>\n"
@@ -931,6 +945,51 @@ async def account_stats(_, message):
         f"🏆 Boss kết liễu: <b>{int(stats.get('boss_kills', 0))}</b>",
     )
 
+
+@new_task
+async def toggle_entertainment(_, message):
+    parts = (message.text or "").split()
+    if len(parts) == 1:
+        enabled = await entertainment_enabled()
+        await send_message(
+            message,
+            "🎮 Khu vực giải trí hiện đang "
+            f"<b>{'BẬT' if enabled else 'TẮT'}</b>.\n"
+            "Dùng <code>/giaitri on</code> hoặc "
+            "<code>/giaitri off</code>.",
+        )
+        return
+
+    if len(parts) != 2:
+        await send_message(
+            message,
+            "Cách dùng: <code>/giaitri on</code>, "
+            "<code>/giaitri off</code> hoặc <code>/giaitri status</code>.",
+        )
+        return
+
+    action = parts[1].strip().lower()
+    if action in {"status", "trangthai", "trạngthái"}:
+        enabled = await entertainment_enabled()
+    elif action in {"on", "bat", "bật", "enable"}:
+        enabled = True
+        await set_entertainment_enabled(True)
+    elif action in {"off", "tat", "tắt", "disable"}:
+        enabled = False
+        await set_entertainment_enabled(False)
+    else:
+        await send_message(
+            message,
+            "❌ Chỉ chấp nhận <code>on</code>, "
+            "<code>off</code> hoặc <code>status</code>.",
+        )
+        return
+
+    await send_message(
+        message,
+        "🎮 Khu vực giải trí đã được đặt thành "
+        f"<b>{'BẬT' if enabled else 'TẮT'}</b>.",
+    )
 
 @new_task
 async def create_code(_, message):

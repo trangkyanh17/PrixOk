@@ -507,12 +507,32 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            training_dummy,
+            filters=command(
+                BotCommands.TrainingDummyCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             execute_super_boss,
             filters=command(
                 BotCommands.ExecuteBossCommand,
                 case_sensitive=True,
             )
             & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            toggle_entertainment,
+            filters=command(
+                BotCommands.EntertainmentToggleCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
         )
     )
     TgClient.bot.add_handler(

@@ -18,6 +18,7 @@ from .game_common import (
     NORMAL_GAME_REWARD_XP_MULTIPLIER,
     capped_xp_gain,
     ensure_user,
+    entertainment_guard,
     game_luck_factor,
     normal_game_coin_reward,
     player_level,
@@ -226,6 +227,7 @@ def _mine_location(raw: str | None) -> tuple[str, list[dict[str, Any]]]:
 
 
 @new_task
+@entertainment_guard
 async def fish(_, message):
     collection = await _require_collection(message)
     if collection is None or message.from_user is None:
@@ -317,6 +319,7 @@ async def fish(_, message):
 
 
 @new_task
+@entertainment_guard
 async def mine(_, message):
     collection = await _require_collection(message)
     if collection is None or message.from_user is None:
@@ -420,6 +423,7 @@ async def mine(_, message):
 
 
 @new_task
+@entertainment_guard
 async def game_profile(_, message):
     collection = await _require_collection(message)
     if collection is None or message.from_user is None:
@@ -488,6 +492,7 @@ def _inventory_lines(
 
 
 @new_task
+@entertainment_guard
 async def game_inventory(_, message):
     collection = await _require_collection(message)
     if collection is None or message.from_user is None:
@@ -552,6 +557,7 @@ async def game_inventory(_, message):
 
 
 @new_task
+@entertainment_guard
 async def game_top(_, message):
     collection = await _require_collection(message)
     if collection is None:
