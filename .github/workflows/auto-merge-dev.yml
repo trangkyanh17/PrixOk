@@ -55,12 +55,12 @@ jobs:
           author="$(jq -r '.user.login' <<<"$pr_json")"
           draft="$(jq -r '.draft' <<<"$pr_json")"
           state="$(jq -r '.state' <<<"$pr_json")"
-          test_merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pr_json")"
+          current_head_sha="$(jq -r '.head.sha // empty' <<<"$pr_json")"
 
           echo "PR #${pr_number}"
           echo "base=${base_ref}, head=${head_ref}, author=${author}"
           echo "workflow head=${RUN_HEAD_SHA}"
-          echo "current test merge=${test_merge_sha}"
+          echo "current PR head=${current_head_sha}"
 
           if [[ "$base_ref" != "main" ]]; then
             echo "Not a PR into main; skipping."
@@ -87,8 +87,8 @@ jobs:
             exit 0
           fi
 
-          if [[ -z "$test_merge_sha" || "$test_merge_sha" != "$RUN_HEAD_SHA" ]]; then
-            echo "CI result is stale because the PR changed after this run; skipping."
+          if [[ -z "$current_head_sha" || "$current_head_sha" != "$RUN_HEAD_SHA" ]]; then
+            echo "CI result is stale because the PR head changed; skipping."
             exit 0
           fi
 
