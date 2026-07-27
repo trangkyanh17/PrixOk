@@ -15,6 +15,7 @@ from ..helper.ext_utils.db_handler import database
 from ..helper.telegram_helper.message_utils import send_message
 from .game_common import (
     MAX_PLAYER_LEVEL,
+    NORMAL_GAME_REWARD_XP_MULTIPLIER,
     capped_xp_gain,
     ensure_user,
     player_level,
@@ -248,8 +249,12 @@ async def fish(_, message):
                 * quality_multiplier
             ),
         )
+        value *= NORMAL_GAME_REWARD_XP_MULTIPLIER
         rarity = item["rarity"]
-        xp = capped_xp_gain(user, RARITY_XP[rarity])
+        xp = capped_xp_gain(
+            user,
+            RARITY_XP[rarity] * NORMAL_GAME_REWARD_XP_MULTIPLIER,
+        )
         now = time()
 
         # Cá được quy đổi thành xu ngay lập tức và không lưu vào kho đồ.
@@ -335,8 +340,12 @@ async def mine(_, message):
                 * purity_multiplier
             ),
         )
+        value *= NORMAL_GAME_REWARD_XP_MULTIPLIER
         rarity = item["rarity"]
-        xp = capped_xp_gain(user, RARITY_XP[rarity])
+        xp = capped_xp_gain(
+            user,
+            RARITY_XP[rarity] * NORMAL_GAME_REWARD_XP_MULTIPLIER,
+        )
         now = time()
         path = f"inventory.minerals.{item['id']}"
 

@@ -93,6 +93,7 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.MineCommand, "Đào mỏ; thêm metal hoặc nonmetal."),
         _row(BotCommands.ShipperCommand, "Làm nhiệm vụ giao hàng."),
         _row(BotCommands.RocketCommand, "Phóng tên lửa nhận xu và XP."),
+        "4 hoạt động trên nhận x3 xu và x3 XP cơ bản; thưởng boss giữ nguyên.",
         _row(BotCommands.GameProfileCommand, "Xem hồ sơ game."),
         _row(BotCommands.InventoryCommand, "Xem kho; thêm fish hoặc minerals."),
         _row(BotCommands.GameTopCommand, "Xem bảng xếp hạng."),

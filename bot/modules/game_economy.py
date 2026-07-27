@@ -33,6 +33,7 @@ from .game_common import (
     parse_coin_amount,
     parse_positive_int,
     MAX_PLAYER_LEVEL,
+    NORMAL_GAME_REWARD_XP_MULTIPLIER,
     player_attack,
     player_defense,
     player_dodge,
@@ -332,7 +333,11 @@ async def shipper_job(_, message):
         vip = RNG.random() < min(0.30, 0.10 * luck_multiplier(user_doc))
         if vip:
             reward = int(round(reward * 2.5))
-        xp = capped_xp_gain(user_doc, 8 if vip else 4)
+        reward *= NORMAL_GAME_REWARD_XP_MULTIPLIER
+        xp = capped_xp_gain(
+            user_doc,
+            (8 if vip else 4) * NORMAL_GAME_REWARD_XP_MULTIPLIER,
+        )
 
         now = time()
         await collection.update_one(
@@ -412,7 +417,11 @@ async def rocket_launch(_, message):
             label = "Tên lửa mất tín hiệu"
             xp = 1
 
-        xp = capped_xp_gain(user_doc, xp)
+        reward *= NORMAL_GAME_REWARD_XP_MULTIPLIER
+        xp = capped_xp_gain(
+            user_doc,
+            xp * NORMAL_GAME_REWARD_XP_MULTIPLIER,
+        )
         now = time()
         await collection.update_one(
             {"_id": message.from_user.id},
