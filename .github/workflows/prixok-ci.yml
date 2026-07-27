@@ -1,0 +1,164 @@
+name: PrixOk CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prixok-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-commits:
+    name: verify-commits
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Verify GitHub commit signatures
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          shas=()
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            mapfile -t shas < <(
+              gh api --paginate \
+                "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/commits?per_page=100" \
+                --jq '.[].sha'
+            )
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+              shas=("$AFTER_SHA")
+            else
+              mapfile -t shas < <(
+                gh api \
+                  "repos/${GITHUB_REPOSITORY}/compare/${BEFORE_SHA}...${AFTER_SHA}" \
+                  --jq '.commits[].sha'
+              )
+            fi
+          else
+            echo "Manual run: no commit range to verify."
+            exit 0
+          fi
+
+          if (( ${#shas[@]} == 0 )); then
+            echo "No commits found."
+            exit 1
+          fi
+
+          failed=0
+
+          for sha in "${shas[@]}"; do
+            verified="$(
+              gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}" \
+                --jq '.commit.verification.verified'
+            )"
+            reason="$(
+              gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}" \
+                --jq '.commit.verification.reason'
+            )"
+
+            echo "${sha}: verified=${verified}, reason=${reason}"
+
+            if [[ "$verified" != "true" ]]; then
+              failed=1
+            fi
+          done
+
+          if (( failed != 0 )); then
+            echo "ERROR: At least one commit does not have a verified signature."
+            exit 1
+          fi
+
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Check patch formatting
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$BASE_SHA" "$HEAD_SHA"
+          elif [[ "$EVENT_NAME" == "push" && -n "$BEFORE_SHA" && ! "$BEFORE_SHA" =~ ^0+$ ]]; then
+            git diff --check "$BEFORE_SHA" "$GITHUB_SHA"
+          else
+            git show --check --format= "$GITHUB_SHA"
+          fi
+
+      - name: Compile Python source
+        run: python -m compileall -q bot scripts tests
+
+      - name: Validate shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            echo "Checking $file"
+            bash -n "$file"
+          done < <(
+            find . \
+              -type f \
+              -name '*.sh' \
+              -not -path './.git/*' \
+              -print0
+          )
+
+      - name: Build production Docker image
+        run: docker build --tag "prixok-ci:${GITHUB_SHA}" .
+
+      - name: Run non-slow tests inside the image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --entrypoint bash \
+            "prixok-ci:${GITHUB_SHA}" \
+            -lc '
+              set -euo pipefail
+              mltbenv/bin/pip install --no-cache-dir -r requirements-dev.txt
+              mltbenv/bin/python -m pytest -m "not slow"
+            '
