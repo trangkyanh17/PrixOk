@@ -71,9 +71,11 @@ from .game_boss import (
     repair_equipment,
     summon_boss,
     boss_status,
-    attack_boss,
-    training_dummy,
     execute_super_boss,
+)
+from .game_auto import (
+    attack_boss_dispatch as attack_boss,
+    training_dummy_dispatch as training_dummy,
 )
 
 __all__ = [

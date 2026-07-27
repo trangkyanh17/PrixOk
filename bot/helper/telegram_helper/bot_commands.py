@@ -76,6 +76,6 @@ class BotCommands:
     RepairEquipmentCommand = f"suachua{i}"
     SummonBossCommand = f"goiboss{i}"
     BossStatusCommand = f"boss{i}"
-    AttackBossCommand = f"danhboss{i}"
-    TrainingDummyCommand = f"bunhin{i}"
+    AttackBossCommand = [f"danhboss{i}", f"autoboss{i}"]
+    TrainingDummyCommand = [f"bunhin{i}", f"autobunhin{i}"]
     ExecuteBossCommand = f"ketlieuboss{i}"

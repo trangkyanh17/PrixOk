@@ -135,10 +135,13 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
             BotCommands.BossStatusCommand,
             "Xem boss; mọi boss xuyên giáp 50%.",
         ),
-        _row(BotCommands.AttackBossCommand, "Tấn công boss; nhận x10 EXP."),
+        _row(
+            BotCommands.AttackBossCommand,
+            "danhboss đánh 1 lần; autoboss on [boss_id] [2-300 giây].",
+        ),
         _row(
             BotCommands.TrainingDummyCommand,
-            "Đánh bù nhìn bất tử liên tục; EXP gấp 2 hoạt động thường.",
+            "bunhin đánh 1 lần; autobunhin on [2-300 giây] để tự luyện.",
         ),
         _row(BotCommands.ExecuteBossCommand, "Kết liễu boss siêu cấp trả phí."),
         "",
