@@ -93,7 +93,6 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.MineCommand, "Đào mỏ; thêm metal hoặc nonmetal."),
         _row(BotCommands.ShipperCommand, "Làm nhiệm vụ giao hàng."),
         _row(BotCommands.RocketCommand, "Phóng tên lửa nhận xu và XP."),
-        "4 hoạt động trên nhận x9 xu và x9 XP cơ bản; thưởng boss giữ nguyên.",
         _row(BotCommands.GameProfileCommand, "Xem hồ sơ game."),
         _row(BotCommands.InventoryCommand, "Xem kho; thêm fish hoặc minerals."),
         _row(BotCommands.GameTopCommand, "Xem bảng xếp hạng."),
@@ -113,16 +112,34 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.PickupCommand, "Reply rương để nhặt."),
         "",
         "<b>Trang bị</b>",
-        _row(BotCommands.EquipmentShopCommand, "Xem cửa hàng set."),
+        "Tân thủ mặc áo phông, quần short và dùng tay không x1; "
+        "không nhận chỉ số trang bị.",
+        _row(BotCommands.EquipmentShopCommand, "Xem cửa hàng set; giá đã nhân 5."),
         _row(BotCommands.BuyEquipmentCommand, "[set_id] để mua set."),
         _row(BotCommands.EquipCommand, "Xem hoặc chọn set đang dùng."),
-        _row(BotCommands.MergeEquipmentCommand, "[set_id] để hợp nhất."),
-        _row(BotCommands.RepairEquipmentCommand, "[giap|vukhi]."),
+        _row(
+            BotCommands.MergeEquipmentCommand,
+            "[set_id] thấp hơn đúng 1 tier; tối đa +10.",
+        ),
+        _row(
+            BotCommands.RepairEquipmentCommand,
+            "[giap|vukhi], phí 1-10 triệu xu; không mất thuộc tính.",
+        ),
         "",
         "<b>Boss</b>",
-        _row(BotCommands.SummonBossCommand, "list, random hoặc boss_id."),
-        _row(BotCommands.BossStatusCommand, "Xem boss đang hoạt động."),
-        _row(BotCommands.AttackBossCommand, "Tấn công boss; delay 0 giây."),
+        _row(
+            BotCommands.SummonBossCommand,
+            "list, random hoặc boss_id; thường x50, siêu cấp x200.",
+        ),
+        _row(
+            BotCommands.BossStatusCommand,
+            "Xem boss; mọi boss xuyên giáp 50%.",
+        ),
+        _row(BotCommands.AttackBossCommand, "Tấn công boss; nhận x10 EXP."),
+        _row(
+            BotCommands.TrainingDummyCommand,
+            "Đánh bù nhìn bất tử liên tục; EXP gấp 2 hoạt động thường.",
+        ),
         _row(BotCommands.ExecuteBossCommand, "Kết liễu boss siêu cấp trả phí."),
         "",
         "<b>Quản trị game [Owner]</b>",
@@ -132,6 +149,10 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.GiftCoinsCommand, "[user] [xu]."),
         _row(BotCommands.LuckyCommand, "[user] [0-100]."),
         _row(BotCommands.UnluckyCommand, "[user]."),
+        _row(
+            BotCommands.EntertainmentToggleCommand,
+            "[on|off|status] bật/tắt toàn bộ khu vực giải trí.",
+        ),
         _row(BotCommands.AllowGroupCommand, "Duyệt nhóm dùng bot."),
         _row(BotCommands.DeleteGroupCommand, "Gỡ quyền nhóm."),
         "",
@@ -140,6 +161,8 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         "200 phòng thủ, 1% né.",
         "Từ cấp 1.000: mức tăng HP, tấn công, phòng thủ và hồi HP được nhân đôi.",
         "Từ cấp 1.000: XP cần lên cấp tăng dần; EXP nhận được còn 20%.",
+        "Hoạt động thường: x5 xu và x5 EXP; boss nhận x10 EXP.",
+        "Hồi máu theo nhịp 5 giây · né tối đa 25% kể cả khi dùng bùa.",
         "Bị boss hạ: chờ 1 phút để đánh tiếp.",
     ]
 )

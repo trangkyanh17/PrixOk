@@ -53,6 +53,7 @@ from .game_economy import (
     pickup_drop,
     pay_coins,
     account_stats,
+    toggle_entertainment,
     create_code,
     delete_code,
     set_coins,
@@ -71,6 +72,7 @@ from .game_boss import (
     summon_boss,
     boss_status,
     attack_boss,
+    training_dummy,
     execute_super_boss,
 )
 
@@ -146,6 +148,7 @@ __all__ = [
     "pickup_drop",
     "pay_coins",
     "account_stats",
+    "toggle_entertainment",
     "create_code",
     "delete_code",
     "set_coins",
@@ -162,5 +165,6 @@ __all__ = [
     "summon_boss",
     "boss_status",
     "attack_boss",
+    "training_dummy",
     "execute_super_boss",
 ]

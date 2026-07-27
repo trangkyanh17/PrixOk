@@ -60,6 +60,7 @@ class BotCommands:
     PickupCommand = f"pickup{i}"
     PayCommand = f"pay{i}"
     GameStatsCommand = f"thongke{i}"
+    EntertainmentToggleCommand = f"giaitri{i}"
     CreateCodeCommand = f"crecode{i}"
     DeleteCodeCommand = f"delcode{i}"
     SetCoinsCommand = f"setcoins{i}"
@@ -76,4 +77,5 @@ class BotCommands:
     SummonBossCommand = f"goiboss{i}"
     BossStatusCommand = f"boss{i}"
     AttackBossCommand = f"danhboss{i}"
+    TrainingDummyCommand = f"bunhin{i}"
     ExecuteBossCommand = f"ketlieuboss{i}"

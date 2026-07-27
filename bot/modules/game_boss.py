@@ -14,6 +14,7 @@ from ..helper.telegram_helper.message_utils import send_message
 from .game_common import (
     EQUIPMENT_PART_LABELS,
     EQUIPMENT_SETS,
+    NORMAL_GAME_REWARD_XP_MULTIPLIER,
     MAX_PLAYER_LEVEL,
     MAX_PLAYER_XP,
     PLAYER_RESPAWN_SECONDS,
@@ -23,6 +24,7 @@ from .game_common import (
     chat_lock,
     effective_set_stats,
     ensure_message_user,
+    entertainment_guard,
     equipped_set_stats,
     format_number,
     new_set_state,
@@ -59,10 +61,17 @@ BOSS_PART_DROP_TIER_CHANCE = 0.0018
 BOSS_SET_DROP_BASE_CHANCE = 0.00005
 BOSS_SET_DROP_TIER_CHANCE = 0.00005
 
-SUPER_BOSS_RANDOM_CHANCE = 0.01
-SUPER_BOSS_TARGETED_CHANCE = 0.03
-SUPER_BOSS_STAT_MULTIPLIER = 50
-SUPER_BOSS_REWARD_MULTIPLIER = 20
+SUPER_BOSS_RANDOM_CHANCE = 0.30
+SUPER_BOSS_TARGETED_CHANCE = 0.30
+SUPER_BOSS_STAT_MULTIPLIER = 200
+NORMAL_BOSS_STAT_MULTIPLIER = 50
+BOSS_ARMOR_PENETRATION = 0.50
+BOSS_XP_MULTIPLIER = 10
+BOSS_WEAR_MIN = 15
+BOSS_WEAR_MAX = 25
+DUMMY_BASE_XP = 5
+DUMMY_ACTIVITY_XP_MULTIPLIER = 2
+MAX_EQUIPMENT_MERGE_LEVEL = 10
 SUPER_BOSS_EXECUTION_COST = 50_000_000
 SUPER_BOSS_PAID_REWARD_RATE = 0.05
 BOSS_DEFENSE_SCALE = 5_000
@@ -76,8 +85,15 @@ MERGE_MAX_CHANCE = 90
 # Mỗi lần sửa mất 4% giới hạn độ bền danh nghĩa; giới hạn không thấp hơn 35%.
 REPAIR_MAX_DURABILITY_LOSS_RATE = 0.04
 REPAIR_MAX_PENALTY_RATE = 0.65
-REPAIR_ARMOR_PROTECTION_LOSS = 1
-REPAIR_WEAPON_ATTACK_LOSS_RATE = 0.015
+REPAIR_COST_BY_TIER = {
+    1: 1_000_000,
+    2: 2_000_000,
+    3: 3_000_000,
+    4: 4_000_000,
+    5: 6_000_000,
+    6: 8_000_000,
+    7: 10_000_000,
+}
 
 BOSS_TEMPLATES = [
     {
@@ -252,7 +268,11 @@ def _roll_attack_loot(user_doc: dict, boss: dict):
     loot_multiplier = 5 if is_super else 1
 
     old_xp = min(MAX_PLAYER_XP, int(user_doc.get("xp", 0) or 0))
-    base_xp = (2 + ceil(boss_tier / 2)) * loot_multiplier
+    base_xp = (
+        (2 + ceil(boss_tier / 2))
+        * loot_multiplier
+        * BOSS_XP_MULTIPLIER
+    )
     xp_gain = capped_xp_gain(user_doc, base_xp)
     new_xp = min(MAX_PLAYER_XP, old_xp + xp_gain)
     old_level = player_level_from_xp(old_xp)
@@ -410,7 +430,7 @@ def _roll_attack_loot(user_doc: dict, boss: dict):
             f"⚔️ Tấn công <b>{format_number(player_attack_for_level(new_level))}</b> · "
             f"🛡 Phòng thủ <b>{format_number(player_defense_for_level(new_level))}</b> · "
             f"💨 Né <b>{player_dodge_for_level(new_level) * 100:.2f}%</b> · "
-            f"💚 Hồi <b>{format_number(player_hp_regen_for_level(new_level))} HP/s</b>."
+            f"💚 Hồi <b>{format_number(player_hp_regen_for_level(new_level))} HP/5s</b>."
         )
 
     inc = {key: value for key, value in inc.items() if value != 0}
@@ -487,6 +507,10 @@ def _boss_catalog_text() -> str:
     lines = [
         "👹 <b>Danh sách boss có thể chỉ định</b>",
         "",
+        "Boss thường: toàn bộ HP, tấn công, phòng thủ và kho thưởng x50.",
+        "Boss siêu cấp: toàn bộ chỉ số x200 · tỉ lệ xuất hiện 30%.",
+        "Mọi boss xuyên 50% phòng thủ và bảo vệ trang bị.",
+        "",
         "Gọi ngẫu nhiên: <code>/goiboss</code> — "
         f"{format_number(BOSS_RANDOM_SUMMON_COST)} xu",
         "Gọi chỉ định: <code>/goiboss boss_id</code> — "
@@ -495,10 +519,14 @@ def _boss_catalog_text() -> str:
     ]
     for index, template in enumerate(BOSS_TEMPLATES, start=1):
         lines.append(
-            f"{index}. {template['emoji']} <b>{escape(template['name'])}</b>\n"
-            f"   Cấp: <b>{index}</b> · ID: <code>{template['id']}</code> · "
-            f"HP {format_number(template['hp'])} · "
-            f"thưởng {format_number(template['reward'])} xu"
+            f"{index}. {template['emoji']} "
+            f"<b>{escape(template['name'])}</b>\n"
+            f"   Cấp: <b>{index}</b> · "
+            f"ID: <code>{template['id']}</code> · "
+            f"HP thường "
+            f"{format_number(int(template['hp']) * NORMAL_BOSS_STAT_MULTIPLIER)} · "
+            f"thưởng thường "
+            f"{format_number(int(template['reward']) * NORMAL_BOSS_STAT_MULTIPLIER)} xu"
         )
     return "\n".join(lines)
 
@@ -512,11 +540,18 @@ def _merge_chance(target_tier: int, donor_tier: int) -> int:
     return max(MERGE_MIN_CHANCE, min(MERGE_MAX_CHANCE, chance))
 
 
+def repair_cost_for_tier(tier: int) -> int:
+    capped = max(1, min(7, int(tier)))
+    return min(10_000_000, REPAIR_COST_BY_TIER[capped])
+
 def _owned_sets_text(user_doc: dict) -> str:
     sets = user_doc.get("equipment_sets", {})
     equipped = user_doc.get("equipped_set")
     if not isinstance(sets, dict) or not sets:
-        return "Chưa sở hữu set nào."
+        return (
+            "Chưa sở hữu set nào.\n"
+            "Tân thủ mặc áo phông, quần short và dùng tay không x1.00."
+        )
 
     lines = []
     for set_id, template in EQUIPMENT_SETS.items():
@@ -524,20 +559,34 @@ def _owned_sets_text(user_doc: dict) -> str:
             continue
         stats = effective_set_stats(user_doc, set_id)
         marker = "✅" if set_id == equipped else "▫️"
+        armor_text = (
+            f"{format_number(stats['armor_durability'])}/"
+            f"{format_number(stats['armor_max_durability'])}"
+            if stats["armor_owned"]
+            else "ĐÃ MẤT"
+        )
+        weapon_text = (
+            f"{format_number(stats['weapon_durability'])}/"
+            f"{format_number(stats['weapon_max_durability'])}"
+            if stats["weapon_owned"]
+            else "ĐÃ MẤT"
+        )
         lines.append(
-            f"{marker} <code>{set_id}</code> — <b>{escape(template['name'])}</b>\n"
-            f"   🛡 Giáp {format_number(stats['armor_durability'])}/"
-            f"{format_number(stats['armor_max_durability'])} · "
-            f"bảo vệ {stats['protection']}% · sửa {stats['armor_repairs']} lần\n"
-            f"   ⚔️ Vũ khí {format_number(stats['weapon_durability'])}/"
-            f"{format_number(stats['weapon_max_durability'])} · "
-            f"tấn công x{stats['attack']:.2f} · sửa {stats['weapon_repairs']} lần\n"
-            f"   🧬 Hợp nhất +{stats['merge_level']}"
+            f"{marker} <code>{set_id}</code> — "
+            f"<b>{escape(template['name'])}</b>\n"
+            f"   🛡 Giáp {armor_text} · "
+            f"bảo vệ {stats['protection']}% · "
+            f"sửa {stats['armor_repairs']} lần\n"
+            f"   ⚔️ Vũ khí {weapon_text} · "
+            f"tấn công x{stats['attack']:.2f} · "
+            f"sửa {stats['weapon_repairs']} lần\n"
+            f"   🧬 Hợp nhất +{stats['merge_level']}/10"
         )
     return "\n".join(lines)
 
 
 @new_task
+@entertainment_guard
 async def equipment_shop(_, message):
     lines = [
         "🛒 <b>Cửa hàng set trang bị</b>",
@@ -564,6 +613,7 @@ async def equipment_shop(_, message):
 
 
 @new_task
+@entertainment_guard
 async def buy_equipment(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -583,11 +633,12 @@ async def buy_equipment(_, message):
         user_doc = await ensure_message_user(collection, message)
         if user_doc is None:
             return
-        sets = user_doc.get("equipment_sets", {})
-        if set_id in sets:
-            await send_message(message, "❌ Mày đang sở hữu set này.")
-            return
-        if await reserve_coins(collection, message.from_user.id, int(item["price"])) is None:
+        replacing = set_id in user_doc.get("equipment_sets", {})
+        if await reserve_coins(
+            collection,
+            message.from_user.id,
+            int(item["price"]),
+        ) is None:
             await send_message(
                 message,
                 f"❌ Cần <b>{format_number(item['price'])} xu</b> để mua.",
@@ -604,14 +655,17 @@ async def buy_equipment(_, message):
             },
         )
 
+    action = "mua mới và thay thế" if replacing else "mua"
     await send_message(
         message,
-        f"✅ Đã mua <b>{escape(item['name'])}</b> với "
-        f"<b>{format_number(item['price'])} xu</b>.",
+        f"✅ Đã {action} <b>{escape(item['name'])}</b> với "
+        f"<b>{format_number(item['price'])} xu</b>.\n"
+        "Giáp và vũ khí được khôi phục về trạng thái mới.",
     )
 
 
 @new_task
+@entertainment_guard
 async def equip_item(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -653,7 +707,7 @@ async def equip_item(_, message):
     if not stats["weapon_active"]:
         broken_parts.append("vũ khí hỏng")
     broken = (
-        " ⚠️ " + ", ".join(broken_parts) + "; dùng /suachua để phục hồi."
+        " ⚠️ " + ", ".join(broken_parts) + "; mua mới hoặc hợp nhất để khôi phục."
         if broken_parts
         else ""
     )
@@ -664,6 +718,7 @@ async def equip_item(_, message):
 
 
 @new_task
+@entertainment_guard
 async def merge_equipment(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -673,7 +728,8 @@ async def merge_equipment(_, message):
         await send_message(
             message,
             "Cách dùng: <code>/hopnhat bac</code>\n"
-            "Set ghi sau lệnh là set nguyên liệu và sẽ bị tiêu hao dù thành công hay thất bại.",
+            "Set nguyên liệu bắt buộc thấp hơn set đang dùng đúng 1 bậc "
+            "và bị tiêu hao dù thành công hay thất bại.",
         )
         return
 
@@ -684,10 +740,16 @@ async def merge_equipment(_, message):
             return
         target_id = user_doc.get("equipped_set")
         if not isinstance(target_id, str):
-            await send_message(message, "❌ Chưa có set đang sử dụng. Dùng /trangbi trước.")
+            await send_message(
+                message,
+                "❌ Chưa có set đang sử dụng. Dùng /trangbi trước.",
+            )
             return
         if donor_id == target_id:
-            await send_message(message, "❌ Không thể hợp nhất set cùng loại hoặc set đang sử dụng.")
+            await send_message(
+                message,
+                "❌ Không thể dùng chính set đang sử dụng làm nguyên liệu.",
+            )
             return
 
         target_template = EQUIPMENT_SETS.get(target_id)
@@ -701,9 +763,29 @@ async def merge_equipment(_, message):
             await send_message(message, "❌ Không sở hữu set nguyên liệu này.")
             return
 
-        chance = _merge_chance(target_template["tier"], donor_template["tier"])
+        target_tier = int(target_template["tier"])
+        donor_tier = int(donor_template["tier"])
+        if donor_tier != target_tier - 1:
+            await send_message(
+                message,
+                "❌ Set nguyên liệu phải thấp hơn set chính đúng "
+                "<b>1 bậc</b>.",
+            )
+            return
+
+        merge_level = max(
+            0,
+            int(target_state.get("merge_level", 0) or 0),
+        )
+        if merge_level >= MAX_EQUIPMENT_MERGE_LEVEL:
+            await send_message(
+                message,
+                "❌ Set này đã đạt cấp hợp nhất tối đa <b>+10</b>.",
+            )
+            return
+
+        chance = _merge_chance(target_tier, donor_tier)
         success = RNG.randint(1, 100) <= chance
-        target_stats = effective_set_stats(user_doc, target_id)
         donor_stats = effective_set_stats(user_doc, donor_id)
         target_base_durability = int(target_template["durability"])
         target_base_protection = int(target_template["protection"])
@@ -712,8 +794,16 @@ async def merge_equipment(_, message):
             "$unset": {f"equipment_sets.{donor_id}": ""},
             "$set": {"updated_at": time()},
             "$inc": {
-                f"equipment_sets.{target_id}.failed_merges" if not success else f"equipment_sets.{target_id}.successful_merges": 1,
-                "stats.equipment_merge_failed" if not success else "stats.equipment_merge_success": 1,
+                (
+                    f"equipment_sets.{target_id}.successful_merges"
+                    if success
+                    else f"equipment_sets.{target_id}.failed_merges"
+                ): 1,
+                (
+                    "stats.equipment_merge_success"
+                    if success
+                    else "stats.equipment_merge_failed"
+                ): 1,
             },
         }
 
@@ -721,75 +811,98 @@ async def merge_equipment(_, message):
         if success:
             max_bonus_cap = target_base_durability * 2
             protection_bonus_cap = target_base_protection
-            old_armor_bonus = int(target_state.get("armor_durability_bonus", 0) or 0)
-            old_weapon_bonus = int(target_state.get("weapon_durability_bonus", 0) or 0)
-            old_protection_bonus = int(target_state.get("protection_bonus", 0) or 0)
+            old_armor_bonus = max(
+                0,
+                int(target_state.get("armor_durability_bonus", 0) or 0),
+            )
+            old_weapon_bonus = max(
+                0,
+                int(target_state.get("weapon_durability_bonus", 0) or 0),
+            )
+            old_protection_bonus = max(
+                0,
+                int(target_state.get("protection_bonus", 0) or 0),
+            )
 
-            requested_armor_gain = max(1, round(donor_stats["armor_nominal_max"] * 0.25))
-            requested_weapon_gain = max(1, round(donor_stats["weapon_nominal_max"] * 0.25))
-            requested_protection_gain = max(1, round(donor_stats["protection"] * 0.12))
-            armor_gain = min(requested_armor_gain, max(0, max_bonus_cap - old_armor_bonus))
-            weapon_gain = min(requested_weapon_gain, max(0, max_bonus_cap - old_weapon_bonus))
+            armor_gain = min(
+                max(
+                    1,
+                    round(int(donor_stats["armor_nominal_max"]) * 0.25),
+                ),
+                max(0, max_bonus_cap - old_armor_bonus),
+            )
+            weapon_gain = min(
+                max(
+                    1,
+                    round(int(donor_stats["weapon_nominal_max"]) * 0.25),
+                ),
+                max(0, max_bonus_cap - old_weapon_bonus),
+            )
             protection_gain = min(
-                requested_protection_gain,
+                max(
+                    1,
+                    round(int(donor_stats["protection"]) * 0.12),
+                ),
                 max(0, protection_bonus_cap - old_protection_bonus),
             )
 
             new_armor_bonus = old_armor_bonus + armor_gain
             new_weapon_bonus = old_weapon_bonus + weapon_gain
             new_protection_bonus = old_protection_bonus + protection_gain
-            armor_nominal_max = target_base_durability + new_armor_bonus
-            weapon_nominal_max = target_base_durability + new_weapon_bonus
-            armor_max = max(
-                1,
-                armor_nominal_max - int(target_state.get("armor_max_penalty", 0) or 0),
-            )
-            weapon_max = max(
-                1,
-                weapon_nominal_max - int(target_state.get("weapon_max_penalty", 0) or 0),
-            )
-            new_armor_current = min(
-                armor_max,
-                int(target_stats["armor_durability"]) + armor_gain,
-            )
-            new_weapon_current = min(
-                weapon_max,
-                int(target_stats["weapon_durability"]) + weapon_gain,
-            )
+            new_armor_max = target_base_durability + new_armor_bonus
+            new_weapon_max = target_base_durability + new_weapon_bonus
 
             update["$set"].update(
                 {
+                    f"equipment_sets.{target_id}.armor_owned": True,
+                    f"equipment_sets.{target_id}.weapon_owned": True,
                     f"equipment_sets.{target_id}.armor_durability_bonus": new_armor_bonus,
                     f"equipment_sets.{target_id}.weapon_durability_bonus": new_weapon_bonus,
                     f"equipment_sets.{target_id}.protection_bonus": new_protection_bonus,
-                    f"equipment_sets.{target_id}.armor_durability": new_armor_current,
-                    f"equipment_sets.{target_id}.weapon_durability": new_weapon_current,
+                    f"equipment_sets.{target_id}.armor_max_penalty": 0,
+                    f"equipment_sets.{target_id}.weapon_max_penalty": 0,
+                    f"equipment_sets.{target_id}.protection_penalty": 0,
+                    f"equipment_sets.{target_id}.attack_penalty": 0.0,
+                    f"equipment_sets.{target_id}.armor_durability": new_armor_max,
+                    f"equipment_sets.{target_id}.weapon_durability": new_weapon_max,
                 }
             )
-            update["$inc"][f"equipment_sets.{target_id}.merge_level"] = 1
+            update["$inc"][
+                f"equipment_sets.{target_id}.merge_level"
+            ] = 1
 
-        await collection.update_one({"_id": message.from_user.id}, update)
+        await collection.update_one(
+            {"_id": message.from_user.id},
+            update,
+        )
 
     if success:
         await send_message(
             message,
             f"🧬 <b>Hợp nhất thành công!</b> Tỉ lệ: <b>{chance}%</b>\n\n"
             f"Set chính: <b>{escape(target_template['name'])}</b>\n"
-            f"Set nguyên liệu đã mất: <b>{escape(donor_template['name'])}</b>\n"
-            f"🛡 Tăng giới hạn bền giáp: <b>+{format_number(armor_gain)}</b>\n"
-            f"⚔️ Tăng giới hạn bền vũ khí: <b>+{format_number(weapon_gain)}</b>\n"
-            f"🛡 Tăng bảo vệ: <b>+{protection_gain} điểm</b>",
+            f"Set nguyên liệu đã mất: "
+            f"<b>{escape(donor_template['name'])}</b>\n"
+            f"🛡 Tăng giới hạn bền giáp: "
+            f"<b>+{format_number(armor_gain)}</b>\n"
+            f"⚔️ Tăng giới hạn bền vũ khí: "
+            f"<b>+{format_number(weapon_gain)}</b>\n"
+            f"🛡 Tăng bảo vệ: <b>+{protection_gain} điểm</b>\n"
+            f"🧬 Cấp hợp nhất: <b>+{merge_level + 1}/10</b>\n"
+            "Giáp và vũ khí được khôi phục đầy đủ; hao mòn vĩnh viễn "
+            "trước đó đã được xóa.",
         )
     else:
         await send_message(
             message,
             f"💥 <b>Hợp nhất thất bại!</b> Tỉ lệ: <b>{chance}%</b>\n\n"
-            f"Set chính không mất chỉ số, nhưng set nguyên liệu "
+            "Set chính không mất chỉ số, nhưng set nguyên liệu "
             f"<b>{escape(donor_template['name'])}</b> đã bị phá hủy.",
         )
 
 
 @new_task
+@entertainment_guard
 async def repair_equipment(_, message):
     collection = await require_game_collection(message)
     if collection is None or await require_user(message) is None:
@@ -801,20 +914,37 @@ async def repair_equipment(_, message):
             "Cách dùng:\n"
             "<code>/suachua giap</code> — sửa áo giáp đang dùng\n"
             "<code>/suachua vukhi</code> — sửa vũ khí đang dùng\n\n"
-            "Mỗi lần sửa phục hồi độ bền hiện tại nhưng làm giảm vĩnh viễn "
-            "giới hạn độ bền và chỉ số tương ứng.",
+            "Phí sửa từ 1.000.000 đến 10.000.000 xu theo tier. "
+            "Sửa không làm mất thuộc tính, nhưng giới hạn độ bền "
+            "tiếp tục hao mòn vĩnh viễn.",
         )
         return
 
     raw_part = parts[1].strip().lower()
-    armor_aliases = {"giap", "áo", "ao", "aogiap", "ao_giap", "armor"}
-    weapon_aliases = {"vukhi", "vũkhí", "vu_khi", "vk", "weapon"}
+    armor_aliases = {
+        "giap",
+        "áo",
+        "ao",
+        "aogiap",
+        "ao_giap",
+        "armor",
+    }
+    weapon_aliases = {
+        "vukhi",
+        "vũkhí",
+        "vu_khi",
+        "vk",
+        "weapon",
+    }
     if raw_part in armor_aliases:
         part = "armor"
     elif raw_part in weapon_aliases:
         part = "weapon"
     else:
-        await send_message(message, "❌ Chỉ chấp nhận <b>giap</b> hoặc <b>vukhi</b>.")
+        await send_message(
+            message,
+            "❌ Chỉ chấp nhận <b>giap</b> hoặc <b>vukhi</b>.",
+        )
         return
 
     async with user_lock(message.from_user.id):
@@ -829,128 +959,95 @@ async def repair_equipment(_, message):
         state = set_state(user_doc, set_id)
         stats = effective_set_stats(user_doc, set_id)
         if template is None or state is None or stats is None:
-            await send_message(message, "❌ Set đang sử dụng không hợp lệ.")
-            return
-
-        now = time()
-        base = int(template["durability"])
-        if part == "armor":
-            current = int(stats["armor_durability"])
-            current_max = int(stats["armor_max_durability"])
-            if current >= current_max:
-                await send_message(message, "✅ Áo giáp vẫn đầy độ bền, chưa cần sửa.")
-                return
-
-            nominal_max = int(stats["armor_nominal_max"])
-            old_max_penalty = int(stats["armor_max_penalty"])
-            max_penalty_cap = int(nominal_max * REPAIR_MAX_PENALTY_RATE)
-            requested_loss = max(1, ceil(nominal_max * REPAIR_MAX_DURABILITY_LOSS_RATE))
-            durability_loss = min(requested_loss, max(0, max_penalty_cap - old_max_penalty))
-            new_max_penalty = old_max_penalty + durability_loss
-            new_max = max(1, nominal_max - new_max_penalty)
-
-            old_protection_penalty = int(stats["protection_penalty"])
-            maximum_protection_penalty = max(
-                0,
-                int(template["protection"])
-                + int(state.get("protection_bonus", 0) or 0)
-                - 1,
-            )
-            protection_loss = min(
-                REPAIR_ARMOR_PROTECTION_LOSS,
-                max(0, maximum_protection_penalty - old_protection_penalty),
-            )
-            new_protection_penalty = old_protection_penalty + protection_loss
-            new_protection = max(
-                1,
-                int(template["protection"])
-                + int(state.get("protection_bonus", 0) or 0)
-                - new_protection_penalty,
-            )
-
-            await collection.update_one(
-                {"_id": message.from_user.id},
-                {
-                    "$set": {
-                        f"equipment_sets.{set_id}.armor_durability": new_max,
-                        f"equipment_sets.{set_id}.armor_max_penalty": new_max_penalty,
-                        f"equipment_sets.{set_id}.protection_penalty": new_protection_penalty,
-                        "updated_at": now,
-                    },
-                    "$inc": {
-                        f"equipment_sets.{set_id}.armor_repairs": 1,
-                        "stats.equipment_armor_repairs": 1,
-                    },
-                },
-            )
             await send_message(
                 message,
-                f"🔧 <b>Đã sửa áo giáp {escape(template['name'])}</b>\n\n"
-                f"🛡 Độ bền được phục hồi: <b>{format_number(new_max)}/"
-                f"{format_number(new_max)}</b>\n"
-                f"📉 Giới hạn độ bền mất vĩnh viễn: <b>-{format_number(durability_loss)}</b>\n"
-                f"📉 Sức bảo vệ mất vĩnh viễn: <b>-{protection_loss} điểm</b>\n"
-                f"🛡 Bảo vệ hiện tại: <b>{new_protection}%</b>",
+                "❌ Set đang sử dụng không hợp lệ.",
             )
             return
 
-        current = int(stats["weapon_durability"])
-        current_max = int(stats["weapon_max_durability"])
-        if current >= current_max:
-            await send_message(message, "✅ Vũ khí vẫn đầy độ bền, chưa cần sửa.")
+        owned_key = f"{part}_owned"
+        if not bool(stats[owned_key]):
+            await send_message(
+                message,
+                "❌ Bộ phận này đã biến mất khi độ bền về 0. "
+                "Chỉ có thể khôi phục bằng cách mua mới set hoặc "
+                "hợp nhất thành công.",
+            )
             return
 
-        nominal_max = int(stats["weapon_nominal_max"])
-        old_max_penalty = int(stats["weapon_max_penalty"])
-        max_penalty_cap = int(nominal_max * REPAIR_MAX_PENALTY_RATE)
-        requested_loss = max(1, ceil(nominal_max * REPAIR_MAX_DURABILITY_LOSS_RATE))
-        durability_loss = min(requested_loss, max(0, max_penalty_cap - old_max_penalty))
+        current = int(stats[f"{part}_durability"])
+        current_max = int(stats[f"{part}_max_durability"])
+        if current >= current_max:
+            await send_message(
+                message,
+                "✅ Trang bị vẫn đầy độ bền, chưa cần sửa.",
+            )
+            return
+
+        repair_cost = repair_cost_for_tier(int(template["tier"]))
+        if await reserve_coins(
+            collection,
+            message.from_user.id,
+            repair_cost,
+        ) is None:
+            await send_message(
+                message,
+                f"❌ Cần <b>{format_number(repair_cost)} xu</b> "
+                "để sửa bộ phận này.",
+            )
+            return
+
+        nominal_max = int(stats[f"{part}_nominal_max"])
+        old_max_penalty = int(stats[f"{part}_max_penalty"])
+        max_penalty_cap = int(
+            nominal_max * REPAIR_MAX_PENALTY_RATE
+        )
+        requested_loss = max(
+            1,
+            ceil(
+                nominal_max
+                * REPAIR_MAX_DURABILITY_LOSS_RATE
+            ),
+        )
+        durability_loss = min(
+            requested_loss,
+            max(0, max_penalty_cap - old_max_penalty),
+        )
         new_max_penalty = old_max_penalty + durability_loss
         new_max = max(1, nominal_max - new_max_penalty)
-
-        old_attack_penalty = float(stats["attack_penalty"])
-        maximum_attack_penalty = max(0.0, float(template["attack"]) - 1.0)
-        requested_attack_loss = max(
-            0.01,
-            round(float(template["attack"]) * REPAIR_WEAPON_ATTACK_LOSS_RATE, 3),
-        )
-        attack_loss = min(
-            requested_attack_loss,
-            max(0.0, maximum_attack_penalty - old_attack_penalty),
-        )
-        new_attack_penalty = min(
-            maximum_attack_penalty,
-            old_attack_penalty + attack_loss,
-        )
-        new_attack = max(1.0, float(template["attack"]) - new_attack_penalty)
+        now = time()
 
         await collection.update_one(
             {"_id": message.from_user.id},
             {
                 "$set": {
-                    f"equipment_sets.{set_id}.weapon_durability": new_max,
-                    f"equipment_sets.{set_id}.weapon_max_penalty": new_max_penalty,
-                    f"equipment_sets.{set_id}.attack_penalty": new_attack_penalty,
+                    f"equipment_sets.{set_id}.{part}_durability": new_max,
+                    f"equipment_sets.{set_id}.{part}_max_penalty": new_max_penalty,
                     "updated_at": now,
                 },
                 "$inc": {
-                    f"equipment_sets.{set_id}.weapon_repairs": 1,
-                    "stats.equipment_weapon_repairs": 1,
+                    f"equipment_sets.{set_id}.{part}_repairs": 1,
+                    f"stats.equipment_{part}_repairs": 1,
                 },
             },
         )
-        await send_message(
-            message,
-            f"🔧 <b>Đã sửa vũ khí {escape(template['name'])}</b>\n\n"
-            f"⚔️ Độ bền được phục hồi: <b>{format_number(new_max)}/"
-            f"{format_number(new_max)}</b>\n"
-            f"📉 Giới hạn độ bền mất vĩnh viễn: <b>-{format_number(durability_loss)}</b>\n"
-            f"📉 Hệ số tấn công mất vĩnh viễn: <b>-x{attack_loss:.3f}</b>\n"
-            f"⚔️ Hệ số tấn công hiện tại: <b>x{new_attack:.3f}</b>",
-        )
+
+    part_name = "áo giáp" if part == "armor" else "vũ khí"
+    await send_message(
+        message,
+        f"🔧 <b>Đã sửa {part_name} "
+        f"{escape(template['name'])}</b>\n\n"
+        f"💰 Chi phí: <b>{format_number(repair_cost)} xu</b>\n"
+        f"🔩 Độ bền: <b>{format_number(new_max)}/"
+        f"{format_number(new_max)}</b>\n"
+        f"📉 Giới hạn độ bền mất vĩnh viễn: "
+        f"<b>-{format_number(durability_loss)}</b>\n"
+        "✅ Tấn công, chí mạng và bảo vệ không bị giảm.",
+    )
 
 
 @new_task
+@entertainment_guard
 async def summon_boss(_, message):
     collection = await require_game_collection(message)
     bosses = boss_collection()
@@ -988,8 +1085,12 @@ async def summon_boss(_, message):
     )
     is_super = RNG.random() < super_chance
     boss_tier = _boss_tier(template)
-    stat_multiplier = SUPER_BOSS_STAT_MULTIPLIER if is_super else 1
-    reward_multiplier = SUPER_BOSS_REWARD_MULTIPLIER if is_super else 1
+    stat_multiplier = (
+        SUPER_BOSS_STAT_MULTIPLIER
+        if is_super
+        else NORMAL_BOSS_STAT_MULTIPLIER
+    )
+    reward_multiplier = stat_multiplier
 
     base_attack_min = 80 + boss_tier * 35
     base_attack_max = 120 + boss_tier * 55
@@ -1041,8 +1142,9 @@ async def summon_boss(_, message):
             "attack_max": boss_attack_max,
             "defense": boss_defense,
             "is_super": is_super,
-            "wear_min": template["wear_min"],
-            "wear_max": template["wear_max"],
+            "wear_min": BOSS_WEAR_MIN,
+            "wear_max": BOSS_WEAR_MAX,
+            "armor_penetration": BOSS_ARMOR_PENETRATION,
             "status": "active",
             "summon_mode": summon_mode.lower(),
             "summon_cost": summon_cost,
@@ -1088,6 +1190,7 @@ async def summon_boss(_, message):
 
 
 @new_task
+@entertainment_guard
 async def boss_status(_, message):
     bosses = boss_collection()
     if bosses is None:
@@ -1119,7 +1222,11 @@ async def boss_status(_, message):
         remain = max(0, int(float(boss["expires_at"]) - time()))
         lifetime_text = f"{remain // 60} phút {remain % 60} giây"
 
-    super_line = "🌌 <b>Boss siêu cấp x50</b>\n" if is_super else ""
+    super_line = (
+    "🌌 <b>Boss siêu cấp x200</b>\n"
+    if is_super
+    else "👹 <b>Boss thường x50</b>\n"
+)
     execute_line = (
         f"\n💳 Kết liễu trả phí: <code>/ketlieuboss</code> — "
         f"{format_number(SUPER_BOSS_EXECUTION_COST)} xu, nhận 5% thưởng."
@@ -1136,6 +1243,7 @@ async def boss_status(_, message):
         f"⚔️ Tấn công: <b>{format_number(boss.get('attack_min', 0))}–"
         f"{format_number(boss.get('attack_max', 0))}</b>\n"
         f"🛡 Phòng thủ: <b>{format_number(boss.get('defense', 0))}</b>\n"
+        f"🗡 Xuyên giáp: <b>50%</b>\n"
         f"💰 Kho thưởng: <b>{format_number(boss['reward'])} xu</b>\n"
         f"⏳ Còn: <b>{lifetime_text}</b>\n"
         f"👥 Người tham chiến: <b>{len(damage)}</b>\n\n"
@@ -1177,6 +1285,7 @@ async def _distribute_boss_rewards(collection, boss: dict, last_hitter: int):
 
 
 @new_task
+@entertainment_guard
 async def attack_boss(_, message):
     collection = await require_game_collection(message)
     bosses = boss_collection()
@@ -1214,7 +1323,7 @@ async def attack_boss(_, message):
 
         gear = equipped_set_stats(user_doc)
         attack_multiplier = gear["attack"] if gear else 1.0
-        crit_chance = gear["crit"] if gear else 0.02
+        crit_chance = gear["crit"] if gear else 0.0
         raw_damage = int(
             round(
                 player_attack(user_doc)
@@ -1307,14 +1416,33 @@ async def attack_boss(_, message):
                     else 0
                 )
 
+                penetration = float(
+                    updated.get(
+                        "armor_penetration",
+                        BOSS_ARMOR_PENETRATION,
+                    )
+                    or BOSS_ARMOR_PENETRATION
+                )
+                penetration = max(0.0, min(1.0, penetration))
+                effective_defense = max(
+                    0.0,
+                    defense * (1.0 - penetration),
+                )
+                effective_protection = max(
+                    0.0,
+                    protection * (1.0 - penetration),
+                )
                 after_defense = (
                     raw_player_damage
                     * 1_000
-                    / (1_000 + max(0, defense))
+                    / (1_000 + effective_defense)
                 )
                 hp_damage = max(
                     1,
-                    ceil(after_defense * (1.0 - protection / 100.0)),
+                    ceil(
+                        after_defense
+                        * (1.0 - effective_protection / 100.0)
+                    ),
                 )
                 new_hp = max(0, hp - hp_damage)
                 user_update["$set"]["hp"] = new_hp
@@ -1324,7 +1452,8 @@ async def attack_boss(_, message):
                 )
                 retaliation_lines.append(
                     f"🛡 Phòng thủ {format_number(defense)} · "
-                    f"bảo vệ trang bị {protection}%."
+                    f"bảo vệ trang bị {protection}% · "
+                    f"boss xuyên giáp {penetration * 100:.0f}%."
                 )
                 retaliation_lines.append(
                     f"❤️ HP còn <b>{format_number(new_hp)}/"
@@ -1346,15 +1475,10 @@ async def attack_boss(_, message):
                     user_update["$set"]["dead_until"] = 0
 
                 if gear is not None:
-                    raw_wear = RNG.randint(
-                        int(updated.get("wear_min", 10)),
-                        int(updated.get("wear_max", 20)),
-                    )
-
                     if gear["armor_active"]:
-                        armor_wear = max(
-                            1,
-                            ceil(raw_wear * (1.0 - protection / 100.0)),
+                        armor_wear = RNG.randint(
+                            BOSS_WEAR_MIN,
+                            BOSS_WEAR_MAX,
                         )
                         new_armor_durability = max(
                             0,
@@ -1369,12 +1493,19 @@ async def attack_boss(_, message):
                             f"{format_number(gear['armor_max_durability'])})"
                         )
                         if new_armor_durability == 0:
+                            user_update["$set"][
+                                f"equipment_sets.{gear['id']}.armor_owned"
+                            ] = False
                             wear_lines.append(
-                                "⚠️ Áo giáp đã hỏng; bảo vệ về 0%."
+                                "💥 Áo giáp đã biến mất. "
+                                "Phần vũ khí còn độ bền vẫn được giữ nguyên."
                             )
 
                     if gear["weapon_active"]:
-                        weapon_wear = max(1, ceil(raw_wear * 0.45))
+                        weapon_wear = RNG.randint(
+                            BOSS_WEAR_MIN,
+                            BOSS_WEAR_MAX,
+                        )
                         new_weapon_durability = max(
                             0,
                             int(gear["weapon_durability"]) - weapon_wear,
@@ -1388,8 +1519,12 @@ async def attack_boss(_, message):
                             f"{format_number(gear['weapon_max_durability'])})"
                         )
                         if new_weapon_durability == 0:
+                            user_update["$set"][
+                                f"equipment_sets.{gear['id']}.weapon_owned"
+                            ] = False
                             wear_lines.append(
-                                "⚠️ Vũ khí đã hỏng; sát thương trở về x1.00."
+                                "💥 Vũ khí đã biến mất. "
+                                "Phần áo giáp còn độ bền vẫn được giữ nguyên."
                             )
         else:
             user_update["$set"]["dead_until"] = 0
@@ -1458,7 +1593,7 @@ async def attack_boss(_, message):
         )
     ]
     super_text = (
-        "\n🌌 Đây là boss siêu cấp: kho thưởng đã được nhân 20."
+        "\n🌌 Đây là boss siêu cấp: toàn bộ chỉ số và kho thưởng đã được nhân 200."
         if bool(defeated.get("is_super", False))
         else ""
     )
@@ -1477,6 +1612,66 @@ async def attack_boss(_, message):
 
 
 @new_task
+@entertainment_guard
+async def training_dummy(_, message):
+    collection = await require_game_collection(message)
+    if collection is None or await require_user(message) is None:
+        return
+
+    async with user_lock(message.from_user.id):
+        user_doc = await ensure_message_user(collection, message)
+        if user_doc is None:
+            return
+
+        gear = equipped_set_stats(user_doc)
+        attack_multiplier = gear["attack"] if gear else 1.0
+        crit_chance = gear["crit"] if gear else 0.0
+        damage = max(
+            1,
+            int(
+                round(
+                    player_attack(user_doc)
+                    * attack_multiplier
+                    * RNG.uniform(0.90, 1.10)
+                )
+            ),
+        )
+        critical = RNG.random() < crit_chance
+        if critical:
+            damage *= 2
+
+        base_xp = (
+            DUMMY_BASE_XP
+            * NORMAL_GAME_REWARD_XP_MULTIPLIER
+            * DUMMY_ACTIVITY_XP_MULTIPLIER
+        )
+        xp_gain = capped_xp_gain(user_doc, base_xp)
+        await collection.update_one(
+            {"_id": message.from_user.id},
+            {
+                "$inc": {
+                    "xp": xp_gain,
+                    "stats.dummy_hits": 1,
+                    "stats.dummy_damage": damage,
+                    "stats.dummy_xp": xp_gain,
+                },
+                "$set": {"updated_at": time()},
+            },
+        )
+
+    crit_text = " 💥 CHÍ MẠNG" if critical else ""
+    await send_message(
+        message,
+        "🎯 <b>Bù nhìn rơm bất tử</b>\n\n"
+        f"👊 Gây <b>{format_number(damage)}</b> sát thương"
+        f"{crit_text}.\n"
+        f"⭐ Nhận <b>+{xp_gain} XP</b>.\n"
+        "Bù nhìn tồn tại vĩnh viễn, không phản công, "
+        "không có hồi chiêu và không rơi xu hoặc trang bị.",
+    )
+
+@new_task
+@entertainment_guard
 async def execute_super_boss(_, message):
     collection = await require_game_collection(message)
     bosses = boss_collection()

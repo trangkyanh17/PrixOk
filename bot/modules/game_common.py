@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import wraps
+
 from asyncio import Lock
 from html import escape
 from time import time
@@ -19,16 +21,16 @@ TRANSFER_LOCK = Lock()
 
 BUFF_SECONDS = 28_800
 
-LUCK_BUFF_PRICE = 24_000
-XP_BUFF_PRICE = 2_000_000
-COIN_BUFF_PRICE = 500_000
-ATTACK_BUFF_PRICE = 10_000_000
-DEFENSE_BUFF_PRICE = 10_000_000
-DODGE_BUFF_PRICE = 7_500_000
+LUCK_BUFF_PRICE = 5_000_000
+XP_BUFF_PRICE = 5_000_000
+COIN_BUFF_PRICE = 5_000_000
+ATTACK_BUFF_PRICE = 5_000_000
+DEFENSE_BUFF_PRICE = 5_000_000
+DODGE_BUFF_PRICE = 5_000_000
 LUCK_BUFF_SECONDS = BUFF_SECONDS
 
 STARTING_COINS = 2_000_000
-NORMAL_GAME_REWARD_XP_MULTIPLIER = 9
+NORMAL_GAME_REWARD_XP_MULTIPLIER = 5
 GAME_LUCK_CHANCE_MULTIPLIER = 3.0
 
 PLAYER_MAX_HP = 2_000
@@ -50,10 +52,11 @@ BASE_PLAYER_DEFENSE = 200
 DEFENSE_PER_LEVEL = 50
 BASE_PLAYER_DODGE = 0.01
 DODGE_PER_LEVEL = 0.0005
-MAX_PLAYER_DODGE = 0.35
+MAX_PLAYER_DODGE = 0.25
 HP_PER_LEVEL = 500
 
-BASE_HP_REGEN_PER_SECOND = 20
+HP_REGEN_TICK_SECONDS = 5
+BASE_HP_REGEN_PER_TICK = 20
 HP_REGEN_PER_LEVEL = 30
 
 EQUIPMENT_PART_LABELS = {
@@ -68,7 +71,7 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
     "nhom": {
         "name": "Set Nhôm",
         "tier": 1,
-        "price": 8_000,
+        "price": 40_000,
         "attack": 1.10,
         "crit": 0.03,
         "protection": 8,
@@ -78,7 +81,7 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
     "dong": {
         "name": "Set Đồng",
         "tier": 2,
-        "price": 25_000,
+        "price": 125_000,
         "attack": 1.20,
         "crit": 0.04,
         "protection": 14,
@@ -88,7 +91,7 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
     "bac": {
         "name": "Set Bạc",
         "tier": 3,
-        "price": 70_000,
+        "price": 350_000,
         "attack": 1.35,
         "crit": 0.06,
         "protection": 22,
@@ -98,7 +101,7 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
     "sat": {
         "name": "Set Sắt",
         "tier": 4,
-        "price": 150_000,
+        "price": 750_000,
         "attack": 1.55,
         "crit": 0.08,
         "protection": 32,
@@ -108,7 +111,7 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
     "vang": {
         "name": "Set Vàng",
         "tier": 5,
-        "price": 350_000,
+        "price": 1_750_000,
         "attack": 1.85,
         "crit": 0.10,
         "protection": 45,
@@ -118,7 +121,7 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
     "kim_cuong": {
         "name": "Set Kim Cương",
         "tier": 6,
-        "price": 900_000,
+        "price": 4_500_000,
         "attack": 2.30,
         "crit": 0.13,
         "protection": 62,
@@ -128,7 +131,7 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
     "graphine": {
         "name": "Set Graphine",
         "tier": 7,
-        "price": 2_000_000,
+        "price": 10_000_000,
         "attack": 3.00,
         "crit": 0.18,
         "protection": 82,
@@ -187,7 +190,7 @@ def player_max_hp_for_level(level: int) -> int:
 
 
 def player_hp_regen_for_level(level: int) -> int:
-    return BASE_HP_REGEN_PER_SECOND + _scaled_stat_steps(level) * HP_REGEN_PER_LEVEL
+    return BASE_HP_REGEN_PER_TICK + _scaled_stat_steps(level) * HP_REGEN_PER_LEVEL
 
 
 def buff_active(user_doc: dict[str, Any], field: str) -> bool:
@@ -254,8 +257,8 @@ def player_defense(user_doc: dict[str, Any]) -> int:
 def player_dodge(user_doc: dict[str, Any]) -> float:
     value = player_dodge_for_level(player_level(user_doc))
     if buff_active(user_doc, "dodge_buff_until"):
-        return min(MAX_PLAYER_DODGE * 1.5, value * 1.5)
-    return value
+        value *= 1.5
+    return min(MAX_PLAYER_DODGE, value)
 
 
 def player_hp_regen(user_doc: dict[str, Any]) -> int:
@@ -313,6 +316,52 @@ def boss_collection():
     return database.db.game_bosses if database.db is not None else None
 
 
+def game_settings_collection():
+    return database.db.game_settings if database.db is not None else None
+
+
+async def entertainment_enabled() -> bool:
+    settings = game_settings_collection()
+    if settings is None:
+        return True
+    document = await settings.find_one(
+        {"_id": "global"},
+        {"entertainment_enabled": 1},
+    )
+    if document is None:
+        return True
+    return bool(document.get("entertainment_enabled", True))
+
+
+async def set_entertainment_enabled(enabled: bool) -> None:
+    settings = game_settings_collection()
+    if settings is None:
+        raise RuntimeError("MongoDB chưa sẵn sàng")
+    await settings.update_one(
+        {"_id": "global"},
+        {
+            "$set": {
+                "entertainment_enabled": bool(enabled),
+                "updated_at": time(),
+            }
+        },
+        upsert=True,
+    )
+
+
+def entertainment_guard(function):
+    @wraps(function)
+    async def wrapper(client, message, *args, **kwargs):
+        if not await entertainment_enabled():
+            await send_message(
+                message,
+                "⛔ Khu vực giải trí đang tạm đóng bởi chủ bot.",
+            )
+            return None
+        return await function(client, message, *args, **kwargs)
+
+    return wrapper
+
 async def require_game_collection(message):
     collection = game_collection()
     if collection is None:
@@ -337,15 +386,14 @@ def new_set_state(set_id: str) -> dict[str, Any]:
     template = EQUIPMENT_SETS[set_id]
     base_durability = int(template["durability"])
     return {
-        # Áo giáp và vũ khí dùng hai thanh độ bền riêng.
+        "armor_owned": True,
+        "weapon_owned": True,
         "armor_durability": base_durability,
         "weapon_durability": base_durability,
         "armor_durability_bonus": 0,
         "weapon_durability_bonus": 0,
-        # Mỗi lần sửa chữa làm giảm vĩnh viễn giới hạn độ bền.
         "armor_max_penalty": 0,
         "weapon_max_penalty": 0,
-        # Sửa giáp giảm bảo vệ; sửa vũ khí giảm hệ số tấn công.
         "protection_bonus": 0,
         "protection_penalty": 0,
         "attack_penalty": 0.0,
@@ -403,6 +451,9 @@ async def ensure_user(collection, user) -> dict[str, Any]:
                     "boss_coin_drops": 0,
                     "boss_part_drops": 0,
                     "boss_set_drops": 0,
+                    "dummy_hits": 0,
+                    "dummy_damage": 0,
+                    "dummy_xp": 0,
                     "deaths": 0,
                 },
                 "equipment_sets": {},
@@ -467,13 +518,17 @@ async def ensure_user(collection, user) -> dict[str, Any]:
             repairs["hp_regen_at"] = now
     elif stored_hp < max_hp:
         elapsed = max(0, int(now - float(regen_at_raw or now)))
-        if elapsed:
+        ticks = elapsed // HP_REGEN_TICK_SECONDS
+        if ticks:
             healed = min(
                 max_hp,
-                stored_hp + elapsed * player_hp_regen(doc),
+                stored_hp + ticks * player_hp_regen(doc),
             )
             repairs["hp"] = healed
-            repairs["hp_regen_at"] = now
+            repairs["hp_regen_at"] = (
+                float(regen_at_raw or now)
+                + ticks * HP_REGEN_TICK_SECONDS
+            )
     elif float(regen_at_raw or now) < now:
         repairs["hp_regen_at"] = now
 
@@ -486,6 +541,9 @@ async def ensure_user(collection, user) -> dict[str, Any]:
         "boss_coin_drops": 0,
         "boss_part_drops": 0,
         "boss_set_drops": 0,
+        "dummy_hits": 0,
+        "dummy_damage": 0,
+        "dummy_xp": 0,
         "deaths": 0,
     }
     stats_doc = doc.get("stats")
@@ -515,6 +573,8 @@ async def ensure_user(collection, user) -> dict[str, Any]:
         )
         prefix = f"equipment_sets.{set_id}"
         defaults = {
+            "armor_owned": legacy_current > 0,
+            "weapon_owned": legacy_current > 0,
             "armor_durability": legacy_current,
             "weapon_durability": legacy_current,
             "armor_durability_bonus": legacy_bonus,
@@ -621,6 +681,8 @@ def effective_set_stats(user_doc: dict[str, Any], set_id: str) -> dict[str, Any]
         state.get("durability", base_durability + legacy_bonus) or 0
     )
 
+    armor_owned = bool(state.get("armor_owned", True))
+    weapon_owned = bool(state.get("weapon_owned", True))
     armor_bonus = max(
         0,
         int(state.get("armor_durability_bonus", legacy_bonus) or 0),
@@ -632,61 +694,81 @@ def effective_set_stats(user_doc: dict[str, Any], set_id: str) -> dict[str, Any]
     armor_nominal_max = base_durability + armor_bonus
     weapon_nominal_max = base_durability + weapon_bonus
 
-    # Sửa chữa chỉ có thể làm giảm tối đa 65% giới hạn độ bền danh nghĩa.
     armor_penalty_cap = int(armor_nominal_max * 0.65)
     weapon_penalty_cap = int(weapon_nominal_max * 0.65)
     armor_max_penalty = max(
         0,
-        min(armor_penalty_cap, int(state.get("armor_max_penalty", 0) or 0)),
+        min(
+            armor_penalty_cap,
+            int(state.get("armor_max_penalty", 0) or 0),
+        ),
     )
     weapon_max_penalty = max(
         0,
-        min(weapon_penalty_cap, int(state.get("weapon_max_penalty", 0) or 0)),
-    )
-    armor_max_durability = max(1, armor_nominal_max - armor_max_penalty)
-    weapon_max_durability = max(1, weapon_nominal_max - weapon_max_penalty)
-
-    armor_durability = max(
-        0,
         min(
-            armor_max_durability,
-            int(state.get("armor_durability", legacy_current) or 0),
+            weapon_penalty_cap,
+            int(state.get("weapon_max_penalty", 0) or 0),
         ),
     )
-    weapon_durability = max(
-        0,
-        min(
-            weapon_max_durability,
-            int(state.get("weapon_durability", legacy_current) or 0),
-        ),
+    armor_max_durability = max(
+        1,
+        armor_nominal_max - armor_max_penalty,
+    )
+    weapon_max_durability = max(
+        1,
+        weapon_nominal_max - weapon_max_penalty,
     )
 
-    protection_bonus = max(0, int(state.get("protection_bonus", 0) or 0))
-    protection_penalty = max(0, int(state.get("protection_penalty", 0) or 0))
+    armor_durability = (
+        max(
+            0,
+            min(
+                armor_max_durability,
+                int(state.get("armor_durability", legacy_current) or 0),
+            ),
+        )
+        if armor_owned
+        else 0
+    )
+    weapon_durability = (
+        max(
+            0,
+            min(
+                weapon_max_durability,
+                int(state.get("weapon_durability", legacy_current) or 0),
+            ),
+        )
+        if weapon_owned
+        else 0
+    )
+
+    protection_bonus = max(
+        0,
+        int(state.get("protection_bonus", 0) or 0),
+    )
     protection_before_break = max(
         1,
         min(
             95,
-            int(template["protection"]) + protection_bonus - protection_penalty,
+            int(template["protection"]) + protection_bonus,
         ),
     )
-
-    attack_penalty = max(0.0, float(state.get("attack_penalty", 0.0) or 0.0))
-    attack_before_break = max(1.0, float(template["attack"]) - attack_penalty)
-    armor_active = armor_durability > 0
-    weapon_active = weapon_durability > 0
+    armor_active = armor_owned and armor_durability > 0
+    weapon_active = weapon_owned and weapon_durability > 0
 
     return {
         "id": set_id,
         "name": template["name"],
         "tier": int(template["tier"]),
-        "attack": attack_before_break if weapon_active else 1.0,
+        "attack": float(template["attack"]) if weapon_active else 1.0,
         "base_attack": float(template["attack"]),
-        "attack_penalty": attack_penalty,
-        "crit": float(template["crit"]) if weapon_active else 0.02,
+        "attack_penalty": 0.0,
+        "crit": float(template["crit"]) if weapon_active else 0.0,
         "protection": protection_before_break if armor_active else 0,
         "base_protection": int(template["protection"]),
-        "protection_penalty": protection_penalty,
+        "protection_penalty": 0,
+        "armor_owned": armor_owned,
+        "weapon_owned": weapon_owned,
         "armor_durability": armor_durability,
         "armor_max_durability": armor_max_durability,
         "armor_nominal_max": armor_nominal_max,
@@ -697,13 +779,18 @@ def effective_set_stats(user_doc: dict[str, Any], set_id: str) -> dict[str, Any]
         "weapon_max_penalty": weapon_max_penalty,
         "armor_repairs": int(state.get("armor_repairs", 0) or 0),
         "weapon_repairs": int(state.get("weapon_repairs", 0) or 0),
-        "merge_level": int(state.get("merge_level", 0) or 0),
+        "merge_level": min(
+            10,
+            max(0, int(state.get("merge_level", 0) or 0)),
+        ),
         "armor_active": armor_active,
         "weapon_active": weapon_active,
         "active": armor_active or weapon_active,
-        # Hai khóa dưới giữ tương thích với code cũ ngoài module boss.
         "durability": min(armor_durability, weapon_durability),
-        "max_durability": min(armor_max_durability, weapon_max_durability),
+        "max_durability": min(
+            armor_max_durability,
+            weapon_max_durability,
+        ),
     }
 
 
@@ -776,25 +863,35 @@ def equipment_summary(user_doc: dict[str, Any]) -> str:
 
     if stats is None:
         return (
-            "🧰 Set đang dùng: <b>Chưa trang bị</b>\n"
+            "👕 Trang phục tân thủ: <b>Áo phông + quần short</b> "
+            "(không cộng chỉ số)\n"
+            "👊 Vũ khí: <b>Tay không — sát thương x1.00</b>\n"
             f"📦 Số set sở hữu: <b>{owned_count}</b>\n"
             f"{parts_text}"
         )
 
-    armor_status = "Hoạt động" if stats["armor_active"] else "Hỏng"
-    weapon_status = "Hoạt động" if stats["weapon_active"] else "Hỏng"
+    armor_status = (
+        "Hoạt động"
+        if stats["armor_active"]
+        else "Đã mất — mua mới hoặc hợp nhất để khôi phục"
+    )
+    weapon_status = (
+        "Hoạt động"
+        if stats["weapon_active"]
+        else "Đã mất — mua mới hoặc hợp nhất để khôi phục"
+    )
     return (
         f"🧰 Set đang dùng: <b>{escape(stats['name'])}</b>\n"
         f"🛡 Áo giáp: <b>{format_number(stats['armor_durability'])}/"
-        f"{format_number(stats['armor_max_durability'])}</b> — {armor_status}\n"
-        f"🛡 Sức bảo vệ: <b>{stats['protection']}%</b> "
-        f"(hao hụt sửa chữa: -{stats['protection_penalty']} điểm)\n"
+        f"{format_number(stats['armor_max_durability'])}</b> — "
+        f"{armor_status}\n"
+        f"🛡 Sức bảo vệ: <b>{stats['protection']}%</b>\n"
         f"⚔️ Vũ khí: <b>{format_number(stats['weapon_durability'])}/"
-        f"{format_number(stats['weapon_max_durability'])}</b> — {weapon_status}\n"
-        f"⚔️ Hệ số sát thương: <b>x{stats['attack']:.2f}</b> "
-        f"(hao hụt sửa chữa: -x{stats['attack_penalty']:.2f})\n"
+        f"{format_number(stats['weapon_max_durability'])}</b> — "
+        f"{weapon_status}\n"
+        f"⚔️ Hệ số sát thương: <b>x{stats['attack']:.2f}</b>\n"
         f"💥 Chí mạng: <b>{stats['crit'] * 100:.0f}%</b>\n"
-        f"🧬 Cấp hợp nhất: <b>+{stats['merge_level']}</b>\n"
+        f"🧬 Cấp hợp nhất: <b>+{stats['merge_level']}/10</b>\n"
         f"🔩 Đã sửa: giáp <b>{stats['armor_repairs']}</b> · "
         f"vũ khí <b>{stats['weapon_repairs']}</b>\n"
         f"📦 Số set sở hữu: <b>{owned_count}</b>\n"
