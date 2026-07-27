@@ -13,8 +13,10 @@ from ..helper.telegram_helper.message_utils import send_message
 from .game_common import (
     ATTACK_BUFF_PRICE,
     BUFF_SECONDS,
+    COIN_BUFF_PRICE,
     DEFENSE_BUFF_PRICE,
     DODGE_BUFF_PRICE,
+    GAME_LUCK_CHANCE_MULTIPLIER,
     LUCK_BUFF_PRICE,
     TRANSFER_LOCK,
     XP_BUFF_PRICE,
@@ -30,6 +32,7 @@ from .game_common import (
     format_number,
     luck_multiplier,
     luck_retry_chance,
+    normal_game_coin_reward,
     parse_coin_amount,
     parse_positive_int,
     MAX_PLAYER_LEVEL,
@@ -40,6 +43,7 @@ from .game_common import (
     player_hp_regen,
     player_hp_state,
     player_level,
+    player_xp_progress,
     require_game_collection,
     require_user,
     reserve_coins,
@@ -330,10 +334,14 @@ async def shipper_job(_, message):
             return
 
         reward = RNG.randint(400, 1_800)
-        vip = RNG.random() < min(0.30, 0.10 * luck_multiplier(user_doc))
+        vip = RNG.random() < min(
+            0.90,
+            0.10 * luck_multiplier(user_doc) * GAME_LUCK_CHANCE_MULTIPLIER,
+        )
         if vip:
             reward = int(round(reward * 2.5))
         reward *= NORMAL_GAME_REWARD_XP_MULTIPLIER
+        reward = normal_game_coin_reward(user_doc, reward)
         xp = capped_xp_gain(
             user_doc,
             (8 if vip else 4) * NORMAL_GAME_REWARD_XP_MULTIPLIER,
@@ -418,6 +426,7 @@ async def rocket_launch(_, message):
             xp = 1
 
         reward *= NORMAL_GAME_REWARD_XP_MULTIPLIER
+        reward = normal_game_coin_reward(user_doc, reward)
         xp = capped_xp_gain(
             user_doc,
             xp * NORMAL_GAME_REWARD_XP_MULTIPLIER,
@@ -467,6 +476,14 @@ BUFF_SHOP = {
         "price": XP_BUFF_PRICE,
         "field": "xp_buff_until",
         "effect": "Nhân đôi EXP nhận được",
+    },
+    "tien": {
+        "aliases": {"tien", "coin", "coins", "money", "xu"},
+        "name": "Bùa x2 Tiền",
+        "emoji": "💰",
+        "price": COIN_BUFF_PRICE,
+        "field": "coin_buff_until",
+        "effect": "Nhân đôi xu từ fish, mine, shipper và rocket",
     },
     "tancong": {
         "aliases": {"tancong", "attack", "atk"},
@@ -564,8 +581,8 @@ async def buy_luck_buff(_, message):
                 message,
                 "❌ Loại bùa hợp lệ: "
                 "<code>mayman</code>, <code>exp</code>, "
-                "<code>tancong</code>, <code>phongthu</code>, "
-                "<code>nedon</code>.",
+                "<code>tien</code>, <code>tancong</code>, "
+                "<code>phongthu</code>, <code>nedon</code>.",
             )
             return
 
@@ -856,6 +873,12 @@ async def account_stats(_, message):
     win_rate = (won / played * 100.0) if played else 0.0
     xp = int(user_doc.get("xp", 0))
     level = player_level(user_doc)
+    xp_progress, xp_required = player_xp_progress(xp)
+    level_progress = (
+        "TỐI ĐA"
+        if level >= MAX_PLAYER_LEVEL
+        else f"{xp_progress}/{xp_required} XP"
+    )
     attack = player_attack(user_doc)
     defense = player_defense(user_doc)
     dodge = player_dodge(user_doc)
@@ -887,7 +910,7 @@ async def account_stats(_, message):
         f"📊 <b>Thống kê của {escape(display_name(message))}</b>\n\n"
         f"💰 Số dư: <b>{format_number(int(user_doc.get('coins', 0)))} xu</b>\n"
         f"⭐ Cấp độ: <b>{level}/{MAX_PLAYER_LEVEL}</b> — "
-        f"{'TỐI ĐA' if level >= MAX_PLAYER_LEVEL else f'{xp % 100}/100 XP'}\n"
+        f"{level_progress}\n"
         f"⚔️ Tấn công cơ bản: <b>{format_number(attack)}</b>\n"
         f"🛡 Phòng thủ cơ bản: <b>{format_number(defense)}</b>\n"
         f"💨 Né đòn: <b>{dodge * 100:.2f}%</b>\n"
@@ -899,7 +922,8 @@ async def account_stats(_, message):
         f"📈 Tỉ lệ thắng: <b>{win_rate:.2f}%</b>\n"
         f"💹 Lãi/lỗ cược: "
         f"<b>{format_number(int(stats.get('bet_profit', 0)))} xu</b>\n"
-        f"🍀 Hệ số may mắn: <b>x{multiplier:.2f}</b>\n"
+        f"🍀 Hệ số bùa may mắn: <b>x{multiplier:.2f}</b>\n"
+        f"🎯 Tỉ lệ may mắn trò chơi: <b>x{GAME_LUCK_CHANCE_MULTIPLIER:.0f}</b>\n"
         f"🔮 <b>Bùa đang hoạt động</b>\n{buff_text}\n\n"
         f"{equipment_summary(user_doc)}\n\n"
         f"👹 Sát thương boss: "

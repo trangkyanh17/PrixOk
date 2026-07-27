@@ -21,19 +21,28 @@ BUFF_SECONDS = 28_800
 
 LUCK_BUFF_PRICE = 24_000
 XP_BUFF_PRICE = 2_000_000
+COIN_BUFF_PRICE = 500_000
 ATTACK_BUFF_PRICE = 10_000_000
 DEFENSE_BUFF_PRICE = 10_000_000
-DODGE_BUFF_PRICE = 30_000_000
+DODGE_BUFF_PRICE = 7_500_000
 LUCK_BUFF_SECONDS = BUFF_SECONDS
 
 STARTING_COINS = 2_000_000
-NORMAL_GAME_REWARD_XP_MULTIPLIER = 3
+NORMAL_GAME_REWARD_XP_MULTIPLIER = 9
+GAME_LUCK_CHANCE_MULTIPLIER = 3.0
 
 PLAYER_MAX_HP = 2_000
 PLAYER_RESPAWN_SECONDS = 60
 XP_PER_LEVEL = 100
-MAX_PLAYER_LEVEL = 500
-MAX_PLAYER_XP = (MAX_PLAYER_LEVEL - 1) * XP_PER_LEVEL
+HIGH_LEVEL_START = 1_000
+HIGH_LEVEL_XP_GAIN_RATE = 0.20
+HIGH_LEVEL_STAT_MULTIPLIER = 2
+MAX_PLAYER_LEVEL = 2_000
+HIGH_LEVEL_COUNT = MAX_PLAYER_LEVEL - HIGH_LEVEL_START
+MAX_PLAYER_XP = (
+    (HIGH_LEVEL_START - 1) * XP_PER_LEVEL
+    + XP_PER_LEVEL * HIGH_LEVEL_COUNT * (HIGH_LEVEL_COUNT + 3) // 2
+)
 
 BASE_PLAYER_ATTACK = 100
 ATTACK_PER_LEVEL = 40
@@ -129,23 +138,56 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
 }
 
 
+def xp_required_for_level(level: int) -> int:
+    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
+    if capped <= HIGH_LEVEL_START:
+        return (capped - 1) * XP_PER_LEVEL
+    high_steps = capped - HIGH_LEVEL_START
+    return (
+        (HIGH_LEVEL_START - 1) * XP_PER_LEVEL
+        + XP_PER_LEVEL * high_steps * (high_steps + 3) // 2
+    )
+
+
 def player_level_from_xp(xp: int | float) -> int:
-    raw_level = int(xp) // XP_PER_LEVEL + 1
-    return max(1, min(MAX_PLAYER_LEVEL, raw_level))
+    value = max(0, min(MAX_PLAYER_XP, int(xp)))
+    low, high = 1, MAX_PLAYER_LEVEL
+    while low < high:
+        middle = (low + high + 1) // 2
+        if xp_required_for_level(middle) <= value:
+            low = middle
+        else:
+            high = middle - 1
+    return low
 
 
 def player_level(user_doc: dict[str, Any]) -> int:
     return player_level_from_xp(int(user_doc.get("xp", 0) or 0))
 
 
-def player_max_hp_for_level(level: int) -> int:
+def player_xp_progress(xp: int | float) -> tuple[int, int]:
+    value = max(0, min(MAX_PLAYER_XP, int(xp)))
+    level = player_level_from_xp(value)
+    if level >= MAX_PLAYER_LEVEL:
+        return 0, 0
+    current = xp_required_for_level(level)
+    following = xp_required_for_level(level + 1)
+    return value - current, following - current
+
+
+def _scaled_stat_steps(level: int) -> int:
     capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
-    return PLAYER_MAX_HP + (capped - 1) * HP_PER_LEVEL
+    regular_steps = min(capped - 1, HIGH_LEVEL_START - 2)
+    boosted_steps = max(0, capped - HIGH_LEVEL_START + 1)
+    return regular_steps + boosted_steps * HIGH_LEVEL_STAT_MULTIPLIER
+
+
+def player_max_hp_for_level(level: int) -> int:
+    return PLAYER_MAX_HP + _scaled_stat_steps(level) * HP_PER_LEVEL
 
 
 def player_hp_regen_for_level(level: int) -> int:
-    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
-    return BASE_HP_REGEN_PER_SECOND + (capped - 1) * HP_REGEN_PER_LEVEL
+    return BASE_HP_REGEN_PER_SECOND + _scaled_stat_steps(level) * HP_REGEN_PER_LEVEL
 
 
 def buff_active(user_doc: dict[str, Any], field: str) -> bool:
@@ -160,27 +202,42 @@ def xp_multiplier(user_doc: dict[str, Any]) -> float:
     return 2.0 if buff_active(user_doc, "xp_buff_until") else 1.0
 
 
+def coin_multiplier(user_doc: dict[str, Any]) -> float:
+    return 2.0 if buff_active(user_doc, "coin_buff_until") else 1.0
+
+
+def normal_game_coin_reward(user_doc: dict[str, Any], base_coins: int | float) -> int:
+    return max(0, int(round(float(base_coins) * coin_multiplier(user_doc))))
+
+
 def capped_xp_gain(user_doc: dict[str, Any], base_xp: int | float) -> int:
     current_xp = min(MAX_PLAYER_XP, int(user_doc.get("xp", 0) or 0))
-    requested = max(0, int(round(float(base_xp) * xp_multiplier(user_doc))))
-    return max(0, min(MAX_PLAYER_XP, current_xp + requested) - current_xp)
+    requested = max(0.0, float(base_xp) * xp_multiplier(user_doc))
+    threshold = xp_required_for_level(HIGH_LEVEL_START)
+    if current_xp < threshold:
+        normal_part = min(requested, float(threshold - current_xp))
+        reduced_part = max(0.0, requested - normal_part)
+        adjusted = normal_part + reduced_part * HIGH_LEVEL_XP_GAIN_RATE
+    else:
+        adjusted = requested * HIGH_LEVEL_XP_GAIN_RATE
+    rounded = int(round(adjusted))
+    if requested > 0 and rounded <= 0:
+        rounded = 1
+    return max(0, min(MAX_PLAYER_XP, current_xp + rounded) - current_xp)
 
 
 def player_attack_for_level(level: int) -> int:
-    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
-    return BASE_PLAYER_ATTACK + (capped - 1) * ATTACK_PER_LEVEL
+    return BASE_PLAYER_ATTACK + _scaled_stat_steps(level) * ATTACK_PER_LEVEL
 
 
 def player_defense_for_level(level: int) -> int:
-    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
-    return BASE_PLAYER_DEFENSE + (capped - 1) * DEFENSE_PER_LEVEL
+    return BASE_PLAYER_DEFENSE + _scaled_stat_steps(level) * DEFENSE_PER_LEVEL
 
 
 def player_dodge_for_level(level: int) -> float:
-    capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
     return min(
         MAX_PLAYER_DODGE,
-        BASE_PLAYER_DODGE + (capped - 1) * DODGE_PER_LEVEL,
+        BASE_PLAYER_DODGE + _scaled_stat_steps(level) * DODGE_PER_LEVEL,
     )
 
 
@@ -316,6 +373,7 @@ async def ensure_user(collection, user) -> dict[str, Any]:
                 "dead_until": 0,
                 "luck_buff_until": 0,
                 "xp_buff_until": 0,
+                "coin_buff_until": 0,
                 "attack_buff_until": 0,
                 "defense_buff_until": 0,
                 "dodge_buff_until": 0,
@@ -378,6 +436,7 @@ async def ensure_user(collection, user) -> dict[str, Any]:
     for buff_field in (
         "luck_buff_until",
         "xp_buff_until",
+        "coin_buff_until",
         "attack_buff_until",
         "defense_buff_until",
         "dodge_buff_until",
@@ -667,8 +726,17 @@ def luck_multiplier(user_doc: dict[str, Any]) -> float:
     return min(multiplier, 3.0)
 
 
+def game_luck_factor(user_doc: dict[str, Any]) -> float:
+    return max(1.0, luck_multiplier(user_doc) * GAME_LUCK_CHANCE_MULTIPLIER)
+
+
 def luck_retry_chance(user_doc: dict[str, Any]) -> float:
-    return min(0.50, max(0.0, luck_multiplier(user_doc) - 1.0) * 0.35)
+    return min(
+        1.0,
+        max(0.0, luck_multiplier(user_doc) - 1.0)
+        * 0.35
+        * GAME_LUCK_CHANCE_MULTIPLIER,
+    )
 
 
 def equipment_parts_summary(user_doc: dict[str, Any]) -> str:
