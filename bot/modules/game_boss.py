@@ -544,6 +544,85 @@ def repair_cost_for_tier(tier: int) -> int:
     capped = max(1, min(7, int(tier)))
     return min(10_000_000, REPAIR_COST_BY_TIER[capped])
 
+
+async def auto_repair_equipped_after_boss(collection, user_id: int) -> list[str]:
+    user_doc = await collection.find_one({"_id": int(user_id)})
+    if not user_doc or not bool(user_doc.get("auto_repair_enabled", False)):
+        return []
+
+    set_id = user_doc.get("equipped_set")
+    if not isinstance(set_id, str):
+        return []
+    template = EQUIPMENT_SETS.get(set_id)
+    stats = effective_set_stats(user_doc, set_id)
+    if template is None or stats is None or bool(stats.get("indestructible", False)):
+        return []
+
+    total_cost = 0
+    set_values: dict[str, object] = {"updated_at": time()}
+    increments: dict[str, int] = {}
+    repaired_lines: list[str] = []
+    tier = int(template["tier"])
+    repair_cost = repair_cost_for_tier(tier)
+
+    for part, label in (("armor", "Giáp"), ("weapon", "Vũ khí")):
+        current = int(stats[f"{part}_durability"])
+        current_max = int(stats[f"{part}_max_durability"])
+        owned = bool(stats[f"{part}_owned"])
+        if owned and current >= current_max:
+            continue
+
+        nominal_max = int(stats[f"{part}_nominal_max"])
+        old_max_penalty = int(stats[f"{part}_max_penalty"])
+        max_penalty_cap = int(nominal_max * REPAIR_MAX_PENALTY_RATE)
+        requested_loss = max(
+            1,
+            ceil(nominal_max * REPAIR_MAX_DURABILITY_LOSS_RATE),
+        )
+        durability_loss = min(
+            requested_loss,
+            max(0, max_penalty_cap - old_max_penalty),
+        )
+        new_max_penalty = old_max_penalty + durability_loss
+        new_max = max(1, nominal_max - new_max_penalty)
+        prefix = f"equipment_sets.{set_id}.{part}"
+        set_values[f"{prefix}_owned"] = True
+        set_values[f"{prefix}_durability"] = new_max
+        set_values[f"{prefix}_max_penalty"] = new_max_penalty
+        increments[f"{prefix}_repairs"] = 1
+        increments[f"stats.equipment_{part}_repairs"] = 1
+        total_cost += repair_cost
+        repaired_lines.append(
+            f"{label} {format_number(new_max)}/{format_number(new_max)}"
+        )
+
+    if not repaired_lines:
+        return []
+
+    if await reserve_coins(collection, user_id, total_cost) is None:
+        await collection.update_one(
+            {"_id": int(user_id)},
+            {"$set": {"auto_repair_enabled": False, "updated_at": time()}},
+        )
+        return [
+            f"⛔ Auto sửa đã tự tắt: cần {format_number(total_cost)} xu."
+        ]
+
+    try:
+        await collection.update_one(
+            {"_id": int(user_id)},
+            {"$set": set_values, "$inc": increments},
+        )
+    except Exception:
+        await add_coins(collection, user_id, total_cost)
+        raise
+
+    return [
+        f"🔧 Auto sửa: {', '.join(repaired_lines)} · "
+        f"phí {format_number(total_cost)} xu."
+    ]
+
+
 def _owned_sets_text(user_doc: dict) -> str:
     sets = user_doc.get("equipment_sets", {})
     equipped = user_doc.get("equipped_set")
@@ -1474,7 +1553,7 @@ async def attack_boss(_, message):
                 else:
                     user_update["$set"]["dead_until"] = 0
 
-                if gear is not None:
+                if gear is not None and not bool(gear.get("indestructible", False)):
                     if gear["armor_active"]:
                         armor_wear = RNG.randint(
                             BOSS_WEAR_MIN,
@@ -1532,6 +1611,12 @@ async def attack_boss(_, message):
         await collection.update_one(
             {"_id": message.from_user.id},
             user_update,
+        )
+        wear_lines.extend(
+            await auto_repair_equipped_after_boss(
+                collection,
+                message.from_user.id,
+            )
         )
 
     crit_text = " 💥 <b>CHÍ MẠNG</b>" if critical else ""

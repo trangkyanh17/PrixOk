@@ -79,3 +79,5 @@ class BotCommands:
     AttackBossCommand = [f"danhboss{i}", f"autoboss{i}"]
     TrainingDummyCommand = [f"bunhin{i}", f"autobunhin{i}"]
     ExecuteBossCommand = f"ketlieuboss{i}"
+    AutoRepairCommand = f"autosua{i}"
+    MaxLevelCommand = f"maxlevel{i}"

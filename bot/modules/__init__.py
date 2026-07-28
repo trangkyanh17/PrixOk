@@ -77,6 +77,7 @@ from .game_auto import (
     attack_boss_dispatch as attack_boss,
     training_dummy_dispatch as training_dummy,
 )
+from .game_admin import max_level_user, toggle_auto_repair
 
 __all__ = [
     "send_bot_settings",
@@ -169,4 +170,6 @@ __all__ = [
     "attack_boss",
     "training_dummy",
     "execute_super_boss",
+    "toggle_auto_repair",
+    "max_level_user",
 ]

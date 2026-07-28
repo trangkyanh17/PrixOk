@@ -527,6 +527,26 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            toggle_auto_repair,
+            filters=command(
+                BotCommands.AutoRepairCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            max_level_user,
+            filters=command(
+                BotCommands.MaxLevelCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             toggle_entertainment,
             filters=command(
                 BotCommands.EntertainmentToggleCommand,
