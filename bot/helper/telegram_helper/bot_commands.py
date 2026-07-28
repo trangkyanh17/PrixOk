@@ -72,7 +72,7 @@ class BotCommands:
     RepairEquipmentCommand = f"suachua{i}"
     SummonBossCommand = f"goiboss{i}"
     BossStatusCommand = f"boss{i}"
-    AttackBossCommand = [f"danhboss{i}", f"autoboss{i}"]
+    AttackBossCommand = [f"danhboss{i}", f"attack{i}", f"autoboss{i}"]
     TrainingDummyCommand = [f"bunhin{i}", f"autobunhin{i}"]
     ExecuteBossCommand = f"ketlieuboss{i}"
     AutoRepairCommand = f"autosua{i}"

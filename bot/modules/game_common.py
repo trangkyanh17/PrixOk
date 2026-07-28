@@ -279,7 +279,63 @@ def disciple_level(user_doc: dict[str, Any]) -> int:
     disciple = disciple_state(user_doc)
     if disciple is None:
         return 1
-    return MAX_PLAYER_LEVEL if bool(disciple.get("maxed", False)) else player_level(user_doc)
+    if bool(disciple.get("maxed", False)):
+        return MAX_PLAYER_LEVEL
+    return player_level_from_xp(
+        int(disciple.get("xp", 0) or 0)
+    )
+
+
+def disciple_xp_progress(
+    user_doc: dict[str, Any],
+) -> tuple[int, int]:
+    disciple = disciple_state(user_doc)
+    if disciple is None:
+        return 0, XP_PER_LEVEL
+    return player_xp_progress(
+        int(disciple.get("xp", 0) or 0)
+    )
+
+
+def capped_disciple_xp_gain(
+    user_doc: dict[str, Any],
+    base_xp: int | float,
+) -> int:
+    disciple = disciple_state(user_doc)
+    if disciple is None or bool(disciple.get("maxed", False)):
+        return 0
+    current_xp = min(
+        MAX_PLAYER_XP,
+        int(disciple.get("xp", 0) or 0),
+    )
+    requested = max(
+        0.0,
+        float(base_xp) * xp_multiplier(user_doc),
+    )
+    threshold = xp_required_for_level(HIGH_LEVEL_START)
+    if current_xp < threshold:
+        normal_part = min(
+            requested,
+            float(threshold - current_xp),
+        )
+        reduced_part = max(
+            0.0,
+            requested - normal_part,
+        )
+        adjusted = (
+            normal_part
+            + reduced_part * HIGH_LEVEL_XP_GAIN_RATE
+        )
+    else:
+        adjusted = requested * HIGH_LEVEL_XP_GAIN_RATE
+    rounded = int(round(adjusted))
+    if requested > 0 and rounded <= 0:
+        rounded = 1
+    return max(
+        0,
+        min(MAX_PLAYER_XP, current_xp + rounded)
+        - current_xp,
+    )
 
 
 def disciple_fusion_active(user_doc: dict[str, Any]) -> bool:
@@ -303,7 +359,9 @@ def disciple_is_alive(user_doc: dict[str, Any]) -> bool:
     return float(disciple.get("dead_until", 0) or 0) <= time()
 
 
-def disciple_equipment_stats(user_doc: dict[str, Any]) -> dict[str, Any]:
+def disciple_equipment_stats(
+    user_doc: dict[str, Any],
+) -> dict[str, Any]:
     disciple = disciple_state(user_doc)
     if disciple is None:
         return {
@@ -314,29 +372,28 @@ def disciple_equipment_stats(user_doc: dict[str, Any]) -> dict[str, Any]:
             "name": "Không có",
         }
     if bool(disciple.get("maxed", False)):
-        template = EQUIPMENT_SETS["graphine_toi_thuong"]
+        template = EQUIPMENT_SETS[
+            "graphine_toi_thuong"
+        ]
         return {
             "attack": float(template["attack"]),
-            "crit": min(MAX_EQUIPMENT_CRIT, float(template["crit"])),
-            "protection": min(95, int(template["protection"]) * 2),
+            "crit": min(
+                MAX_EQUIPMENT_CRIT,
+                float(template["crit"]),
+            ),
+            "protection": min(
+                95,
+                int(template["protection"]) * 2,
+            ),
             "indestructible": True,
             "name": str(template["name"]),
         }
-    gear = equipped_set_stats(user_doc)
-    if gear is None:
-        return {
-            "attack": 1.0,
-            "crit": 0.0,
-            "protection": 0,
-            "indestructible": False,
-            "name": "Tay không",
-        }
     return {
-        "attack": float(gear["attack"]),
-        "crit": float(gear["crit"]),
-        "protection": int(gear["protection"]),
-        "indestructible": bool(gear.get("indestructible", False)),
-        "name": str(gear["name"]),
+        "attack": 1.0,
+        "crit": 0.0,
+        "protection": 0,
+        "indestructible": False,
+        "name": "Tay không",
     }
 
 
@@ -391,14 +448,24 @@ def disciple_armor_penetration_bonus(user_doc: dict[str, Any]) -> float:
     return MALE_ARMOR_PENETRATION_BONUS if str(disciple.get("gender")) == "male" else 0.0
 
 
-def new_disciple_state(user_doc: dict[str, Any], gender: str) -> dict[str, Any]:
-    normalized = "female" if gender == "female" else "male"
-    level = player_level(user_doc)
-    max_hp = player_max_hp_for_level(level)
+def new_disciple_state(
+    user_doc: dict[str, Any],
+    gender: str,
+) -> dict[str, Any]:
+    normalized = (
+        "female"
+        if gender == "female"
+        else "male"
+    )
+    max_hp = player_max_hp_for_level(1)
     if normalized == "male":
-        max_hp = int(round(max_hp * MALE_HP_MULTIPLIER))
+        max_hp = int(
+            round(max_hp * MALE_HP_MULTIPLIER)
+        )
+    now = time()
     return {
         "gender": normalized,
+        "xp": 0,
         "maxed": False,
         "equipment_set": None,
         "merge_level": 0,
@@ -406,7 +473,8 @@ def new_disciple_state(user_doc: dict[str, Any], gender: str) -> dict[str, Any]:
         "hp": max_hp,
         "max_hp": max_hp,
         "dead_until": 0,
-        "created_at": time(),
+        "training_started_at": now,
+        "created_at": now,
     }
 
 
@@ -421,44 +489,101 @@ def player_max_hp(user_doc: dict[str, Any]) -> int:
     return max(1, value)
 
 
-def disciple_summary(user_doc: dict[str, Any]) -> str:
+def disciple_summary(
+    user_doc: dict[str, Any],
+) -> str:
     disciple = disciple_state(user_doc)
     if disciple is None:
-        potion = "Đã sở hữu" if bool(user_doc.get("fusion_potion_owned", False)) else "Chưa sở hữu"
+        potion = (
+            "Đã sở hữu"
+            if bool(
+                user_doc.get(
+                    "fusion_potion_owned",
+                    False,
+                )
+            )
+            else "Chưa sở hữu"
+        )
         return (
             "🧑‍🎓 <b>Đệ tử</b>: Chưa có\n"
-            f"🧪 Thuốc hợp thể vĩnh viễn: <b>{potion}</b>"
+            "🧪 Thuốc hợp thể vĩnh viễn: "
+            f"<b>{potion}</b>"
         )
-    hp, max_hp, remaining = disciple_hp_state(user_doc)
+
+    hp, max_hp, remaining = disciple_hp_state(
+        user_doc
+    )
     gender = str(disciple.get("gender"))
-    gender_name = "Nam" if gender == "male" else "Nữ"
+    gender_name = (
+        "Nam"
+        if gender == "male"
+        else "Nữ"
+    )
     special = (
         "Xuyên giáp +50% cho cả hai · HP +20%"
         if gender == "male"
-        else "Sư phụ +30% tấn công · 30% mê hoặc boss trong 5 giây"
+        else (
+            "Sư phụ +30% tấn công · "
+            "30% mê hoặc boss trong 5 giây"
+        )
     )
     fusion = (
         "Vĩnh viễn"
-        if bool(user_doc.get("disciple_fusion_permanent", False))
-        else f"Còn {max(0, int(float(user_doc.get('disciple_fusion_until', 0) or 0) - time()))} giây"
-        if disciple_fusion_active(user_doc)
-        else "Chưa hợp thể"
+        if bool(
+            user_doc.get(
+                "disciple_fusion_permanent",
+                False,
+            )
+        )
+        else (
+            "Còn "
+            f"{max(0, int(float(user_doc.get('disciple_fusion_until', 0) or 0) - time()))} "
+            "giây"
+            if disciple_fusion_active(user_doc)
+            else "Đang tách"
+        )
     )
     status = (
-        f"Đang hồi sinh, còn {remaining // 60}p {remaining % 60}s"
+        "Đang hồi sinh, còn "
+        f"{remaining // 60}p {remaining % 60}s"
         if hp <= 0 and remaining
         else "Sẵn sàng"
     )
+    level = disciple_level(user_doc)
+    xp_progress, xp_required = (
+        disciple_xp_progress(user_doc)
+    )
+    level_progress = (
+        "TỐI ĐA"
+        if level >= MAX_PLAYER_LEVEL
+        else (
+            f"{format_number(xp_progress)}/"
+            f"{format_number(xp_required)} XP"
+        )
+    )
     gear = disciple_equipment_stats(user_doc)
     return (
-        f"🧑‍🎓 <b>Đệ tử {gender_name}</b> — cấp {disciple_level(user_doc)}/{MAX_PLAYER_LEVEL}\n"
-        f"❤️ HP: <b>{format_number(hp)}/{format_number(max_hp)}</b> — {status}\n"
-        f"⚔️ Sát thương: <b>{format_number(disciple_attack_value(user_doc))}</b> · "
-        f"🛡 Phòng thủ: <b>{format_number(disciple_defense(user_doc))}</b>\n"
-        f"🧰 Trang bị: <b>{escape(str(gear['name']))}</b> · "
-        f"hợp nhất +{int(disciple.get('merge_level', 0) or 0)}/{MAX_EQUIPMENT_MERGE_LEVEL}\n"
+        f"🧑‍🎓 <b>Đệ tử {gender_name}</b> — "
+        f"cấp {level}/{MAX_PLAYER_LEVEL}\n"
+        f"⭐ Tiến độ: <b>{level_progress}</b>\n"
+        f"❤️ HP: <b>{format_number(hp)}/"
+        f"{format_number(max_hp)}</b> — {status}\n"
+        "⚔️ Sát thương: "
+        f"<b>{format_number(disciple_attack_value(user_doc))}</b> · "
+        "🛡 Phòng thủ: "
+        f"<b>{format_number(disciple_defense(user_doc))}</b>\n"
+        "🧰 Trang bị: "
+        f"<b>{escape(str(gear['name']))}</b> · "
+        "hợp nhất +"
+        f"{int(disciple.get('merge_level', 0) or 0)}/"
+        f"{MAX_EQUIPMENT_MERGE_LEVEL}\n"
         f"✨ Đặc tính: <b>{special}</b>\n"
-        f"🔗 Hợp thể: <b>{fusion}</b>"
+        f"🔗 Hợp thể: <b>{fusion}</b>\n"
+        "🎯 Tự luyện: đệ tử tự đánh cùng mỗi lượt "
+        "<code>/bunhin</code> hoặc "
+        "<code>/autobunhin</code>.\n"
+        "👹 Đánh boss: dùng "
+        "<code>/attack [mã_trận]</code>."
     )
 
 
@@ -477,27 +602,34 @@ def player_attack(user_doc: dict[str, Any]) -> int:
     return max(1, int(value))
 
 
-def player_defense(user_doc: dict[str, Any]) -> int:
-    value = player_defense_for_level(player_level(user_doc))
-    if disciple_fusion_active(user_doc):
-        value += disciple_defense(user_doc)
-    return value
+def player_defense(
+    user_doc: dict[str, Any],
+) -> int:
+    return player_defense_for_level(
+        player_level(user_doc)
+    )
 
 
-def player_dodge(user_doc: dict[str, Any]) -> float:
-    value = player_dodge_for_level(player_level(user_doc))
-    if buff_active(user_doc, "dodge_buff_until"):
+def player_dodge(
+    user_doc: dict[str, Any],
+) -> float:
+    value = player_dodge_for_level(
+        player_level(user_doc)
+    )
+    if buff_active(
+        user_doc,
+        "dodge_buff_until",
+    ):
         value *= 1.5
-    if disciple_fusion_active(user_doc):
-        value += disciple_dodge(user_doc)
     return min(MAX_PLAYER_DODGE, value)
 
 
-def player_hp_regen(user_doc: dict[str, Any]) -> int:
-    value = player_hp_regen_for_level(player_level(user_doc))
-    if disciple_fusion_active(user_doc):
-        value += disciple_hp_regen(user_doc)
-    return value
+def player_hp_regen(
+    user_doc: dict[str, Any],
+) -> int:
+    return player_hp_regen_for_level(
+        player_level(user_doc)
+    )
 
 
 def player_hp_state(user_doc: dict[str, Any]) -> tuple[int, int, int]:
@@ -730,6 +862,10 @@ async def ensure_user(collection, user) -> dict[str, Any]:
                     "disciple_charms": 0,
                     "disciple_fusions": 0,
                     "disciple_permanent_fusions": 0,
+                    "disciple_separations": 0,
+                    "disciple_dummy_hits": 0,
+                    "disciple_dummy_damage": 0,
+                    "disciple_dummy_xp": 0,
                     "deaths": 0,
                 },
                 "equipment_sets": {},
@@ -825,6 +961,14 @@ async def ensure_user(collection, user) -> dict[str, Any]:
                 repairs["disciple.hp"] = disciple_max
         if "maxed" not in disciple:
             repairs["disciple.maxed"] = False
+        if "xp" not in disciple:
+            repairs["disciple.xp"] = (
+                MAX_PLAYER_XP
+                if bool(disciple.get("maxed", False))
+                else 0
+            )
+        if "training_started_at" not in disciple:
+            repairs["disciple.training_started_at"] = now
         if "merge_level" not in disciple:
             repairs["disciple.merge_level"] = 0
         if "indestructible" not in disciple:
@@ -871,6 +1015,10 @@ async def ensure_user(collection, user) -> dict[str, Any]:
         "disciple_charms": 0,
         "disciple_fusions": 0,
         "disciple_permanent_fusions": 0,
+        "disciple_separations": 0,
+        "disciple_dummy_hits": 0,
+        "disciple_dummy_damage": 0,
+        "disciple_dummy_xp": 0,
         "deaths": 0,
     }
     stats_doc = doc.get("stats")

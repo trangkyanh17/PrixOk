@@ -95,9 +95,18 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.GameStatsCommand, "Xem toàn bộ chỉ số và thành tích nhân vật."),
         _row(BotCommands.DuckRaceCommand, "Đua vịt miễn phí; hồi lệnh 30 giây."),
         _row(BotCommands.WerewolfCommand, "Phòng Ma Sói 5-10 người; bot làm quản trò."),
-        _row(BotCommands.DiscipleCommand, "Xem đệ tử và trạng thái hợp thể."),
-        _row(BotCommands.FusionCommand, "Hợp thể với đệ tử trong 10 phút."),
-        _row(BotCommands.FusionPotionCommand, "Dùng thuốc hợp thể vĩnh viễn đã mua."),
+        _row(
+            BotCommands.DiscipleCommand,
+            "Xem cấp, XP, chỉ số đệ tử và trạng thái hợp thể.",
+        ),
+        _row(
+            BotCommands.FusionCommand,
+            "Hợp thể 10 phút; chỉ cộng HP và tấn công.",
+        ),
+        _row(
+            BotCommands.FusionPotionCommand,
+            "Bật hợp thể vĩnh viễn hoặc tách hợp thể ngay.",
+        ),
         "",
         "<b>Cửa hàng, cược và chuyển xu</b>",
         _row(BotCommands.ShopCommand, "Mở shop chung: set, bùa và thuyền vịt."),
@@ -138,11 +147,11 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         ),
         _row(
             BotCommands.AttackBossCommand,
-            "danhboss [mã_trận] đánh 1 lần; autoboss on [boss_id] [2-300 giây].",
+            "attack [mã_trận] để sư phụ và đệ tử đánh; autoboss vẫn được giữ.",
         ),
         _row(
             BotCommands.TrainingDummyCommand,
-            "bunhin nhận XP và xu; bùa tiền dùng cho bù nhìn, đua vịt và Ma Sói.",
+            "bunhin/autobunhin: sư phụ nhận thưởng, đệ tử tự đánh để tăng cấp.",
         ),
         _row(BotCommands.ExecuteBossCommand, "Kết liễu boss siêu cấp trả phí."),
         "",

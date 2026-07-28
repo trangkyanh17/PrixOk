@@ -24,6 +24,7 @@ from .game_common import (
     add_coins,
     boss_collection,
     capped_xp_gain,
+    capped_disciple_xp_gain,
     dummy_coin_reward,
     chat_lock,
     disciple_armor_penetration_bonus,
@@ -34,6 +35,8 @@ from .game_common import (
     disciple_fusion_active,
     disciple_hp_state,
     disciple_is_alive,
+    disciple_level,
+    disciple_max_hp,
     disciple_state,
     FEMALE_CHARM_CHANCE,
     FEMALE_CHARM_SECONDS,
@@ -1547,11 +1550,6 @@ async def attack_boss(_, message):
         gear = equipped_set_stats(user_doc)
         attack_multiplier = gear["attack"] if gear else 1.0
         crit_chance = gear["crit"] if gear else 0.0
-        if fused:
-            crit_chance = min(
-                MAX_EQUIPMENT_CRIT,
-                crit_chance + float(disciple_equipment_stats(user_doc)["crit"]),
-            )
         raw_master_damage = int(
             round(player_attack(user_doc) * attack_multiplier * RNG.uniform(0.85, 1.15))
         )
@@ -1736,11 +1734,6 @@ async def attack_boss(_, message):
                     else:
                         defense = player_defense(user_doc)
                         protection = int(gear["protection"]) if gear is not None and gear["armor_active"] else 0
-                        if fused:
-                            protection = min(
-                                95,
-                                protection + int(disciple_equipment_stats(user_doc)["protection"]),
-                            )
                         effective_defense = defense * rage_armor_factor * (1.0 - penetration)
                         effective_protection = protection * rage_armor_factor * (1.0 - penetration)
                         after_defense = raw_target_damage * 1_000 / (1_000 + effective_defense)
@@ -1879,18 +1872,34 @@ async def attack_boss(_, message):
 @new_task
 @entertainment_guard
 async def training_dummy(_, message):
-    collection = await require_game_collection(message)
-    if collection is None or await require_user(message) is None:
+    collection = await require_game_collection(
+        message
+    )
+    if (
+        collection is None
+        or await require_user(message) is None
+    ):
         return
 
     async with user_lock(message.from_user.id):
-        user_doc = await ensure_message_user(collection, message)
+        user_doc = await ensure_message_user(
+            collection,
+            message,
+        )
         if user_doc is None:
             return
 
         gear = equipped_set_stats(user_doc)
-        attack_multiplier = gear["attack"] if gear else 1.0
-        crit_chance = gear["crit"] if gear else 0.0
+        attack_multiplier = (
+            gear["attack"]
+            if gear
+            else 1.0
+        )
+        crit_chance = (
+            gear["crit"]
+            if gear
+            else 0.0
+        )
         damage = max(
             1,
             int(
@@ -1910,45 +1919,217 @@ async def training_dummy(_, message):
             * NORMAL_GAME_REWARD_XP_MULTIPLIER
             * DUMMY_ACTIVITY_XP_MULTIPLIER
         )
-        xp_gain = capped_xp_gain(user_doc, base_xp)
+        xp_gain = capped_xp_gain(
+            user_doc,
+            base_xp,
+        )
         activity_base_coins = (
-            RNG.randint(DUMMY_COIN_MIN, DUMMY_COIN_MAX)
+            RNG.randint(
+                DUMMY_COIN_MIN,
+                DUMMY_COIN_MAX,
+            )
             * NORMAL_GAME_REWARD_XP_MULTIPLIER
         )
         coin_gain = dummy_coin_reward(
             user_doc,
-            activity_base_coins * DUMMY_ACTIVITY_COIN_MULTIPLIER,
+            activity_base_coins
+            * DUMMY_ACTIVITY_COIN_MULTIPLIER,
+        )
+
+        disciple = disciple_state(user_doc)
+        disciple_training = bool(
+            disciple is not None
+            and disciple_is_alive(user_doc)
+            and not disciple_fusion_active(
+                user_doc
+            )
+        )
+        disciple_damage = 0
+        disciple_critical = False
+        disciple_xp_gain = 0
+        old_disciple_level = 0
+        new_disciple_level = 0
+        disciple_set_values: dict[str, int] = {}
+
+        if disciple_training:
+            old_disciple_level = disciple_level(
+                user_doc
+            )
+            disciple_damage = max(
+                1,
+                int(
+                    round(
+                        disciple_attack_value(
+                            user_doc
+                        )
+                        * RNG.uniform(0.90, 1.10)
+                    )
+                ),
+            )
+            disciple_critical = (
+                RNG.random()
+                < float(
+                    disciple_equipment_stats(
+                        user_doc
+                    )["crit"]
+                )
+            )
+            if disciple_critical:
+                disciple_damage *= 2
+
+            disciple_xp_gain = (
+                capped_disciple_xp_gain(
+                    user_doc,
+                    base_xp,
+                )
+            )
+            (
+                old_disciple_hp,
+                old_disciple_max,
+                _,
+            ) = disciple_hp_state(user_doc)
+            projected_disciple = dict(disciple)
+            projected_disciple["xp"] = min(
+                MAX_PLAYER_XP,
+                int(
+                    disciple.get("xp", 0)
+                    or 0
+                )
+                + disciple_xp_gain,
+            )
+            projected_doc = dict(user_doc)
+            projected_doc[
+                "disciple"
+            ] = projected_disciple
+            new_disciple_level = disciple_level(
+                projected_doc
+            )
+            new_disciple_max = disciple_max_hp(
+                projected_doc
+            )
+            new_disciple_hp = min(
+                new_disciple_max,
+                old_disciple_hp
+                + max(
+                    0,
+                    new_disciple_max
+                    - old_disciple_max,
+                ),
+            )
+            disciple_set_values = {
+                "disciple.hp": new_disciple_hp,
+                "disciple.max_hp": new_disciple_max,
+                "disciple.dead_until": 0,
+            }
+
+        increments = {
+            "coins": coin_gain,
+            "xp": xp_gain,
+            "stats.dummy_hits": 1,
+            "stats.dummy_damage": damage,
+            "stats.dummy_xp": xp_gain,
+            "stats.dummy_coins": coin_gain,
+        }
+        if disciple_training:
+            increments.update(
+                {
+                    "disciple.xp": disciple_xp_gain,
+                    "stats.disciple_dummy_hits": 1,
+                    "stats.disciple_dummy_damage": (
+                        disciple_damage
+                    ),
+                    "stats.disciple_dummy_xp": (
+                        disciple_xp_gain
+                    ),
+                }
+            )
+
+        set_values = {"updated_at": time()}
+        set_values.update(
+            disciple_set_values
         )
         await collection.update_one(
             {"_id": message.from_user.id},
             {
-                "$inc": {
-                    "coins": coin_gain,
-                    "xp": xp_gain,
-                    "stats.dummy_hits": 1,
-                    "stats.dummy_damage": damage,
-                    "stats.dummy_xp": xp_gain,
-                    "stats.dummy_coins": coin_gain,
-                },
-                "$set": {"updated_at": time()},
+                "$inc": increments,
+                "$set": set_values,
             },
         )
 
-    crit_text = " 💥 CHÍ MẠNG" if critical else ""
-    buff_text = (
-        " · bùa x2 tiền đã áp dụng"
-        if coin_gain > int(round(activity_base_coins * DUMMY_ACTIVITY_COIN_MULTIPLIER))
+    crit_text = (
+        " 💥 CHÍ MẠNG"
+        if critical
         else ""
     )
+    buff_text = (
+        " · bùa x2 tiền đã áp dụng"
+        if coin_gain
+        > int(
+            round(
+                activity_base_coins
+                * DUMMY_ACTIVITY_COIN_MULTIPLIER
+            )
+        )
+        else ""
+    )
+    disciple_lines: list[str] = []
+    if disciple_training:
+        disciple_crit_text = (
+            " 💥 CHÍ MẠNG"
+            if disciple_critical
+            else ""
+        )
+        level_up_text = (
+            " · lên cấp "
+            f"<b>{new_disciple_level}</b>"
+            if new_disciple_level
+            > old_disciple_level
+            else ""
+        )
+        disciple_lines.append(
+            "🧑‍🎓 Đệ tử tự đánh "
+            f"<b>{format_number(disciple_damage)}</b> "
+            f"sát thương{disciple_crit_text}."
+        )
+        disciple_lines.append(
+            "⭐ Đệ tử nhận "
+            f"<b>+{disciple_xp_gain} XP</b>"
+            f"{level_up_text}."
+        )
+    elif disciple is not None:
+        if disciple_fusion_active(user_doc):
+            disciple_lines.append(
+                "🔗 Đệ tử đang hợp thể; tấn công "
+                "đã cộng vào sư phụ."
+            )
+        else:
+            _, _, remaining = disciple_hp_state(
+                user_doc
+            )
+            disciple_lines.append(
+                "💀 Đệ tử đang hồi sinh, còn "
+                f"<b>{remaining // 60}p "
+                f"{remaining % 60}s</b>."
+            )
+
     await send_message(
         message,
         "🎯 <b>Bù nhìn rơm bất tử</b>\n\n"
-        f"👊 Gây <b>{format_number(damage)}</b> sát thương"
-        f"{crit_text}.\n"
+        "👊 Gây "
+        f"<b>{format_number(damage)}</b> "
+        f"sát thương{crit_text}.\n"
         f"⭐ Nhận <b>+{xp_gain} XP</b>.\n"
-        f"💰 Nhận <b>{format_number(coin_gain)} xu</b>{buff_text}.\n"
-        "Thưởng xu bằng x1,5 hoạt động giải trí cũ; "
-        "bùa x2 tiền chỉ có hiệu lực tại bù nhìn.",
+        "💰 Nhận "
+        f"<b>{format_number(coin_gain)} xu</b>"
+        f"{buff_text}.\n"
+        + (
+            "\n".join(disciple_lines) + "\n"
+            if disciple_lines
+            else ""
+        )
+        + "Thưởng xu bằng x1,5 hoạt động "
+        "giải trí cũ; bùa x2 tiền chỉ có "
+        "hiệu lực tại bù nhìn.",
     )
 
 
