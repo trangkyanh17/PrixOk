@@ -142,7 +142,7 @@ async def _auto_dummy_loop(key: TaskKey, state: dict[str, Any]) -> None:
     paused = False
     try:
         while True:
-            if not await entertainment_enabled():
+            if not await entertainment_enabled(message.chat.id):
                 if not paused:
                     paused = True
                     await send_message(
@@ -186,7 +186,7 @@ async def _auto_boss_loop(key: TaskKey, state: dict[str, Any]) -> None:
     paused = False
     try:
         while True:
-            if not await entertainment_enabled():
+            if not await entertainment_enabled(message.chat.id):
                 if not paused:
                     paused = True
                     await send_message(
@@ -330,7 +330,7 @@ async def auto_training_dummy(_, message):
     if interval is None:
         await send_message(message, "❌ Chu kỳ phải từ 2 đến 300 giây.")
         return
-    if not await entertainment_enabled():
+    if not await entertainment_enabled(message.chat.id):
         await send_message(message, "⛔ Khu vực giải trí đang tạm đóng.")
         return
     current = AUTO_DUMMY_TASKS.get(key)
@@ -430,7 +430,7 @@ async def auto_boss(_, message):
     else:
         selector = "random"
 
-    if not await entertainment_enabled():
+    if not await entertainment_enabled(message.chat.id):
         await send_message(message, "⛔ Khu vực giải trí đang tạm đóng.")
         return
     current = AUTO_BOSS_TASKS.get(key)

@@ -15,6 +15,9 @@ from .game_common import (
     EQUIPMENT_PART_LABELS,
     EQUIPMENT_SETS,
     NORMAL_GAME_REWARD_XP_MULTIPLIER,
+    DISCIPLE_RESPAWN_SECONDS,
+    MAX_EQUIPMENT_CRIT,
+    MAX_EQUIPMENT_MERGE_LEVEL,
     MAX_PLAYER_LEVEL,
     MAX_PLAYER_XP,
     PLAYER_RESPAWN_SECONDS,
@@ -23,6 +26,17 @@ from .game_common import (
     capped_xp_gain,
     dummy_coin_reward,
     chat_lock,
+    disciple_armor_penetration_bonus,
+    disciple_attack_value,
+    disciple_defense,
+    disciple_dodge,
+    disciple_equipment_stats,
+    disciple_fusion_active,
+    disciple_hp_state,
+    disciple_is_alive,
+    disciple_state,
+    FEMALE_CHARM_CHANCE,
+    FEMALE_CHARM_SECONDS,
     effective_set_stats,
     ensure_message_user,
     entertainment_guard,
@@ -80,7 +94,6 @@ BOSS_REWARD_RATE = 0.50
 BOSS_ENRAGE_THRESHOLD = 0.50
 BOSS_ENRAGE_MULTIPLIER = 3
 BOSS_ENRAGE_ARMOR_REDUCTION = 0.50
-MAX_EQUIPMENT_MERGE_LEVEL = 10
 SUPER_BOSS_EXECUTION_COST = 50_000_000
 SUPER_BOSS_PAID_REWARD_RATE = 0.05
 BOSS_DEFENSE_SCALE = 5_000
@@ -796,7 +809,7 @@ def _owned_sets_text(user_doc: dict) -> str:
             f"   ⚔️ Vũ khí {weapon_text} · "
             f"tấn công x{stats['attack']:.2f} · "
             f"sửa {stats['weapon_repairs']} lần\n"
-            f"   🧬 Hợp nhất +{stats['merge_level']}/10"
+            f"   🧬 Hợp nhất +{stats['merge_level']}/{MAX_EQUIPMENT_MERGE_LEVEL}"
         )
     return "\n".join(lines)
 
@@ -996,7 +1009,7 @@ async def merge_equipment(_, message):
         if merge_level >= MAX_EQUIPMENT_MERGE_LEVEL:
             await send_message(
                 message,
-                "❌ Set này đã đạt cấp hợp nhất tối đa <b>+10</b>.",
+                f"❌ Set này đã đạt cấp hợp nhất tối đa <b>+{MAX_EQUIPMENT_MERGE_LEVEL}</b>.",
             )
             return
 
@@ -1104,7 +1117,7 @@ async def merge_equipment(_, message):
             f"⚔️ Tăng giới hạn bền vũ khí: "
             f"<b>+{format_number(weapon_gain)}</b>\n"
             f"🛡 Tăng bảo vệ: <b>+{protection_gain} điểm</b>\n"
-            f"🧬 Cấp hợp nhất: <b>+{merge_level + 1}/10</b>\n"
+            f"🧬 Cấp hợp nhất: <b>+{merge_level + 1}/{MAX_EQUIPMENT_MERGE_LEVEL}</b>\n"
             "Giáp và vũ khí được khôi phục đầy đủ; hao mòn vĩnh viễn "
             "trước đó đã được xóa.",
         )
@@ -1522,33 +1535,29 @@ async def attack_boss(_, message):
             hp = max_hp
             revive_line = f"✨ Đã hồi sinh với <b>{format_number(max_hp)} HP</b>.\n"
 
-        boss = await _resolve_active_boss(
-            bosses,
-            message.chat.id,
-            boss_selector,
-        )
+        boss = await _resolve_active_boss(bosses, message.chat.id, boss_selector)
         if not boss:
-            hint = (
-                " Dùng <code>/boss</code> để xem mã trận."
-                if boss_selector
-                else ""
-            )
+            hint = " Dùng <code>/boss</code> để xem mã trận." if boss_selector else ""
             await send_message(message, "Không tìm thấy boss hoạt động." + hint)
             return
 
+        fused = disciple_fusion_active(user_doc)
+        disciple = disciple_state(user_doc)
+        disciple_active = disciple is not None and disciple_is_alive(user_doc)
         gear = equipped_set_stats(user_doc)
         attack_multiplier = gear["attack"] if gear else 1.0
         crit_chance = gear["crit"] if gear else 0.0
-        raw_damage = int(
-            round(
-                player_attack(user_doc)
-                * attack_multiplier
-                * RNG.uniform(0.85, 1.15)
+        if fused:
+            crit_chance = min(
+                MAX_EQUIPMENT_CRIT,
+                crit_chance + float(disciple_equipment_stats(user_doc)["crit"]),
             )
+        raw_master_damage = int(
+            round(player_attack(user_doc) * attack_multiplier * RNG.uniform(0.85, 1.15))
         )
-        critical = RNG.random() < crit_chance
-        if critical:
-            raw_damage = int(round(raw_damage * 2.0))
+        master_critical = RNG.random() < crit_chance
+        if master_critical:
+            raw_master_damage = int(round(raw_master_damage * 2.0))
 
         boss_hp_before = max(0, int(boss.get("hp", 0) or 0))
         boss_max_hp = max(1, int(boss.get("max_hp", 1) or 1))
@@ -1558,26 +1567,59 @@ async def attack_boss(_, message):
         boss_defense = max(0, int(boss.get("defense", 0) or 0))
         if was_enraged:
             boss_defense *= BOSS_ENRAGE_MULTIPLIER
-        damage = max(
-            1,
-            ceil(
-                raw_damage
-                * BOSS_DEFENSE_SCALE
-                / (BOSS_DEFENSE_SCALE + boss_defense)
-            ),
+
+        player_penetration = max(
+            0.0,
+            min(1.0, disciple_armor_penetration_bonus(user_doc)),
         )
+        effective_boss_defense = int(round(boss_defense * (1.0 - player_penetration)))
+
+        def damage_after_defense(raw_value: int) -> int:
+            return max(
+                1,
+                ceil(
+                    raw_value
+                    * BOSS_DEFENSE_SCALE
+                    / (BOSS_DEFENSE_SCALE + effective_boss_defense)
+                ),
+            )
+
+        master_damage = damage_after_defense(raw_master_damage)
+        disciple_damage = 0
+        raw_disciple_damage = 0
+        disciple_critical = False
+        if disciple_active and not fused:
+            disciple_gear = disciple_equipment_stats(user_doc)
+            raw_disciple_damage = int(
+                round(disciple_attack_value(user_doc) * RNG.uniform(0.85, 1.15))
+            )
+            disciple_critical = RNG.random() < float(disciple_gear["crit"])
+            if disciple_critical:
+                raw_disciple_damage = int(round(raw_disciple_damage * 2.0))
+            disciple_damage = damage_after_defense(raw_disciple_damage)
+
+        total_damage = master_damage + disciple_damage
+        charm_triggered = bool(
+            disciple_active
+            and str(disciple.get("gender")) == "female"
+            and RNG.random() < FEMALE_CHARM_CHANCE
+        )
+        set_values = {
+            "last_hitter": message.from_user.id,
+            "last_attack_at": now,
+        }
+        if charm_triggered:
+            set_values["charmed_until"] = now + FEMALE_CHARM_SECONDS
+            set_values["charmed_by"] = message.from_user.id
 
         updated = await bosses.find_one_and_update(
             {"_id": boss["_id"], "status": "active", "hp": {"$gt": 0}},
             {
                 "$inc": {
-                    "hp": -damage,
-                    f"damage.{message.from_user.id}": damage,
+                    "hp": -total_damage,
+                    f"damage.{message.from_user.id}": total_damage,
                 },
-                "$set": {
-                    "last_hitter": message.from_user.id,
-                    "last_attack_at": now,
-                },
+                "$set": set_values,
             },
             return_document=ReturnDocument.AFTER,
         )
@@ -1586,11 +1628,10 @@ async def attack_boss(_, message):
             return
 
         enraged = int(updated["hp"]) > 0 and (
-            int(updated["hp"])
-            <= int(updated["max_hp"]) * BOSS_ENRAGE_THRESHOLD
+            int(updated["hp"]) <= int(updated["max_hp"]) * BOSS_ENRAGE_THRESHOLD
         )
         rage_just_started = enraged and not bool(updated.get("enraged", False))
-        if enraged and not bool(updated.get("enraged", False)):
+        if rage_just_started:
             await bosses.update_one(
                 {"_id": updated["_id"], "status": "active"},
                 {"$set": {"enraged": True, "enraged_at": now}},
@@ -1611,7 +1652,9 @@ async def attack_boss(_, message):
                 "hp_regen_at": now,
             },
             "$inc": {
-                "stats.boss_damage": damage,
+                "stats.boss_damage": total_damage,
+                "stats.disciple_boss_damage": disciple_damage,
+                "stats.disciple_charms": 1 if charm_triggered else 0,
                 **loot_inc,
             },
         }
@@ -1620,183 +1663,163 @@ async def attack_boss(_, message):
         retaliation_lines: list[str] = []
         wear_lines: list[str] = []
         rage_lines: list[str] = []
+        disciple_lines: list[str] = []
         if rage_just_started:
             rage_lines.append(
                 "🔥 <b>BOSS CUỒNG NỘ!</b> Công và phòng thủ x3; "
                 "giáp của người tham chiến bị giảm 50% trong trận này."
             )
+        if charm_triggered:
+            disciple_lines.append(
+                f"💘 Đệ tử Nữ đã mê hoặc boss trong <b>{FEMALE_CHARM_SECONDS} giây</b>."
+            )
+        if player_penetration > 0:
+            disciple_lines.append(
+                f"🗡 Đệ tử Nam tăng xuyên giáp của cả hai lên "
+                f"<b>{player_penetration * 100:.0f}%</b>."
+            )
 
         if int(updated["hp"]) > 0:
-            dodge = player_dodge(user_doc)
-            if RNG.random() < dodge:
-                retaliation_lines.append(
-                    f"💨 <b>NÉ ĐÒN THÀNH CÔNG!</b> Tỉ lệ né: "
-                    f"<b>{dodge * 100:.2f}%</b>."
-                )
-                user_update["$set"]["dead_until"] = 0
+            charmed = float(updated.get("charmed_until", 0) or 0) > now
+            if charmed:
+                retaliation_lines.append("💘 Boss đang bị mê hoặc nên không thể phản đòn.")
             else:
-                attack_min = int(
-                    updated.get(
-                        "attack_min",
-                        80 + _boss_tier(updated) * 35,
-                    )
-                )
-                attack_max = int(
-                    updated.get(
-                        "attack_max",
-                        120 + _boss_tier(updated) * 55,
-                    )
-                )
+                target_disciple = bool(disciple_active and not fused and RNG.random() < 0.50)
+                attack_min = int(updated.get("attack_min", 80 + _boss_tier(updated) * 35))
+                attack_max = int(updated.get("attack_max", 120 + _boss_tier(updated) * 55))
                 if enraged:
                     attack_min *= BOSS_ENRAGE_MULTIPLIER
                     attack_max *= BOSS_ENRAGE_MULTIPLIER
-                raw_player_damage = RNG.randint(attack_min, attack_max)
-                defense = player_defense(user_doc)
-                protection = (
-                    int(gear["protection"])
-                    if gear is not None and gear["armor_active"]
-                    else 0
-                )
-
-                rage_armor_factor = (
-                    1.0 - BOSS_ENRAGE_ARMOR_REDUCTION
-                    if enraged
-                    else 1.0
-                )
-                rage_defense = defense * rage_armor_factor
-                rage_protection = protection * rage_armor_factor
-
-                penetration = float(
-                    updated.get(
-                        "armor_penetration",
-                        BOSS_ARMOR_PENETRATION,
-                    )
-                    or BOSS_ARMOR_PENETRATION
-                )
+                raw_target_damage = RNG.randint(attack_min, attack_max)
+                rage_armor_factor = 1.0 - BOSS_ENRAGE_ARMOR_REDUCTION if enraged else 1.0
+                penetration = float(updated.get("armor_penetration", BOSS_ARMOR_PENETRATION) or BOSS_ARMOR_PENETRATION)
                 penetration = max(0.0, min(1.0, penetration))
-                effective_defense = max(
-                    0.0,
-                    rage_defense * (1.0 - penetration),
-                )
-                effective_protection = max(
-                    0.0,
-                    rage_protection * (1.0 - penetration),
-                )
-                after_defense = (
-                    raw_player_damage
-                    * 1_000
-                    / (1_000 + effective_defense)
-                )
-                hp_damage = max(
-                    1,
-                    ceil(
-                        after_defense
-                        * (1.0 - effective_protection / 100.0)
-                    ),
-                )
-                new_hp = max(0, hp - hp_damage)
-                user_update["$set"]["hp"] = new_hp
 
-                retaliation_lines.append(
-                    f"👹 Boss phản đòn <b>{format_number(hp_damage)} sát thương</b>."
-                )
-                if enraged:
-                    retaliation_lines.append(
-                        "🔥 Cuồng nộ: công boss x3 và giáp người chơi chỉ còn 50% hiệu lực."
-                    )
-                retaliation_lines.append(
-                    f"🛡 Phòng thủ {format_number(defense)} · "
-                    f"bảo vệ trang bị {protection}% · "
-                    f"boss xuyên giáp {penetration * 100:.0f}%."
-                )
-                retaliation_lines.append(
-                    f"❤️ HP còn <b>{format_number(new_hp)}/"
-                    f"{format_number(max_hp)}</b>."
-                )
-
-                if new_hp <= 0:
-                    user_update["$set"]["dead_until"] = now + PLAYER_RESPAWN_SECONDS
-                    user_update["$inc"]["stats.deaths"] = (
-                        user_update["$inc"].get("stats.deaths", 0) + 1
-                    )
-                    retaliation_lines.append(
-                        "💀 Mày đã gục ngã; cần chờ <b>1 phút</b> "
-                        "để đánh boss tiếp."
-                    )
+                if target_disciple:
+                    d_hp, d_max_hp, _ = disciple_hp_state(user_doc)
+                    d_dodge = disciple_dodge(user_doc)
+                    if RNG.random() < d_dodge:
+                        retaliation_lines.append(
+                            f"🧑‍🎓 Đệ tử né đòn thành công! Tỉ lệ né <b>{d_dodge * 100:.2f}%</b>."
+                        )
+                    else:
+                        d_defense = disciple_defense(user_doc)
+                        d_protection = int(disciple_equipment_stats(user_doc)["protection"])
+                        effective_defense = d_defense * rage_armor_factor * (1.0 - penetration)
+                        effective_protection = d_protection * rage_armor_factor * (1.0 - penetration)
+                        after_defense = raw_target_damage * 1_000 / (1_000 + effective_defense)
+                        hp_damage = max(1, ceil(after_defense * (1.0 - effective_protection / 100.0)))
+                        new_d_hp = max(0, d_hp - hp_damage)
+                        user_update["$set"]["disciple.hp"] = new_d_hp
+                        user_update["$set"]["disciple.max_hp"] = d_max_hp
+                        retaliation_lines.append(
+                            f"👹 Boss phản đòn đệ tử <b>{format_number(hp_damage)} sát thương</b>."
+                        )
+                        retaliation_lines.append(
+                            f"🧑‍🎓 HP đệ tử còn <b>{format_number(new_d_hp)}/{format_number(d_max_hp)}</b>."
+                        )
+                        if new_d_hp <= 0:
+                            user_update["$set"]["disciple.dead_until"] = now + DISCIPLE_RESPAWN_SECONDS
+                            user_update["$inc"]["stats.disciple_deaths"] = 1
+                            retaliation_lines.append(
+                                "💀 Đệ tử đã gục ngã và sẽ hồi sinh sau <b>1 phút</b>."
+                            )
+                        else:
+                            user_update["$set"]["disciple.dead_until"] = 0
                 else:
-                    user_update["$set"]["dead_until"] = 0
-
-                if gear is not None and not bool(gear.get("indestructible", False)):
-                    if gear["armor_active"]:
-                        armor_wear = RNG.randint(BOSS_WEAR_MIN, BOSS_WEAR_MAX)
-                        new_armor_durability = max(
-                            0,
-                            int(gear["armor_durability"]) - armor_wear,
+                    dodge = player_dodge(user_doc)
+                    if RNG.random() < dodge:
+                        retaliation_lines.append(
+                            f"💨 <b>NÉ ĐÒN THÀNH CÔNG!</b> Tỉ lệ né: <b>{dodge * 100:.2f}%</b>."
                         )
-                        user_update["$set"][
-                            f"equipment_sets.{gear['id']}.armor_durability"
-                        ] = new_armor_durability
-                        wear_lines.append(
-                            f"🛡 Giáp mất <b>{armor_wear}</b> bền "
-                            f"({format_number(new_armor_durability)}/"
-                            f"{format_number(gear['armor_max_durability'])})"
-                        )
-                        if new_armor_durability == 0:
-                            user_update["$set"][
-                                f"equipment_sets.{gear['id']}.armor_owned"
-                            ] = False
-                            wear_lines.append(
-                                "💥 Áo giáp đã biến mất. "
-                                "Phần vũ khí còn độ bền vẫn được giữ nguyên."
+                        user_update["$set"]["dead_until"] = 0
+                    else:
+                        defense = player_defense(user_doc)
+                        protection = int(gear["protection"]) if gear is not None and gear["armor_active"] else 0
+                        if fused:
+                            protection = min(
+                                95,
+                                protection + int(disciple_equipment_stats(user_doc)["protection"]),
                             )
-
-                    if gear["weapon_active"]:
-                        weapon_wear = RNG.randint(BOSS_WEAR_MIN, BOSS_WEAR_MAX)
-                        new_weapon_durability = max(
-                            0,
-                            int(gear["weapon_durability"]) - weapon_wear,
+                        effective_defense = defense * rage_armor_factor * (1.0 - penetration)
+                        effective_protection = protection * rage_armor_factor * (1.0 - penetration)
+                        after_defense = raw_target_damage * 1_000 / (1_000 + effective_defense)
+                        hp_damage = max(1, ceil(after_defense * (1.0 - effective_protection / 100.0)))
+                        new_hp = max(0, hp - hp_damage)
+                        user_update["$set"]["hp"] = new_hp
+                        retaliation_lines.append(
+                            f"👹 Boss phản đòn <b>{format_number(hp_damage)} sát thương</b>."
                         )
-                        user_update["$set"][
-                            f"equipment_sets.{gear['id']}.weapon_durability"
-                        ] = new_weapon_durability
-                        wear_lines.append(
-                            f"⚔️ Vũ khí mất <b>{weapon_wear}</b> bền "
-                            f"({format_number(new_weapon_durability)}/"
-                            f"{format_number(gear['weapon_max_durability'])})"
-                        )
-                        if new_weapon_durability == 0:
-                            user_update["$set"][
-                                f"equipment_sets.{gear['id']}.weapon_owned"
-                            ] = False
-                            wear_lines.append(
-                                "💥 Vũ khí đã biến mất. "
-                                "Phần áo giáp còn độ bền vẫn được giữ nguyên."
+                        if enraged:
+                            retaliation_lines.append(
+                                "🔥 Cuồng nộ: công boss x3 và giáp người chơi chỉ còn 50% hiệu lực."
                             )
+                        retaliation_lines.append(
+                            f"🛡 Phòng thủ {format_number(defense)} · bảo vệ trang bị {protection}% · "
+                            f"boss xuyên giáp {penetration * 100:.0f}%."
+                        )
+                        retaliation_lines.append(
+                            f"❤️ HP còn <b>{format_number(new_hp)}/{format_number(max_hp)}</b>."
+                        )
+                        if new_hp <= 0:
+                            user_update["$set"]["dead_until"] = now + PLAYER_RESPAWN_SECONDS
+                            user_update["$inc"]["stats.deaths"] = user_update["$inc"].get("stats.deaths", 0) + 1
+                            retaliation_lines.append(
+                                "💀 Mày đã gục ngã; cần chờ <b>1 phút</b> để đánh boss tiếp."
+                            )
+                        else:
+                            user_update["$set"]["dead_until"] = 0
+
+                        if gear is not None and not bool(gear.get("indestructible", False)):
+                            if gear["armor_active"]:
+                                armor_wear = RNG.randint(BOSS_WEAR_MIN, BOSS_WEAR_MAX)
+                                new_armor_durability = max(0, int(gear["armor_durability"]) - armor_wear)
+                                user_update["$set"][f"equipment_sets.{gear['id']}.armor_durability"] = new_armor_durability
+                                wear_lines.append(
+                                    f"🛡 Giáp mất <b>{armor_wear}</b> bền "
+                                    f"({format_number(new_armor_durability)}/{format_number(gear['armor_max_durability'])})"
+                                )
+                                if new_armor_durability == 0:
+                                    user_update["$set"][f"equipment_sets.{gear['id']}.armor_owned"] = False
+                                    wear_lines.append("💥 Áo giáp đã biến mất.")
+                            if gear["weapon_active"]:
+                                weapon_wear = RNG.randint(BOSS_WEAR_MIN, BOSS_WEAR_MAX)
+                                new_weapon_durability = max(0, int(gear["weapon_durability"]) - weapon_wear)
+                                user_update["$set"][f"equipment_sets.{gear['id']}.weapon_durability"] = new_weapon_durability
+                                wear_lines.append(
+                                    f"⚔️ Vũ khí mất <b>{weapon_wear}</b> bền "
+                                    f"({format_number(new_weapon_durability)}/{format_number(gear['weapon_max_durability'])})"
+                                )
+                                if new_weapon_durability == 0:
+                                    user_update["$set"][f"equipment_sets.{gear['id']}.weapon_owned"] = False
+                                    wear_lines.append("💥 Vũ khí đã biến mất.")
         else:
             user_update["$set"]["dead_until"] = 0
 
-        await collection.update_one(
-            {"_id": message.from_user.id},
-            user_update,
-        )
+        await collection.update_one({"_id": message.from_user.id}, user_update)
         wear_lines.extend(
-            await auto_repair_equipped_after_boss(
-                collection,
-                message.from_user.id,
-            )
+            await auto_repair_equipped_after_boss(collection, message.from_user.id)
         )
 
-    crit_text = " 💥 <b>CHÍ MẠNG</b>" if critical else ""
+    master_crit_text = " 💥 <b>CHÍ MẠNG</b>" if master_critical else ""
+    disciple_crit_text = " 💥 <b>CHÍ MẠNG</b>" if disciple_critical else ""
+    raw_total = raw_master_damage + raw_disciple_damage
     defense_text = (
-        f"🛡 Phòng thủ boss hấp thụ "
-        f"<b>{format_number(max(0, raw_damage - damage))}</b> sát thương."
+        f"🛡 Phòng thủ boss hấp thụ <b>{format_number(max(0, raw_total - total_damage))}</b> sát thương."
         if boss_defense
         else ""
     )
     combat_lines = [
         revive_line.rstrip(),
-        f"⚔️ Gây <b>{format_number(damage)}</b> sát thương.{crit_text}",
+        f"⚔️ Sư phụ gây <b>{format_number(master_damage)}</b> sát thương.{master_crit_text}",
+        (
+            f"🧑‍🎓 Đệ tử gây <b>{format_number(disciple_damage)}</b> sát thương.{disciple_crit_text}"
+            if disciple_damage
+            else ""
+        ),
+        ("✨ Đang hợp thể: chỉ số đệ tử đã cộng trực tiếp vào sư phụ." if fused else ""),
         defense_text,
+        *disciple_lines,
         *rage_lines,
         *loot_lines,
         *retaliation_lines,
@@ -1810,24 +1833,20 @@ async def attack_boss(_, message):
             message,
             combat_text
             + "\n"
-            + f"❤️ Boss còn <b>{format_number(updated['hp'])}/"
-            f"{format_number(updated['max_hp'])}</b> HP{rage_suffix}.\n"
+            + f"❤️ Boss còn <b>{format_number(updated['hp'])}/{format_number(updated['max_hp'])}</b> HP{rage_suffix}.\n"
             f"🆔 Mã trận: <code>{escape(str(updated.get('instance_id', updated['_id'])))}</code>",
         )
         return
 
     defeated = await bosses.find_one_and_update(
-        {
-            "_id": updated["_id"],
-            "status": "active",
-            "hp": {"$lte": 0},
-        },
+        {"_id": updated["_id"], "status": "active", "hp": {"$lte": 0}},
         {
             "$set": {
                 "status": "defeated",
                 "defeated_at": time(),
                 "hp": 0,
                 "enraged": False,
+                "charmed_until": 0,
             }
         },
         return_document=ReturnDocument.AFTER,
@@ -1835,18 +1854,11 @@ async def attack_boss(_, message):
     if defeated is None:
         return
 
-    rewards = await _distribute_boss_rewards(
-        collection,
-        defeated,
-        message.from_user.id,
-    )
+    rewards = await _distribute_boss_rewards(collection, defeated, message.from_user.id)
     reward_lines = [
         f"{index}. <code>{user_id}</code> — {format_number(reward)} xu · "
-        f"{format_number(total_damage)} sát thương"
-        for index, (user_id, reward, total_damage) in enumerate(
-            rewards[:10],
-            start=1,
-        )
+        f"{format_number(total_user_damage)} sát thương"
+        for index, (user_id, reward, total_user_damage) in enumerate(rewards[:10], start=1)
     ]
     super_text = (
         "\n🌌 Đây là boss siêu cấp; kho thưởng đã được giảm còn 50%."
@@ -1857,17 +1869,12 @@ async def attack_boss(_, message):
         message,
         combat_text
         + "\n\n"
-        + f"🏆 <b>{escape(defeated['name'])} đã bị tiêu diệt!</b>"
-        f"{super_text}\n\n"
-        f"Người kết liễu: "
-        f"<b>{escape(message.from_user.first_name or str(message.from_user.id))}</b>\n"
+        + f"🏆 <b>{escape(defeated['name'])} đã bị tiêu diệt!</b>{super_text}\n\n"
+        f"Người kết liễu: <b>{escape(message.from_user.first_name or str(message.from_user.id))}</b>\n"
         f"Kho thưởng: <b>{format_number(defeated['reward'])} xu</b>\n"
-        "🔥 Hiệu ứng cuồng nộ và giảm giáp đã biến mất.\n\n"
-        f"<b>Phân phối phần thưởng</b>\n"
-        + "\n".join(reward_lines),
+        "🔥 Hiệu ứng cuồng nộ, giảm giáp và mê hoặc đã biến mất.\n\n"
+        f"<b>Phân phối phần thưởng</b>\n" + "\n".join(reward_lines),
     )
-
-
 
 @new_task
 @entertainment_guard

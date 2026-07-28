@@ -6,6 +6,7 @@ from ..helper.ext_utils.help_messages import (
     YT_HELP_DICT,
 )
 from ..helper.telegram_helper.bot_commands import BotCommands
+from .game_common import entertainment_enabled
 from ..helper.telegram_helper.button_build import ButtonMaker
 from ..helper.telegram_helper.message_utils import (
     delete_message,
@@ -94,6 +95,9 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.GameStatsCommand, "Xem toàn bộ chỉ số và thành tích nhân vật."),
         _row(BotCommands.DuckRaceCommand, "Đua vịt miễn phí; hồi lệnh 30 giây."),
         _row(BotCommands.WerewolfCommand, "Phòng Ma Sói 5-10 người; bot làm quản trò."),
+        _row(BotCommands.DiscipleCommand, "Xem đệ tử và trạng thái hợp thể."),
+        _row(BotCommands.FusionCommand, "Hợp thể với đệ tử trong 10 phút."),
+        _row(BotCommands.FusionPotionCommand, "Dùng thuốc hợp thể vĩnh viễn đã mua."),
         "",
         "<b>Cửa hàng, cược và chuyển xu</b>",
         _row(BotCommands.ShopCommand, "Mở shop chung: set, bùa và thuyền vịt."),
@@ -112,7 +116,7 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.EquipCommand, "Xem hoặc chọn set đang dùng."),
         _row(
             BotCommands.MergeEquipmentCommand,
-            "[set_id] thấp hơn đúng 1 tier; tối đa +10.",
+            "[set_id] thấp hơn đúng 1 tier; tối đa +25.",
         ),
         _row(
             BotCommands.RepairEquipmentCommand,
@@ -148,14 +152,15 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.SetCoinsCommand, "[user|all] [xu]."),
         _row(
             BotCommands.MaxLevelCommand,
-            "[user_id|@username], max cấp và tặng Graphine +10 bất hoại.",
+            "[user_id|@username], max cấp và tặng Graphine Tối Thượng +25 bất hoại.",
         ),
+        _row(BotCommands.MaxDiscipleCommand, "[user_id|@username], max đệ tử và trang bị +25."),
         _row(BotCommands.GiftCoinsCommand, "[user] [xu]."),
         _row(BotCommands.LuckyCommand, "[user] [0-100]."),
         _row(BotCommands.UnluckyCommand, "[user]."),
         _row(
             BotCommands.EntertainmentToggleCommand,
-            "[on|off|status] bật/tắt toàn bộ khu vực giải trí.",
+            "[on|off|status] [group_id]; Owner dùng thêm global.",
         ),
         _row(BotCommands.AllowGroupCommand, "Duyệt nhóm dùng bot."),
         _row(BotCommands.DeleteGroupCommand, "Gỡ quyền nhóm."),
@@ -219,4 +224,5 @@ async def arg_usage(_, query):
 @new_task
 async def bot_help(_, message):
     await send_message(message, MIRROR_HELP_TABLE)
-    await send_message(message, ENTERTAINMENT_HELP_TABLE)
+    if await entertainment_enabled(message.chat.id):
+        await send_message(message, ENTERTAINMENT_HELP_TABLE)

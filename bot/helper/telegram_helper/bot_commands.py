@@ -77,3 +77,7 @@ class BotCommands:
     ExecuteBossCommand = f"ketlieuboss{i}"
     AutoRepairCommand = f"autosua{i}"
     MaxLevelCommand = f"maxlevel{i}"
+    DiscipleCommand = f"detu{i}"
+    FusionCommand = f"hopthe{i}"
+    FusionPotionCommand = f"thuoc{i}"
+    MaxDiscipleCommand = f"maxdt{i}"
