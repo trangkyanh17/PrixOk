@@ -271,6 +271,8 @@ async def buy_item(_, message):
                     f"🧑‍🎓 Đã {action} đệ tử <b>{gender_name}</b> với "
                     f"<b>{format_number(price)} xu</b>.\n"
                     f"Đặc tính: <b>{special}</b>.\n"
+                    "Đệ tử bắt đầu ở <b>cấp 1</b>, dùng chỉ số cơ bản như "
+                    "người chơi cấp 1 và tự luyện cùng /bunhin hoặc /autobunhin.\n"
                     "Xem bằng <code>/detu</code>.",
                 )
                 return

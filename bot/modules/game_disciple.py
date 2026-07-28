@@ -56,7 +56,7 @@ DISCIPLE_SHOP_ITEMS = {
             "fusion_potion",
         },
         "description": (
-            "Sở hữu vĩnh viễn, không giới hạn lượt dùng. Kích hoạt bằng /thuoc."
+            "Sở hữu vĩnh viễn; /thuoc dùng để hợp thể hoặc tách hợp thể."
         ),
     },
 }
@@ -81,7 +81,7 @@ async def disciple_command(_, message):
         disciple_summary(user_doc)
         + "\n\nMua hoặc đổi đệ tử: <code>/buy de_tu</code> — 100.000.000 xu.\n"
         "Hợp thể 10 phút: <code>/hopthe</code>.\n"
-        "Dùng thuốc hợp thể vĩnh viễn: <code>/thuoc</code>.",
+        "Thuốc hợp thể/tách hợp thể: <code>/thuoc</code>.",
     )
 
 
@@ -143,104 +143,209 @@ async def fuse_with_disciple(_, message):
     await send_message(
         message,
         "✨ <b>HỢP THỂ THÀNH CÔNG!</b>\n\n"
-        "Toàn bộ chỉ số và năng lực đặc biệt của đệ tử đã cộng vào sư phụ "
-        f"trong <b>{DISCIPLE_FUSION_SECONDS // 60} phút</b>.",
+        "Đệ tử cộng <b>HP và tấn công</b> cho sư phụ; không cộng "
+        "phòng thủ, né đòn hoặc hồi HP. "
+        f"Hiệu lực <b>{DISCIPLE_FUSION_SECONDS // 60} phút</b>.",
     )
 
 
 @new_task
 @entertainment_guard
 async def use_fusion_potion(_, message):
-    collection = await require_game_collection(message)
-    if collection is None or await require_user(message) is None:
+    collection = await require_game_collection(
+        message
+    )
+    if (
+        collection is None
+        or await require_user(message) is None
+    ):
         return
 
     user_id = int(message.from_user.id)
+    separated = False
     async with user_lock(user_id):
-        user_doc = await ensure_message_user(collection, message)
+        user_doc = await ensure_message_user(
+            collection,
+            message,
+        )
         if user_doc is None:
             return
         disciple = disciple_state(user_doc)
         if disciple is None:
             await send_message(
                 message,
-                "❌ Chưa có đệ tử. Mua bằng <code>/buy de_tu</code>.",
+                "❌ Chưa có đệ tử. Mua bằng "
+                "<code>/buy de_tu</code>.",
             )
             return
-        if not bool(user_doc.get("fusion_potion_owned", False)):
-            await send_message(
-                message,
-                "❌ Chưa sở hữu Thuốc Hợp Thể Vĩnh Viễn. "
-                "Mua bằng <code>/buy thuoc_hop_the</code> với giá "
-                "<b>500.000.000 xu</b>.",
+        if not bool(
+            user_doc.get(
+                "fusion_potion_owned",
+                False,
             )
-            return
-
-        disciple_hp, disciple_max, remaining = disciple_hp_state(user_doc)
-        if disciple_hp <= 0:
+        ):
             await send_message(
                 message,
-                f"💀 Đệ tử đang hồi sinh, còn <b>{remaining // 60} phút "
-                f"{remaining % 60} giây</b>.",
+                "❌ Chưa sở hữu Thuốc Hợp Thể "
+                "Vĩnh Viễn. Mua bằng "
+                "<code>/buy thuoc_hop_the</code> "
+                "với giá <b>500.000.000 xu</b>.",
             )
             return
 
         now = time()
-        temp_doc = dict(user_doc)
-        temp_doc["disciple_fusion_permanent"] = True
-        temp_doc["disciple_fusion_until"] = 0
-        new_max_hp = player_max_hp(temp_doc)
-        hp, _, _ = player_hp_state(user_doc)
-        boosted_hp = min(new_max_hp, hp + disciple_max)
+        fusion_running = bool(
+            user_doc.get(
+                "disciple_fusion_permanent",
+                False,
+            )
+        ) or float(
+            user_doc.get(
+                "disciple_fusion_until",
+                0,
+            )
+            or 0
+        ) > now
 
-        await collection.update_one(
-            {"_id": user_id},
-            {
-                "$set": {
-                    "disciple_fusion_permanent": True,
-                    "disciple_fusion_until": 0,
-                    "hp": boosted_hp,
-                    "max_hp": new_max_hp,
-                    "hp_regen_at": now,
-                    "updated_at": now,
+        if fusion_running:
+            separated_doc = dict(user_doc)
+            separated_doc[
+                "disciple_fusion_permanent"
+            ] = False
+            separated_doc[
+                "disciple_fusion_until"
+            ] = 0
+            new_max_hp = player_max_hp(
+                separated_doc
+            )
+            hp, _, _ = player_hp_state(user_doc)
+            new_hp = min(new_max_hp, hp)
+            await collection.update_one(
+                {"_id": user_id},
+                {
+                    "$set": {
+                        "disciple_fusion_permanent": False,
+                        "disciple_fusion_until": 0,
+                        "hp": new_hp,
+                        "max_hp": new_max_hp,
+                        "hp_regen_at": now,
+                        "updated_at": now,
+                    },
+                    "$inc": {
+                        "stats.disciple_separations": 1
+                    },
                 },
-                "$inc": {"stats.disciple_permanent_fusions": 1},
-            },
+            )
+            separated = True
+        else:
+            (
+                disciple_hp,
+                disciple_max,
+                remaining,
+            ) = disciple_hp_state(user_doc)
+            if disciple_hp <= 0:
+                await send_message(
+                    message,
+                    "💀 Đệ tử đang hồi sinh, còn "
+                    f"<b>{remaining // 60} phút "
+                    f"{remaining % 60} giây</b>.",
+                )
+                return
+
+            fused_doc = dict(user_doc)
+            fused_doc[
+                "disciple_fusion_permanent"
+            ] = True
+            fused_doc[
+                "disciple_fusion_until"
+            ] = 0
+            new_max_hp = player_max_hp(fused_doc)
+            hp, _, _ = player_hp_state(user_doc)
+            boosted_hp = min(
+                new_max_hp,
+                hp + disciple_max,
+            )
+            await collection.update_one(
+                {"_id": user_id},
+                {
+                    "$set": {
+                        "disciple_fusion_permanent": True,
+                        "disciple_fusion_until": 0,
+                        "hp": boosted_hp,
+                        "max_hp": new_max_hp,
+                        "hp_regen_at": now,
+                        "updated_at": now,
+                    },
+                    "$inc": {
+                        "stats.disciple_permanent_fusions": 1
+                    },
+                },
+            )
+
+    if separated:
+        await send_message(
+            message,
+            "🔓 <b>ĐÃ TÁCH HỢP THỂ!</b>\n\n"
+            "Đệ tử đã tách khỏi sư phụ. Thuốc "
+            "vẫn được giữ vĩnh viễn; dùng "
+            "<code>/thuoc</code> lần nữa để "
+            "hợp thể lại.",
         )
+        return
 
     await send_message(
         message,
         "♾ <b>HỢP THỂ VĨNH VIỄN!</b>\n\n"
-        "Thuốc không bị tiêu hao và có thể dùng lại không giới hạn sau khi đổi đệ tử.",
+        "Hợp thể chỉ cộng <b>HP và tấn công</b>; "
+        "không cộng phòng thủ, né đòn hoặc hồi HP.\n"
+        "Dùng <code>/thuoc</code> lần nữa để "
+        "tách hợp thể. Thuốc không bị tiêu hao.",
     )
 
 
 @new_task
 async def max_disciple(_, message):
-    collection = await require_game_collection(message)
+    collection = await require_game_collection(
+        message
+    )
     if collection is None:
         return
 
-    parts = (message.text or "").split(maxsplit=1)
-    target_raw = parts[1].strip() if len(parts) > 1 else None
+    parts = (message.text or "").split(
+        maxsplit=1
+    )
+    target_raw = (
+        parts[1].strip()
+        if len(parts) > 1
+        else None
+    )
     if not target_raw and not (
-        message.reply_to_message and message.reply_to_message.from_user
+        message.reply_to_message
+        and message.reply_to_message.from_user
     ):
         await send_message(
             message,
-            "Cách dùng: <code>/maxdt user_id</code>, "
-            "<code>/maxdt @username</code> hoặc reply người dùng.",
+            "Cách dùng: "
+            "<code>/maxdt user_id</code>, "
+            "<code>/maxdt @username</code> "
+            "hoặc reply người dùng.",
         )
         return
 
-    target = await resolve_target(collection, message, target_raw)
+    target = await resolve_target(
+        collection,
+        message,
+        target_raw,
+    )
     if target is None:
         return
     target_id, target_name = target
     target_id = int(target_id)
 
     async with user_lock(target_id):
-        user_doc = await collection.find_one({"_id": target_id})
+        user_doc = await collection.find_one(
+            {"_id": target_id}
+        )
         if user_doc is None:
             await send_message(
                 message,
@@ -255,11 +360,18 @@ async def max_disciple(_, message):
             )
             return
 
-        gender = str(disciple.get("gender") or "male")
+        gender = str(
+            disciple.get("gender") or "male"
+        )
         maxed = dict(disciple)
+        maxed["xp"] = MAX_PLAYER_XP
         maxed["maxed"] = True
-        maxed["equipment_set"] = "graphine_toi_thuong"
-        maxed["merge_level"] = MAX_EQUIPMENT_MERGE_LEVEL
+        maxed[
+            "equipment_set"
+        ] = "graphine_toi_thuong"
+        maxed[
+            "merge_level"
+        ] = MAX_EQUIPMENT_MERGE_LEVEL
         maxed["indestructible"] = True
         maxed["dead_until"] = 0
         maxed["maxed_at"] = time()
@@ -280,16 +392,28 @@ async def max_disciple(_, message):
             },
         )
 
-    template = EQUIPMENT_SETS["graphine_toi_thuong"]
-    gender_name = "Nam" if gender == "male" else "Nữ"
+    template = EQUIPMENT_SETS[
+        "graphine_toi_thuong"
+    ]
+    gender_name = (
+        "Nam"
+        if gender == "male"
+        else "Nữ"
+    )
     await send_message(
         message,
-        f"✅ Đã max đệ tử của <b>{escape(str(target_name))}</b>.\n\n"
+        "✅ Đã max đệ tử của "
+        f"<b>{escape(str(target_name))}</b>.\n\n"
         f"Giới tính: <b>{gender_name}</b>\n"
-        f"Cấp độ: <b>{MAX_PLAYER_LEVEL}/{MAX_PLAYER_LEVEL}</b>\n"
+        "Cấp độ: "
+        f"<b>{MAX_PLAYER_LEVEL}/"
+        f"{MAX_PLAYER_LEVEL}</b>\n"
         f"HP: <b>{format_number(max_hp)}</b>\n"
-        f"Trang bị: <b>{escape(str(template['name']))}</b>\n"
-        f"Hợp nhất: <b>+{MAX_EQUIPMENT_MERGE_LEVEL}/"
+        "Trang bị: "
+        f"<b>{escape(str(template['name']))}</b>\n"
+        "Hợp nhất: "
+        f"<b>+{MAX_EQUIPMENT_MERGE_LEVEL}/"
         f"{MAX_EQUIPMENT_MERGE_LEVEL}</b>\n"
-        "♾ Trang bị đặc quyền không tiêu hao độ bền.",
+        "♾ Trang bị đặc quyền không tiêu hao "
+        "độ bền.",
     )
