@@ -65,6 +65,7 @@ SUPER_BOSS_RANDOM_CHANCE = 0.30
 SUPER_BOSS_TARGETED_CHANCE = 0.30
 SUPER_BOSS_STAT_MULTIPLIER = 200
 NORMAL_BOSS_STAT_MULTIPLIER = 50
+NORMAL_BOSS_COMBAT_MULTIPLIER = 5
 BOSS_ARMOR_PENETRATION = 0.50
 BOSS_XP_MULTIPLIER = 10
 BOSS_WEAR_MIN = 15
@@ -507,7 +508,7 @@ def _boss_catalog_text() -> str:
     lines = [
         "👹 <b>Danh sách boss có thể chỉ định</b>",
         "",
-        "Boss thường: toàn bộ HP, tấn công, phòng thủ và kho thưởng x50.",
+        "Boss thường: HP và kho thưởng x50; tấn công và phòng thủ x250.",
         "Boss siêu cấp: toàn bộ chỉ số x200 · tỉ lệ xuất hiện 30%.",
         "Mọi boss xuyên 50% phòng thủ và bảo vệ trang bị.",
         "",
@@ -1170,6 +1171,9 @@ async def summon_boss(_, message):
         else NORMAL_BOSS_STAT_MULTIPLIER
     )
     reward_multiplier = stat_multiplier
+    combat_multiplier = (
+        1 if is_super else NORMAL_BOSS_COMBAT_MULTIPLIER
+    )
 
     base_attack_min = 80 + boss_tier * 35
     base_attack_max = 120 + boss_tier * 55
@@ -1177,9 +1181,9 @@ async def summon_boss(_, message):
 
     boss_hp = int(template["hp"]) * stat_multiplier
     boss_reward = int(template["reward"]) * reward_multiplier
-    boss_attack_min = base_attack_min * stat_multiplier
-    boss_attack_max = base_attack_max * stat_multiplier
-    boss_defense = base_defense * stat_multiplier
+    boss_attack_min = base_attack_min * stat_multiplier * combat_multiplier
+    boss_attack_max = base_attack_max * stat_multiplier * combat_multiplier
+    boss_defense = base_defense * stat_multiplier * combat_multiplier
 
     if not _group_required(message):
         await send_message(message, "❌ Boss chỉ có thể được gọi trong nhóm.")
