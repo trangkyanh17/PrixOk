@@ -35,16 +35,13 @@ GAME_LUCK_CHANCE_MULTIPLIER = 3.0
 
 PLAYER_MAX_HP = 2_000
 PLAYER_RESPAWN_SECONDS = 60
-XP_PER_LEVEL = 100
+XP_PER_LEVEL = 100_000
 HIGH_LEVEL_START = 1_000
 HIGH_LEVEL_XP_GAIN_RATE = 0.20
 HIGH_LEVEL_STAT_MULTIPLIER = 2
 MAX_PLAYER_LEVEL = 2_000
 HIGH_LEVEL_COUNT = MAX_PLAYER_LEVEL - HIGH_LEVEL_START
-MAX_PLAYER_XP = (
-    (HIGH_LEVEL_START - 1) * XP_PER_LEVEL
-    + XP_PER_LEVEL * HIGH_LEVEL_COUNT * (HIGH_LEVEL_COUNT + 3) // 2
-)
+MAX_PLAYER_XP = (MAX_PLAYER_LEVEL - 1) * XP_PER_LEVEL
 
 BASE_PLAYER_ATTACK = 100
 ATTACK_PER_LEVEL = 40
@@ -143,13 +140,7 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
 
 def xp_required_for_level(level: int) -> int:
     capped = max(1, min(MAX_PLAYER_LEVEL, int(level)))
-    if capped <= HIGH_LEVEL_START:
-        return (capped - 1) * XP_PER_LEVEL
-    high_steps = capped - HIGH_LEVEL_START
-    return (
-        (HIGH_LEVEL_START - 1) * XP_PER_LEVEL
-        + XP_PER_LEVEL * high_steps * (high_steps + 3) // 2
-    )
+    return (capped - 1) * XP_PER_LEVEL
 
 
 def player_level_from_xp(xp: int | float) -> int:
@@ -388,6 +379,7 @@ def new_set_state(set_id: str) -> dict[str, Any]:
     return {
         "armor_owned": True,
         "weapon_owned": True,
+        "indestructible": False,
         "armor_durability": base_durability,
         "weapon_durability": base_durability,
         "armor_durability_bonus": 0,
@@ -425,6 +417,7 @@ async def ensure_user(collection, user) -> dict[str, Any]:
                 "attack_buff_until": 0,
                 "defense_buff_until": 0,
                 "dodge_buff_until": 0,
+                "auto_repair_enabled": False,
                 "equipment_parts": {},
                 "created_at": now,
                 "stats": {
@@ -532,6 +525,9 @@ async def ensure_user(collection, user) -> dict[str, Any]:
     elif float(regen_at_raw or now) < now:
         repairs["hp_regen_at"] = now
 
+    if "auto_repair_enabled" not in doc:
+        repairs["auto_repair_enabled"] = False
+
     if not isinstance(doc.get("equipment_parts"), dict):
         repairs["equipment_parts"] = {}
 
@@ -585,6 +581,7 @@ async def ensure_user(collection, user) -> dict[str, Any]:
             "attack_penalty": 0.0,
             "armor_repairs": 0,
             "weapon_repairs": 0,
+            "indestructible": False,
         }
         for key, value in defaults.items():
             if key not in state:
@@ -767,6 +764,7 @@ def effective_set_stats(user_doc: dict[str, Any], set_id: str) -> dict[str, Any]
         "protection": protection_before_break if armor_active else 0,
         "base_protection": int(template["protection"]),
         "protection_penalty": 0,
+        "indestructible": bool(state.get("indestructible", False)),
         "armor_owned": armor_owned,
         "weapon_owned": weapon_owned,
         "armor_durability": armor_durability,
@@ -892,7 +890,8 @@ def equipment_summary(user_doc: dict[str, Any]) -> str:
         f"⚔️ Hệ số sát thương: <b>x{stats['attack']:.2f}</b>\n"
         f"💥 Chí mạng: <b>{stats['crit'] * 100:.0f}%</b>\n"
         f"🧬 Cấp hợp nhất: <b>+{stats['merge_level']}/10</b>\n"
-        f"🔩 Đã sửa: giáp <b>{stats['armor_repairs']}</b> · "
+        + ("♾ Độ bền boss: <b>Không tiêu hao</b>\n" if stats["indestructible"] else "")
+        + f"🔩 Đã sửa: giáp <b>{stats['armor_repairs']}</b> · "
         f"vũ khí <b>{stats['weapon_repairs']}</b>\n"
         f"📦 Số set sở hữu: <b>{owned_count}</b>\n"
         f"{parts_text}"

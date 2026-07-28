@@ -125,6 +125,10 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
             BotCommands.RepairEquipmentCommand,
             "[giap|vukhi], phí 1-10 triệu xu; không mất thuộc tính.",
         ),
+        _row(
+            BotCommands.AutoRepairCommand,
+            "[on|off|status], tự sửa giáp và vũ khí sau lượt boss.",
+        ),
         "",
         "<b>Boss</b>",
         _row(
@@ -149,6 +153,10 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         _row(BotCommands.CreateCodeCommand, "[xu] để tạo code."),
         _row(BotCommands.DeleteCodeCommand, "[mã] để xóa code."),
         _row(BotCommands.SetCoinsCommand, "[user|all] [xu]."),
+        _row(
+            BotCommands.MaxLevelCommand,
+            "[user_id|@username], max cấp và tặng Graphine +10 bất hoại.",
+        ),
         _row(BotCommands.GiftCoinsCommand, "[user] [xu]."),
         _row(BotCommands.LuckyCommand, "[user] [0-100]."),
         _row(BotCommands.UnluckyCommand, "[user]."),
@@ -163,7 +171,7 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         "Cấp tối đa 2.000 · Cấp 1: 2.000 HP, 100 tấn công, "
         "200 phòng thủ, 1% né.",
         "Từ cấp 1.000: mức tăng HP, tấn công, phòng thủ và hồi HP được nhân đôi.",
-        "Từ cấp 1.000: XP cần lên cấp tăng dần; EXP nhận được còn 20%.",
+        "Mỗi cấp cần 100.000 EXP; từ cấp 1.000, EXP nhận được còn 20%.",
         "Hoạt động thường: x5 xu và x5 EXP; boss nhận x10 EXP.",
         "Hồi máu theo nhịp 5 giây · né tối đa 25% kể cả khi dùng bùa.",
         "Bị boss hạ: chờ 1 phút để đánh tiếp.",
