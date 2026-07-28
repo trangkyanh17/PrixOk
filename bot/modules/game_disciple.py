@@ -13,6 +13,7 @@ from .game_common import (
     FUSION_POTION_PRICE,
     MAX_EQUIPMENT_MERGE_LEVEL,
     MAX_PLAYER_LEVEL,
+    MAX_PLAYER_XP,
     disciple_hp_state,
     disciple_max_hp,
     disciple_state,
@@ -24,7 +25,6 @@ from .game_common import (
     player_max_hp,
     require_game_collection,
     require_user,
-    resolve_target,
     user_lock,
 )
 
@@ -305,58 +305,48 @@ async def use_fusion_potion(_, message):
 
 @new_task
 async def max_disciple(_, message):
-    collection = await require_game_collection(
-        message
-    )
-    if collection is None:
+    collection = await require_game_collection(message)
+    user = await require_user(message)
+    if collection is None or user is None:
         return
 
-    parts = (message.text or "").split(
-        maxsplit=1
+    parts = (message.text or "").split(maxsplit=1)
+    command_name = (
+        parts[0]
+        .lstrip("/")
+        .split("@", 1)[0]
+        .lower()
+        if parts
+        else "mac"
     )
-    target_raw = (
-        parts[1].strip()
-        if len(parts) > 1
-        else None
+    expected_command = (
+        "/maxdt"
+        if command_name.startswith("maxdt")
+        else "/mac"
     )
-    if not target_raw and not (
-        message.reply_to_message
-        and message.reply_to_message.from_user
-    ):
+    if len(parts) > 1:
         await send_message(
             message,
-            "Cách dùng: "
-            "<code>/maxdt user_id</code>, "
-            "<code>/maxdt @username</code> "
-            "hoặc reply người dùng.",
+            f"Cách dùng: <code>{expected_command}</code>. "
+            "Lệnh chỉ max đệ tử của chính người gửi.",
         )
         return
 
-    target = await resolve_target(
-        collection,
-        message,
-        target_raw,
-    )
-    if target is None:
-        return
-    target_id, target_name = target
-    target_id = int(target_id)
-
-    async with user_lock(target_id):
-        user_doc = await collection.find_one(
-            {"_id": target_id}
+    user_id = int(user.id)
+    async with user_lock(user_id):
+        user_doc = await ensure_message_user(
+            collection,
+            message,
         )
         if user_doc is None:
-            await send_message(
-                message,
-                "❌ Người dùng chưa có hồ sơ game.",
-            )
             return
+
         disciple = disciple_state(user_doc)
         if disciple is None:
             await send_message(
                 message,
-                "❌ Người dùng này chưa có đệ tử.",
+                "❌ Mày chưa có đệ tử. "
+                "Mua bằng <code>/buy de_tu</code>.",
             )
             return
 
@@ -376,18 +366,31 @@ async def max_disciple(_, message):
         maxed["dead_until"] = 0
         maxed["maxed_at"] = time()
 
-        temp_doc = dict(user_doc)
-        temp_doc["disciple"] = maxed
-        max_hp = disciple_max_hp(temp_doc)
-        maxed["hp"] = max_hp
-        maxed["max_hp"] = max_hp
+        projected_doc = dict(user_doc)
+        projected_doc["disciple"] = maxed
+
+        disciple_max = disciple_max_hp(projected_doc)
+        maxed["hp"] = disciple_max
+        maxed["max_hp"] = disciple_max
+        projected_doc["disciple"] = maxed
+
+        old_hp, old_max_hp, _ = player_hp_state(user_doc)
+        new_max_hp = player_max_hp(projected_doc)
+        new_hp = min(
+            new_max_hp,
+            old_hp + max(0, new_max_hp - old_max_hp),
+        )
+        now = time()
 
         await collection.update_one(
-            {"_id": target_id},
+            {"_id": user_id},
             {
                 "$set": {
                     "disciple": maxed,
-                    "updated_at": time(),
+                    "hp": new_hp,
+                    "max_hp": new_max_hp,
+                    "hp_regen_at": now,
+                    "updated_at": now,
                 }
             },
         )
@@ -402,18 +405,16 @@ async def max_disciple(_, message):
     )
     await send_message(
         message,
-        "✅ Đã max đệ tử của "
-        f"<b>{escape(str(target_name))}</b>.\n\n"
+        "✅ <b>ĐÃ TỰ MAX ĐỆ TỬ!</b>\n\n"
         f"Giới tính: <b>{gender_name}</b>\n"
         "Cấp độ: "
         f"<b>{MAX_PLAYER_LEVEL}/"
         f"{MAX_PLAYER_LEVEL}</b>\n"
-        f"HP: <b>{format_number(max_hp)}</b>\n"
+        f"HP đệ tử: <b>{format_number(disciple_max)}</b>\n"
         "Trang bị: "
         f"<b>{escape(str(template['name']))}</b>\n"
         "Hợp nhất: "
         f"<b>+{MAX_EQUIPMENT_MERGE_LEVEL}/"
         f"{MAX_EQUIPMENT_MERGE_LEVEL}</b>\n"
-        "♾ Trang bị đặc quyền không tiêu hao "
-        "độ bền.",
+        "♾ Trang bị đặc quyền không tiêu hao độ bền.",
     )

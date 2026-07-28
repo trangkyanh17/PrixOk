@@ -107,6 +107,10 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
             BotCommands.FusionPotionCommand,
             "Bật hợp thể vĩnh viễn hoặc tách hợp thể ngay.",
         ),
+        _row(
+            BotCommands.MaxOwnDiscipleCommand,
+            "Tự max đệ tử của chính mình lên cấp tối đa.",
+        ),
         "",
         "<b>Cửa hàng, cược và chuyển xu</b>",
         _row(BotCommands.ShopCommand, "Mở shop chung: set, bùa và thuyền vịt."),
@@ -163,7 +167,10 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
             BotCommands.MaxLevelCommand,
             "[user_id|@username], max cấp và tặng Graphine Tối Thượng +25 bất hoại.",
         ),
-        _row(BotCommands.MaxDiscipleCommand, "[user_id|@username], max đệ tử và trang bị +25."),
+        _row(
+            BotCommands.MaxDiscipleCommand,
+            "Không cần tham số; Owner tự max đệ tử của chính mình.",
+        ),
         _row(BotCommands.GiftCoinsCommand, "[user] [xu]."),
         _row(BotCommands.LuckyCommand, "[user] [0-100]."),
         _row(BotCommands.UnluckyCommand, "[user]."),

@@ -81,3 +81,4 @@ class BotCommands:
     FusionCommand = f"hopthe{i}"
     FusionPotionCommand = f"thuoc{i}"
     MaxDiscipleCommand = f"maxdt{i}"
+    MaxOwnDiscipleCommand = f"mac{i}"
