@@ -535,8 +535,21 @@ def add_handlers():
     TgClient.bot.add_handler(
         MessageHandler(
             max_disciple,
-            filters=command(BotCommands.MaxDiscipleCommand, case_sensitive=True)
+            filters=command(
+                BotCommands.MaxDiscipleCommand,
+                case_sensitive=True,
+            )
             & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            max_disciple,
+            filters=command(
+                BotCommands.MaxOwnDiscipleCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
         )
     )
     TgClient.bot.add_handler(
