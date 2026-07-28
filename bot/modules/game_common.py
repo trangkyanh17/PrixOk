@@ -25,7 +25,6 @@ LUCK_BUFF_PRICE = 5_000_000
 XP_BUFF_PRICE = 5_000_000
 COIN_BUFF_PRICE = 5_000_000
 ATTACK_BUFF_PRICE = 5_000_000
-DEFENSE_BUFF_PRICE = 5_000_000
 DODGE_BUFF_PRICE = 5_000_000
 LUCK_BUFF_SECONDS = BUFF_SECONDS
 
@@ -36,10 +35,10 @@ GAME_LUCK_CHANCE_MULTIPLIER = 3.0
 PLAYER_MAX_HP = 2_000
 PLAYER_RESPAWN_SECONDS = 60
 XP_PER_LEVEL = 100_000
-HIGH_LEVEL_START = 1_000
+HIGH_LEVEL_START = 4_500
 HIGH_LEVEL_XP_GAIN_RATE = 0.20
 HIGH_LEVEL_STAT_MULTIPLIER = 2
-MAX_PLAYER_LEVEL = 2_000
+MAX_PLAYER_LEVEL = 6_000
 HIGH_LEVEL_COUNT = MAX_PLAYER_LEVEL - HIGH_LEVEL_START
 MAX_PLAYER_XP = (MAX_PLAYER_LEVEL - 1) * XP_PER_LEVEL
 
@@ -50,11 +49,12 @@ DEFENSE_PER_LEVEL = 50
 BASE_PLAYER_DODGE = 0.01
 DODGE_PER_LEVEL = 0.0005
 MAX_PLAYER_DODGE = 0.25
+MAX_EQUIPMENT_CRIT = 0.70
 HP_PER_LEVEL = 500
 
-HP_REGEN_TICK_SECONDS = 5
-BASE_HP_REGEN_PER_TICK = 20
-HP_REGEN_PER_LEVEL = 30
+HP_REGEN_TICK_SECONDS = 3
+BASE_HP_REGEN_PER_TICK = 16
+HP_REGEN_PER_LEVEL = 24
 
 EQUIPMENT_PART_LABELS = {
     "helmet": "Mũ",
@@ -129,11 +129,24 @@ EQUIPMENT_SETS: dict[str, dict[str, Any]] = {
         "name": "Set Graphine",
         "tier": 7,
         "price": 10_000_000,
-        "attack": 3.00,
+        "attack": 10.00,
         "crit": 0.18,
-        "protection": 82,
+        "protection": 65,
         "durability": 850,
-        "description": "Tier tối thượng, siêu nhẹ và siêu bền.",
+        "description": "Graphine tiêu chuẩn: sát thương x10, bảo vệ 65%.",
+    },
+    "graphine_toi_thuong": {
+        "name": "Set Graphine Tối Thượng",
+        "tier": 8,
+        "price": 100_000_000,
+        "attack": 80.00,
+        "crit": 0.70,
+        "protection": 80,
+        "durability": 6_800,
+        "description": (
+            "Chỉ số chiến đấu và độ bền gấp 8 lần Graphine; "
+            "bảo vệ cố định 80%."
+        ),
     },
 }
 
@@ -201,6 +214,17 @@ def coin_multiplier(user_doc: dict[str, Any]) -> float:
 
 
 def normal_game_coin_reward(user_doc: dict[str, Any], base_coins: int | float) -> int:
+    # Bùa x2 tiền không còn áp dụng cho các hoạt động thường.
+    return max(0, int(round(float(base_coins))))
+
+
+def dummy_coin_reward(user_doc: dict[str, Any], base_coins: int | float) -> int:
+    # Bùa x2 tiền áp dụng cho bù nhìn và các mini-game được cho phép.
+    return max(0, int(round(float(base_coins) * coin_multiplier(user_doc))))
+
+
+def minigame_coin_reward(user_doc: dict[str, Any], base_coins: int | float) -> int:
+    # Đua vịt và Ma Sói được hưởng bùa x2 tiền; boss không dùng hàm này.
     return max(0, int(round(float(base_coins) * coin_multiplier(user_doc))))
 
 
@@ -241,8 +265,8 @@ def player_attack(user_doc: dict[str, Any]) -> int:
 
 
 def player_defense(user_doc: dict[str, Any]) -> int:
-    value = player_defense_for_level(player_level(user_doc))
-    return value * 2 if buff_active(user_doc, "defense_buff_until") else value
+    # Bùa phòng thủ đã bị loại bỏ; dữ liệu cũ không còn tác dụng.
+    return player_defense_for_level(player_level(user_doc))
 
 
 def player_dodge(user_doc: dict[str, Any]) -> float:
@@ -447,6 +471,18 @@ async def ensure_user(collection, user) -> dict[str, Any]:
                     "dummy_hits": 0,
                     "dummy_damage": 0,
                     "dummy_xp": 0,
+                    "dummy_coins": 0,
+                    "duck_races": 0,
+                    "duck_distance": 0,
+                    "duck_best_distance": 0,
+                    "duck_coins": 0,
+                    "duck_xp": 0,
+                    "werewolf_games": 0,
+                    "werewolf_wins": 0,
+                    "werewolf_wolf_wins": 0,
+                    "werewolf_village_wins": 0,
+                    "werewolf_coins": 0,
+                    "werewolf_xp": 0,
                     "deaths": 0,
                 },
                 "equipment_sets": {},
@@ -482,7 +518,6 @@ async def ensure_user(collection, user) -> dict[str, Any]:
         "xp_buff_until",
         "coin_buff_until",
         "attack_buff_until",
-        "defense_buff_until",
         "dodge_buff_until",
     ):
         if buff_field not in doc:
@@ -540,6 +575,18 @@ async def ensure_user(collection, user) -> dict[str, Any]:
         "dummy_hits": 0,
         "dummy_damage": 0,
         "dummy_xp": 0,
+        "dummy_coins": 0,
+        "duck_races": 0,
+        "duck_distance": 0,
+        "duck_best_distance": 0,
+        "duck_coins": 0,
+        "duck_xp": 0,
+        "werewolf_games": 0,
+        "werewolf_wins": 0,
+        "werewolf_wolf_wins": 0,
+        "werewolf_village_wins": 0,
+        "werewolf_coins": 0,
+        "werewolf_xp": 0,
         "deaths": 0,
     }
     stats_doc = doc.get("stats")
@@ -760,7 +807,7 @@ def effective_set_stats(user_doc: dict[str, Any], set_id: str) -> dict[str, Any]
         "attack": float(template["attack"]) if weapon_active else 1.0,
         "base_attack": float(template["attack"]),
         "attack_penalty": 0.0,
-        "crit": float(template["crit"]) if weapon_active else 0.0,
+        "crit": min(MAX_EQUIPMENT_CRIT, float(template["crit"])) if weapon_active else 0.0,
         "protection": protection_before_break if armor_active else 0,
         "base_protection": int(template["protection"]),
         "protection_penalty": 0,

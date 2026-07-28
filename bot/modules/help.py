@@ -88,24 +88,19 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
     [
         "🎮 <b>BẢNG LỆNH GIẢI TRÍ</b>",
         "",
-        "<b>Kiếm xu, XP và hồ sơ</b>",
-        _row(BotCommands.FishCommand, "Câu cá; thêm river hoặc sea."),
-        _row(BotCommands.MineCommand, "Đào mỏ; thêm metal hoặc nonmetal."),
-        _row(BotCommands.ShipperCommand, "Làm nhiệm vụ giao hàng."),
-        _row(BotCommands.RocketCommand, "Phóng tên lửa nhận xu và XP."),
-        _row(BotCommands.GameProfileCommand, "Xem hồ sơ game."),
-        _row(BotCommands.InventoryCommand, "Xem kho; thêm fish hoặc minerals."),
+        "<b>Nhân vật, mini-game và xếp hạng</b>",
+        _row(BotCommands.InventoryCommand, "Chỉ xem các set trang bị đang sở hữu."),
         _row(BotCommands.GameTopCommand, "Xem bảng xếp hạng."),
-        _row(BotCommands.GameStatsCommand, "Xem đầy đủ chỉ số nhân vật."),
+        _row(BotCommands.GameStatsCommand, "Xem toàn bộ chỉ số và thành tích nhân vật."),
+        _row(BotCommands.DuckRaceCommand, "Đua vịt miễn phí; hồi lệnh 30 giây."),
+        _row(BotCommands.WerewolfCommand, "Phòng Ma Sói 5-10 người; bot làm quản trò."),
         "",
-        "<b>Cược, may mắn và chuyển xu</b>",
+        "<b>Cửa hàng, cược và chuyển xu</b>",
+        _row(BotCommands.ShopCommand, "Mở shop chung: set, bùa và thuyền vịt."),
+        _row(BotCommands.BuyCommand, "[tên_vật_phẩm] để mua trong shop."),
         _row(BotCommands.TaiXiuCommand, "[tai|xiu] [xu|all]."),
         _row(BotCommands.NoHuCommand, "[xu|all]."),
         _row(BotCommands.DiceBetCommand, "[1-6] [xu|all]."),
-        _row(
-            BotCommands.LuckShopCommand,
-            "Shop bùa 8 giờ: mayman, exp, tien, tancong, phongthu hoặc nedon.",
-        ),
         _row(BotCommands.RedeemCodeCommand, "[mã] để nhận quà."),
         _row(BotCommands.PayCommand, "[@user|ID] [xu|all]."),
         _row(BotCommands.DropCommand, "[xu|all] để thả rương trong nhóm."),
@@ -114,8 +109,6 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         "<b>Trang bị</b>",
         "Tân thủ mặc áo phông, quần short và dùng tay không x1; "
         "không nhận chỉ số trang bị.",
-        _row(BotCommands.EquipmentShopCommand, "Xem cửa hàng set; giá đã nhân 5."),
-        _row(BotCommands.BuyEquipmentCommand, "[set_id] để mua set."),
         _row(BotCommands.EquipCommand, "Xem hoặc chọn set đang dùng."),
         _row(
             BotCommands.MergeEquipmentCommand,
@@ -133,19 +126,19 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         "<b>Boss</b>",
         _row(
             BotCommands.SummonBossCommand,
-            "list, random hoặc boss_id; thường x50, siêu cấp x200.",
+            "list, random hoặc boss_id; gọi được nhiều boss, tồn tại 60 phút.",
         ),
         _row(
             BotCommands.BossStatusCommand,
-            "Xem boss; mọi boss xuyên giáp 50%.",
+            "Xem nhiều boss; xuyên giáp 80%, dưới 50% HP sẽ cuồng nộ.",
         ),
         _row(
             BotCommands.AttackBossCommand,
-            "danhboss đánh 1 lần; autoboss on [boss_id] [2-300 giây].",
+            "danhboss [mã_trận] đánh 1 lần; autoboss on [boss_id] [2-300 giây].",
         ),
         _row(
             BotCommands.TrainingDummyCommand,
-            "bunhin đánh 1 lần; autobunhin on [2-300 giây] để tự luyện.",
+            "bunhin nhận XP và xu; bùa tiền dùng cho bù nhìn, đua vịt và Ma Sói.",
         ),
         _row(BotCommands.ExecuteBossCommand, "Kết liễu boss siêu cấp trả phí."),
         "",
@@ -166,15 +159,6 @@ ENTERTAINMENT_HELP_TABLE = "\n".join(
         ),
         _row(BotCommands.AllowGroupCommand, "Duyệt nhóm dùng bot."),
         _row(BotCommands.DeleteGroupCommand, "Gỡ quyền nhóm."),
-        "",
-        "<b>Chỉ số nhân vật</b>",
-        "Cấp tối đa 2.000 · Cấp 1: 2.000 HP, 100 tấn công, "
-        "200 phòng thủ, 1% né.",
-        "Từ cấp 1.000: mức tăng HP, tấn công, phòng thủ và hồi HP được nhân đôi.",
-        "Mỗi cấp cần 100.000 EXP; từ cấp 1.000, EXP nhận được còn 20%.",
-        "Hoạt động thường: x5 xu và x5 EXP; boss nhận x10 EXP.",
-        "Hồi máu theo nhịp 5 giây · né tối đa 25% kể cả khi dùng bùa.",
-        "Bị boss hạ: chờ 1 phút để đánh tiếp.",
     ]
 )
 

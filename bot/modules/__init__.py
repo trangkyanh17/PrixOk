@@ -35,9 +35,6 @@ from .users_settings import get_users_settings, edit_user_settings, send_user_se
 from .ytdlp import ytdl, ytdl_leech
 from .gallery_dl import gallery_dl, gallery_dl_leech
 from .entertainment import (
-    fish,
-    mine,
-    game_profile,
     game_inventory,
     game_top,
 )
@@ -45,9 +42,6 @@ from .game_economy import (
     tai_xiu,
     no_hu,
     dice_bet,
-    shipper_job,
-    rocket_launch,
-    buy_luck_buff,
     redeem_code,
     drop_coins,
     pickup_drop,
@@ -64,8 +58,6 @@ from .game_economy import (
     delete_group,
 )
 from .game_boss import (
-    equipment_shop,
-    buy_equipment,
     equip_item,
     merge_equipment,
     repair_equipment,
@@ -78,6 +70,9 @@ from .game_auto import (
     training_dummy_dispatch as training_dummy,
 )
 from .game_admin import max_level_user, toggle_auto_repair
+from .game_shop import game_shop, buy_item
+from .game_duck import duck_race
+from .game_werewolf import werewolf_command
 
 __all__ = [
     "send_bot_settings",
@@ -135,17 +130,11 @@ __all__ = [
     "ytdl_leech",
     "gallery_dl",
     "gallery_dl_leech",
-    "fish",
-    "mine",
-    "game_profile",
     "game_inventory",
     "game_top",
     "tai_xiu",
     "no_hu",
     "dice_bet",
-    "shipper_job",
-    "rocket_launch",
-    "buy_luck_buff",
     "redeem_code",
     "drop_coins",
     "pickup_drop",
@@ -160,8 +149,6 @@ __all__ = [
     "reset_luck",
     "allow_group",
     "delete_group",
-    "equipment_shop",
-    "buy_equipment",
     "equip_item",
     "merge_equipment",
     "repair_equipment",
@@ -172,4 +159,8 @@ __all__ = [
     "execute_super_boss",
     "toggle_auto_repair",
     "max_level_user",
+    "game_shop",
+    "buy_item",
+    "duck_race",
+    "werewolf_command",
 ]
