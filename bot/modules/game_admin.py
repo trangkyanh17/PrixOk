@@ -5,16 +5,16 @@ from time import time
 
 from ..helper.ext_utils.bot_utils import new_task
 from ..helper.telegram_helper.message_utils import send_message
-from .game_boss import MAX_EQUIPMENT_MERGE_LEVEL
 from .game_common import (
     EQUIPMENT_SETS,
+    MAX_EQUIPMENT_MERGE_LEVEL,
     MAX_PLAYER_LEVEL,
     MAX_PLAYER_XP,
     entertainment_guard,
     ensure_message_user,
     format_number,
     new_set_state,
-    player_max_hp_for_level,
+    player_max_hp,
     require_game_collection,
     require_user,
     resolve_target,
@@ -23,10 +23,8 @@ from .game_common import (
 
 
 def _top_equipment_set() -> tuple[str, dict]:
-    return max(
-        EQUIPMENT_SETS.items(),
-        key=lambda item: int(item[1]["tier"]),
-    )
+    set_id = "graphine_toi_thuong"
+    return set_id, EQUIPMENT_SETS[set_id]
 
 
 def _maxed_set_state(set_id: str) -> dict:
@@ -95,13 +93,18 @@ async def max_level_user(_, message):
 
     set_id, template = _top_equipment_set()
     set_state = _maxed_set_state(set_id)
-    max_hp = player_max_hp_for_level(MAX_PLAYER_LEVEL)
+    maxed_doc = dict(existing)
+    maxed_doc["xp"] = MAX_PLAYER_XP
+    max_hp = player_max_hp(maxed_doc)
     now = time()
 
     async with user_lock(target_id):
         await collection.update_one(
             {"_id": target_id},
             {
+                "$unset": {
+                    "equipment_sets.graphine": "",
+                },
                 "$set": {
                     "xp": MAX_PLAYER_XP,
                     "hp": max_hp,

@@ -70,6 +70,7 @@ from .game_auto import (
     training_dummy_dispatch as training_dummy,
 )
 from .game_admin import max_level_user, toggle_auto_repair
+from .game_disciple import disciple_command, fuse_with_disciple, use_fusion_potion, max_disciple
 from .game_shop import game_shop, buy_item
 from .game_duck import duck_race
 from .game_werewolf import werewolf_command
@@ -159,6 +160,10 @@ __all__ = [
     "execute_super_boss",
     "toggle_auto_repair",
     "max_level_user",
+    "disciple_command",
+    "fuse_with_disciple",
+    "use_fusion_potion",
+    "max_disciple",
     "game_shop",
     "buy_item",
     "duck_race",

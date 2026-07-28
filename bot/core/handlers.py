@@ -513,12 +513,40 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            disciple_command,
+            filters=command(BotCommands.DiscipleCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            fuse_with_disciple,
+            filters=command(BotCommands.FusionCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            use_fusion_potion,
+            filters=command(BotCommands.FusionPotionCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            max_disciple,
+            filters=command(BotCommands.MaxDiscipleCommand, case_sensitive=True)
+            & CustomFilters.owner,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             toggle_entertainment,
             filters=command(
                 BotCommands.EntertainmentToggleCommand,
                 case_sensitive=True,
             )
-            & CustomFilters.owner,
+            & CustomFilters.authorized,
         )
     )
     TgClient.bot.add_handler(

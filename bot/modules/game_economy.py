@@ -5,9 +5,10 @@ from secrets import SystemRandom
 from time import time
 
 from pymongo import ReturnDocument
-from pyrogram.enums import ChatType
+from pyrogram.enums import ChatMemberStatus, ChatType
 
 from ..helper.ext_utils.bot_utils import new_task, update_user_ldata
+from ..core.config_manager import Config
 from ..helper.ext_utils.db_handler import database
 from ..helper.telegram_helper.message_utils import send_message
 from .game_common import (
@@ -25,6 +26,7 @@ from .game_common import (
     capped_xp_gain,
     code_collection,
     display_name,
+    disciple_summary,
     drop_collection,
     ensure_message_user,
     ensure_user,
@@ -928,6 +930,7 @@ async def account_stats(_, message):
         f"{HP_REGEN_TICK_SECONDS} giây</b>\n\n"
         f"🔮 <b>Bùa đang hoạt động</b>\n{buff_text}\n\n"
         f"{equipment_summary(user_doc)}\n\n"
+        f"{disciple_summary(user_doc)}\n\n"
         f"👹 <b>Thống kê boss</b>\n"
         f"Đòn đánh: <b>{format_number(int(stats.get('boss_hits', 0)))}</b>\n"
         f"Sát thương: <b>{format_number(int(stats.get('boss_damage', 0)))}</b>\n"
@@ -972,49 +975,100 @@ async def account_stats(_, message):
 
 
 
+async def _can_manage_entertainment(client, message, chat_id: int | None) -> bool:
+    user = message.from_user
+    if user is None:
+        return False
+    if int(user.id) == int(Config.OWNER_ID):
+        return True
+    if chat_id is None:
+        return False
+    try:
+        member = await client.get_chat_member(int(chat_id), int(user.id))
+    except Exception:
+        return False
+    return member.status in {
+        ChatMemberStatus.OWNER,
+        ChatMemberStatus.ADMINISTRATOR,
+    }
+
+
 @new_task
-async def toggle_entertainment(_, message):
+async def toggle_entertainment(client, message):
     parts = (message.text or "").split()
-    if len(parts) == 1:
-        enabled = await entertainment_enabled()
-        await send_message(
-            message,
-            "🎮 Khu vực giải trí hiện đang "
-            f"<b>{'BẬT' if enabled else 'TẮT'}</b>.\n"
-            "Dùng <code>/giaitri on</code> hoặc "
-            "<code>/giaitri off</code>.",
-        )
-        return
+    actions_on = {"on", "bat", "bật", "enable"}
+    actions_off = {"off", "tat", "tắt", "disable"}
+    actions_status = {"status", "trangthai", "trạngthái"}
+    valid_actions = actions_on | actions_off | actions_status
 
-    if len(parts) != 2:
-        await send_message(
-            message,
-            "Cách dùng: <code>/giaitri on</code>, "
-            "<code>/giaitri off</code> hoặc <code>/giaitri status</code>.",
-        )
-        return
-
-    action = parts[1].strip().lower()
-    if action in {"status", "trangthai", "trạngthái"}:
-        enabled = await entertainment_enabled()
-    elif action in {"on", "bat", "bật", "enable"}:
-        enabled = True
-        await set_entertainment_enabled(True)
-    elif action in {"off", "tat", "tắt", "disable"}:
-        enabled = False
-        await set_entertainment_enabled(False)
+    global_scope = len(parts) >= 2 and parts[1].strip().lower() == "global"
+    if global_scope:
+        action = parts[2].strip().lower() if len(parts) >= 3 else "status"
+        if len(parts) > 3 or action not in valid_actions:
+            await send_message(
+                message,
+                "Cách dùng: <code>/giaitri global on|off|status</code>.",
+            )
+            return
+        target_chat_id = None
+        scope_name = "toàn bộ bot"
     else:
+        action = parts[1].strip().lower() if len(parts) >= 2 else "status"
+        if action not in valid_actions or len(parts) > 3:
+            await send_message(
+                message,
+                "Cách dùng:\n"
+                "<code>/giaitri on|off|status</code> — nhóm hiện tại\n"
+                "<code>/giaitri on|off|status group_id</code> — nhóm được chỉ định\n"
+                "<code>/giaitri global on|off|status</code> — toàn bộ bot [Owner]",
+            )
+            return
+        if len(parts) == 3:
+            try:
+                target_chat_id = int(parts[2])
+            except ValueError:
+                await send_message(message, "❌ Group ID không hợp lệ.")
+                return
+        elif message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+            target_chat_id = int(message.chat.id)
+        elif int(message.from_user.id) == int(Config.OWNER_ID):
+            target_chat_id = None
+            global_scope = True
+        else:
+            await send_message(
+                message,
+                "❌ Hãy dùng lệnh trong nhóm hoặc thêm group_id.",
+            )
+            return
+        scope_name = "toàn bộ bot" if target_chat_id is None else f"nhóm <code>{target_chat_id}</code>"
+
+    if global_scope and int(message.from_user.id) != int(Config.OWNER_ID):
+        await send_message(message, "❌ Chỉ Owner được thay đổi trạng thái toàn bộ bot.")
+        return
+    if not await _can_manage_entertainment(client, message, target_chat_id):
         await send_message(
             message,
-            "❌ Chỉ chấp nhận <code>on</code>, "
-            "<code>off</code> hoặc <code>status</code>.",
+            "❌ Chỉ Owner hoặc quản trị viên của nhóm được dùng lệnh này.",
         )
         return
+
+    if action in actions_status:
+        enabled = await entertainment_enabled(target_chat_id)
+        verb = "hiện đang"
+    else:
+        enabled = action in actions_on
+        await set_entertainment_enabled(enabled, target_chat_id)
+        verb = "đã được đặt thành"
 
     await send_message(
         message,
-        "🎮 Khu vực giải trí đã được đặt thành "
-        f"<b>{'BẬT' if enabled else 'TẮT'}</b>.",
+        f"🎮 Khu vực giải trí của {scope_name} {verb} "
+        f"<b>{'BẬT' if enabled else 'TẮT'}</b>.\n"
+        + (
+            "Bảng lệnh hỗ trợ giải trí sẽ được hiển thị trong /help."
+            if enabled
+            else "Bảng lệnh hỗ trợ giải trí cũng đã bị ẩn khỏi /help."
+        ),
     )
 
 @new_task
