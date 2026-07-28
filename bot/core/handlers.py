@@ -273,30 +273,6 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
-            fish,
-            filters=command(BotCommands.FishCommand, case_sensitive=True)
-            & CustomFilters.authorized,
-        )
-    )
-    TgClient.bot.add_handler(
-        MessageHandler(
-            mine,
-            filters=command(BotCommands.MineCommand, case_sensitive=True)
-            & CustomFilters.authorized,
-        )
-    )
-    TgClient.bot.add_handler(
-        MessageHandler(
-            game_profile,
-            filters=command(
-                BotCommands.GameProfileCommand,
-                case_sensitive=True,
-            )
-            & CustomFilters.authorized,
-        )
-    )
-    TgClient.bot.add_handler(
-        MessageHandler(
             game_inventory,
             filters=command(
                 BotCommands.InventoryCommand,
@@ -340,36 +316,6 @@ def add_handlers():
             dice_bet,
             filters=command(
                 BotCommands.DiceBetCommand,
-                case_sensitive=True,
-            )
-            & CustomFilters.authorized,
-        )
-    )
-    TgClient.bot.add_handler(
-        MessageHandler(
-            shipper_job,
-            filters=command(
-                BotCommands.ShipperCommand,
-                case_sensitive=True,
-            )
-            & CustomFilters.authorized,
-        )
-    )
-    TgClient.bot.add_handler(
-        MessageHandler(
-            rocket_launch,
-            filters=command(
-                BotCommands.RocketCommand,
-                case_sensitive=True,
-            )
-            & CustomFilters.authorized,
-        )
-    )
-    TgClient.bot.add_handler(
-        MessageHandler(
-            buy_luck_buff,
-            filters=command(
-                BotCommands.LuckShopCommand,
                 case_sensitive=True,
             )
             & CustomFilters.authorized,
@@ -427,9 +373,9 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
-            equipment_shop,
+            game_shop,
             filters=command(
-                BotCommands.EquipmentShopCommand,
+                BotCommands.ShopCommand,
                 case_sensitive=True,
             )
             & CustomFilters.authorized,
@@ -437,9 +383,29 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
-            buy_equipment,
+            buy_item,
             filters=command(
-                BotCommands.BuyEquipmentCommand,
+                BotCommands.BuyCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            duck_race,
+            filters=command(
+                BotCommands.DuckRaceCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            werewolf_command,
+            filters=command(
+                BotCommands.WerewolfCommand,
                 case_sensitive=True,
             )
             & CustomFilters.authorized,

@@ -14,9 +14,9 @@ from .game_common import (
     ATTACK_BUFF_PRICE,
     BUFF_SECONDS,
     COIN_BUFF_PRICE,
-    DEFENSE_BUFF_PRICE,
     DODGE_BUFF_PRICE,
     GAME_LUCK_CHANCE_MULTIPLIER,
+    HP_REGEN_TICK_SECONDS,
     LUCK_BUFF_PRICE,
     TRANSFER_LOCK,
     XP_BUFF_PRICE,
@@ -491,7 +491,7 @@ BUFF_SHOP = {
         "emoji": "💰",
         "price": COIN_BUFF_PRICE,
         "field": "coin_buff_until",
-        "effect": "Nhân đôi xu từ fish, mine, shipper và rocket",
+        "effect": "Nhân đôi xu từ bù nhìn, đua vịt và Ma Sói; không áp dụng boss",
     },
     "tancong": {
         "aliases": {"tancong", "attack", "atk"},
@@ -500,14 +500,6 @@ BUFF_SHOP = {
         "price": ATTACK_BUFF_PRICE,
         "field": "attack_buff_until",
         "effect": "Nhân đôi tấn công cơ bản",
-    },
-    "phongthu": {
-        "aliases": {"phongthu", "defense", "def"},
-        "name": "Bùa x2 Phòng Thủ",
-        "emoji": "🛡",
-        "price": DEFENSE_BUFF_PRICE,
-        "field": "defense_buff_until",
-        "effect": "Nhân đôi phòng thủ cơ bản",
     },
     "nedon": {
         "aliases": {"nedon", "dodge", "ne"},
@@ -591,7 +583,7 @@ async def buy_luck_buff(_, message):
                 "❌ Loại bùa hợp lệ: "
                 "<code>mayman</code>, <code>exp</code>, "
                 "<code>tien</code>, <code>tancong</code>, "
-                "<code>phongthu</code>, <code>nedon</code>.",
+                "<code>nedon</code>.",
             )
             return
 
@@ -882,16 +874,20 @@ async def account_stats(_, message):
     if user_doc is None:
         return
     stats = user_doc.get("stats", {})
-    played = int(stats.get("games_played", 0))
-    won = int(stats.get("games_won", 0))
+    if not isinstance(stats, dict):
+        stats = {}
+
+    played = int(stats.get("games_played", 0) or 0)
+    won = int(stats.get("games_won", 0) or 0)
+    lost = int(stats.get("games_lost", 0) or 0)
     win_rate = (won / played * 100.0) if played else 0.0
-    xp = int(user_doc.get("xp", 0))
+    xp = int(user_doc.get("xp", 0) or 0)
     level = player_level(user_doc)
     xp_progress, xp_required = player_xp_progress(xp)
     level_progress = (
         "TỐI ĐA"
         if level >= MAX_PLAYER_LEVEL
-        else f"{xp_progress}/{xp_required} XP"
+        else f"{format_number(xp_progress)}/{format_number(xp_required)} XP"
     )
     attack = player_attack(user_doc)
     defense = player_defense(user_doc)
@@ -923,27 +919,57 @@ async def account_stats(_, message):
         message,
         f"📊 <b>Thống kê của {escape(display_name(message))}</b>\n\n"
         f"💰 Số dư: <b>{format_number(int(user_doc.get('coins', 0)))} xu</b>\n"
-        f"⭐ Cấp độ: <b>{level}/{MAX_PLAYER_LEVEL}</b> — "
-        f"{level_progress}\n"
+        f"⭐ Cấp độ: <b>{level}/{MAX_PLAYER_LEVEL}</b> — {level_progress}\n"
         f"⚔️ Tấn công cơ bản: <b>{format_number(attack)}</b>\n"
         f"🛡 Phòng thủ cơ bản: <b>{format_number(defense)}</b>\n"
         f"💨 Né đòn: <b>{dodge * 100:.2f}%</b>\n"
         f"❤️ HP: <b>{format_number(hp)}/{format_number(max_hp)}</b> — {hp_status}\n"
-        f"💚 Hồi HP: <b>{format_number(hp_regen)} HP/5 giây</b>\n"
-        f"🎮 Ván cược: <b>{played}</b>\n"
-        f"✅ Thắng: <b>{won}</b> · "
-        f"❌ Thua: <b>{int(stats.get('games_lost', 0))}</b>\n"
-        f"📈 Tỉ lệ thắng: <b>{win_rate:.2f}%</b>\n"
-        f"💹 Lãi/lỗ cược: "
-        f"<b>{format_number(int(stats.get('bet_profit', 0)))} xu</b>\n"
-        f"🍀 Hệ số bùa may mắn: <b>x{multiplier:.2f}</b>\n"
-        f"🎯 Tỉ lệ may mắn trò chơi: <b>x{GAME_LUCK_CHANCE_MULTIPLIER:.0f}</b>\n"
+        f"💚 Hồi HP: <b>{format_number(hp_regen)} HP/"
+        f"{HP_REGEN_TICK_SECONDS} giây</b>\n\n"
         f"🔮 <b>Bùa đang hoạt động</b>\n{buff_text}\n\n"
         f"{equipment_summary(user_doc)}\n\n"
-        f"👹 Sát thương boss: "
-        f"<b>{format_number(int(stats.get('boss_damage', 0)))}</b>\n"
-        f"🏆 Boss kết liễu: <b>{int(stats.get('boss_kills', 0))}</b>",
+        f"👹 <b>Thống kê boss</b>\n"
+        f"Đòn đánh: <b>{format_number(int(stats.get('boss_hits', 0)))}</b>\n"
+        f"Sát thương: <b>{format_number(int(stats.get('boss_damage', 0)))}</b>\n"
+        f"Boss kết liễu: <b>{format_number(int(stats.get('boss_kills', 0)))}</b>\n"
+        f"Xu chia thưởng: <b>{format_number(int(stats.get('boss_rewards', 0)))} xu</b>\n"
+        f"XP từ boss: <b>{format_number(int(stats.get('boss_xp', 0)))}</b>\n"
+        f"Xu rơi khi đánh: <b>{format_number(int(stats.get('boss_coin_drops', 0)))} xu</b>\n"
+        f"Mảnh trang bị: <b>{format_number(int(stats.get('boss_part_drops', 0)))}</b> · "
+        f"Set nguyên: <b>{format_number(int(stats.get('boss_set_drops', 0)))}</b>\n\n"
+        f"🎯 <b>Thống kê bù nhìn</b>\n"
+        f"Số lượt: <b>{format_number(int(stats.get('dummy_hits', 0)))}</b>\n"
+        f"Sát thương: <b>{format_number(int(stats.get('dummy_damage', 0)))}</b>\n"
+        f"XP: <b>{format_number(int(stats.get('dummy_xp', 0)))}</b> · "
+        f"Xu: <b>{format_number(int(stats.get('dummy_coins', 0)))} xu</b>\n\n"
+        f"🦆 <b>Thống kê đua vịt</b>\n"
+        f"Số lượt: <b>{format_number(int(stats.get('duck_races', 0)))}</b> · "
+        f"Kỷ lục: <b>{format_number(int(stats.get('duck_best_distance', 0)))} m</b>\n"
+        f"Tổng quãng đường: <b>{format_number(int(stats.get('duck_distance', 0)))} m</b>\n"
+        f"Xu: <b>{format_number(int(stats.get('duck_coins', 0)))} xu</b> · "
+        f"EXP: <b>{format_number(int(stats.get('duck_xp', 0)))}</b>\n\n"
+        f"🐺 <b>Thống kê Ma Sói</b>\n"
+        f"Số ván: <b>{format_number(int(stats.get('werewolf_games', 0)))}</b> · "
+        f"Chiến thắng: <b>{format_number(int(stats.get('werewolf_wins', 0)))}</b>\n"
+        f"Thắng phe Sói: <b>{format_number(int(stats.get('werewolf_wolf_wins', 0)))}</b> · "
+        f"Thắng phe Dân: <b>{format_number(int(stats.get('werewolf_village_wins', 0)))}</b>\n"
+        f"Xu: <b>{format_number(int(stats.get('werewolf_coins', 0)))} xu</b> · "
+        f"EXP: <b>{format_number(int(stats.get('werewolf_xp', 0)))}</b>\n\n"
+        f"🎰 <b>Thống kê cược</b>\n"
+        f"Ván cược: <b>{format_number(played)}</b> · "
+        f"Thắng <b>{format_number(won)}</b> · Thua <b>{format_number(lost)}</b>\n"
+        f"Tỉ lệ thắng: <b>{win_rate:.2f}%</b> · "
+        f"Lãi/lỗ: <b>{format_number(int(stats.get('bet_profit', 0)))} xu</b>\n\n"
+        f"📜 <b>Dữ liệu hoạt động cũ</b>\n"
+        f"Câu cá: <b>{format_number(int(stats.get('fish_count', 0)))}</b> · "
+        f"Đào mỏ: <b>{format_number(int(stats.get('mine_count', 0)))}</b> · "
+        f"Shipper: <b>{format_number(int(stats.get('shipper_count', 0)))}</b> · "
+        f"Rocket: <b>{format_number(int(stats.get('rocket_count', 0)))}</b>\n"
+        f"☠️ Số lần bị hạ: <b>{format_number(int(stats.get('deaths', 0)))}</b>\n"
+        f"🍀 Hệ số may mắn: <b>x{multiplier:.2f}</b> · "
+        f"Hệ số trò chơi: <b>x{GAME_LUCK_CHANCE_MULTIPLIER:.0f}</b>",
     )
+
 
 
 @new_task

@@ -19,6 +19,7 @@ from .game_common import (
     capped_xp_gain,
     ensure_user,
     entertainment_guard,
+    equipment_summary,
     game_luck_factor,
     normal_game_coin_reward,
     player_level,
@@ -499,61 +500,13 @@ async def game_inventory(_, message):
         return
 
     user = await _get_user(collection, message)
-    inventory = user.get("inventory", {})
-    parts = (message.text or "").split(maxsplit=1)
-    requested = parts[1].strip().lower() if len(parts) > 1 else "all"
-
-    show_fish = requested in {"all", "fish", "ca", "cá"}
-    show_minerals = requested in {
-        "all",
-        "mine",
-        "mineral",
-        "minerals",
-        "quang",
-        "quặng",
-    }
-
-    if not show_fish and not show_minerals:
-        await send_message(
-            message,
-            "Cách dùng:\n"
-            "<code>/inventory</code>\n"
-            "<code>/inventory fish</code>\n"
-            "<code>/inventory minerals</code>",
-        )
-        return
-
-    sections: list[str] = []
-    grand_total = 0
-
-    if show_fish:
-        stats = user.get("stats", {})
-        sections.append(
-            "<b>🎣 Câu cá tự động bán</b>\n"
-            "Cá câu được được đổi thành xu ngay lập tức, không lưu trong kho.\n"
-            f"Số cá đã câu: <b>{_format_number(int(stats.get('fish_count', 0)))}</b>\n"
-            f"Tổng xu đã nhận: <b>{_format_number(int(stats.get('fish_value', 0)))} xu</b>"
-        )
-
-    if show_minerals:
-        mineral_items = inventory.get("minerals", {})
-        if mineral_items:
-            lines, total = _inventory_lines(
-                mineral_items,
-                "⛏ Bộ sưu tập khoáng sản",
-            )
-            sections.append("\n".join(lines))
-            grand_total += total
-        else:
-            sections.append(
-                "<b>⛏ Bộ sưu tập khoáng sản</b>\nChưa có chiến lợi phẩm."
-            )
-
-    text = (
-        "\n\n".join(sections)
-        + f"\n\n📦 Tổng giá trị khoáng sản đang lưu: <b>{_format_number(grand_total)} xu</b>"
+    await send_message(
+        message,
+        "📦 <b>Inventory trang bị</b>\n\n"
+        + equipment_summary(user)
+        + "\n\nDùng <code>/trangbi</code> để xem chi tiết và đổi set đang sử dụng.",
     )
-    await send_message(message, text)
+
 
 
 @new_task
