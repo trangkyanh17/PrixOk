@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from html import escape
 
+from bot.core.config_manager import Config
 from bot.helper.ext_utils.bot_utils import new_task
 from bot.helper.telegram_helper.message_utils import send_message
 
@@ -96,6 +97,11 @@ async def profile(_, message):
     duck_races = int(document.get("duck_races", 0))
     duck_best = int(document.get("duck_best", 0))
     duck_earned = int(document.get("duck_earned", 0))
+    casino_games = int(document.get("casino_games", 0))
+    casino_wins = int(document.get("casino_wins", 0))
+    casino_losses = int(document.get("casino_losses", 0))
+    casino_wagered = int(document.get("casino_wagered", 0))
+    casino_net = int(document.get("casino_net", 0))
 
     created = document.get("created_at")
     joined = (
@@ -119,6 +125,11 @@ async def profile(_, message):
         f"• Số lượt đua: <b>{duck_races}</b>\n"
         f"• Đi xa nhất: <b>{duck_best}m</b>\n"
         f"• Tổng thưởng: <b>{format_coins(duck_earned)}</b>\n\n"
+        f"🎲 <b>Tài xỉu và xúc xắc</b>\n"
+        f"• Số ván: <b>{casino_games}</b> "
+        f"({casino_wins} thắng / {casino_losses} thua)\n"
+        f"• Tổng tiền cược: <b>{format_coins(casino_wagered)}</b>\n"
+        f"• Lãi/lỗ: <b>{format_coins(casino_net)}</b>\n\n"
         f"📅 Tham gia: {joined}"
     )
     await send_message(message, text)
@@ -169,6 +180,85 @@ async def game_top(_, message):
             f"<b>{format_coins(document.get('coins', 0))}</b>"
         )
     await send_message(message, "\n".join(lines))
+
+
+@new_task
+async def owner_set_coins(_, message):
+    owner = message.from_user
+    if owner is None or int(owner.id) != int(Config.OWNER_ID):
+        return
+
+    arguments = (message.text or "").split()
+    replied_user = None
+    if message.reply_to_message is not None:
+        replied_user = message.reply_to_message.from_user
+
+    target_id = None
+    target_name = None
+    amount_token = None
+
+    if replied_user is not None and len(arguments) == 2:
+        target_id = int(replied_user.id)
+        target_name = raw_name(replied_user)
+        amount_token = arguments[1]
+    elif replied_user is None and len(arguments) == 2:
+        target_id = int(owner.id)
+        target_name = raw_name(owner)
+        amount_token = arguments[1]
+    elif replied_user is None and len(arguments) == 3:
+        try:
+            target_id = int(arguments[1])
+        except ValueError:
+            target_id = None
+        amount_token = arguments[2]
+
+    if target_id is None or amount_token is None or target_id <= 0:
+        await send_message(
+            message,
+            "Cú pháp:\n"
+            "• Tự đặt: <code>/setcoins &lt;số xu&gt;</code>\n"
+            "• Theo ID: <code>/setcoins &lt;user_id&gt; &lt;số xu&gt;</code>\n"
+            "• Hoặc reply người cần đặt: <code>/setcoins &lt;số xu&gt;</code>",
+        )
+        return
+
+    normalized = (
+        amount_token.lower()
+        .replace(".", "")
+        .replace(",", "")
+        .replace("_", "")
+        .removesuffix("xu")
+        .strip()
+    )
+    if not normalized.isdigit():
+        await send_message(
+            message,
+            "❌ Số xu phải là số nguyên không âm.",
+        )
+        return
+
+    amount = int(normalized)
+    if amount > 9_223_372_036_854_775_807:
+        await send_message(
+            message,
+            "❌ Số xu vượt giới hạn lưu trữ.",
+        )
+        return
+
+    document = await get_user(target_id, target_name)
+    stored_name = str(document.get("name") or "").strip()
+    balance = await set_coins(target_id, amount)
+    target_label = (
+        mention(target_id, escape(stored_name))
+        if stored_name
+        else f"<code>{target_id}</code>"
+    )
+    await send_message(
+        message,
+        f"✅ Đã đặt số dư của {target_label} thành "
+        f"<b>{format_coins(balance)}</b>.\n"
+        f"<code>ID: {target_id}</code>",
+    )
 
 
 @new_task
@@ -238,6 +328,18 @@ async def game_help(_, message):
 <code>/duavit</code> — thả thuyền vịt ra đua.
 Thuyền đi càng xa thì thưởng càng nhiều, đi ngắn thì thưởng ít.
 Về nhất/nhì/ba có thêm tiền thưởng. Nghỉ 1 phút giữa 2 lượt.
+
+<b>🎲 Tài Xỉu — có cược</b>
+<code>/tx tai 5000</code> — cược Tài 5.000 xu
+<code>/tx xiu all</code> — cược toàn bộ số dư vào Xỉu
+<code>/taixiu</code> — lệnh dài tương đương <code>/tx</code>
+Ba xúc xắc có tổng 3-10 là Xỉu, 11-18 là Tài. Thắng nhận tổng cộng x2 tiền cược.
+
+<b>🎯 Xúc Xắc Đoán Số — có cược</b>
+<code>/xucxac 4 5000</code> — đoán số 4, cược 5.000 xu
+<code>/xucxac 6 all</code> — đoán số 6, cược toàn bộ số dư
+<code>/xx</code> — lệnh ngắn tương đương <code>/xucxac</code>
+Đoán đúng một số từ 1-6 nhận tổng cộng x6 tiền cược.
 
 <b>🐺 Ma sói — có cược</b>
 <code>/masoi</code> — mở ván với mức cược mặc định
