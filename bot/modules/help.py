@@ -6,7 +6,6 @@ from ..helper.ext_utils.help_messages import (
     YT_HELP_DICT,
 )
 from ..helper.telegram_helper.bot_commands import BotCommands
-from .game_common import entertainment_enabled
 from ..helper.telegram_helper.button_build import ButtonMaker
 from ..helper.telegram_helper.message_utils import (
     delete_message,
@@ -60,7 +59,7 @@ MIRROR_HELP_TABLE = "\n".join(
         "",
         "<b>Thông tin và cài đặt</b>",
         _row(BotCommands.StartCommand, "Khởi động bot."),
-        _row(BotCommands.HelpCommand, "Mở hai bảng lệnh này."),
+        _row(BotCommands.HelpCommand, "Mở bảng lệnh mirror."),
         _row(BotCommands.PingCommand, "Kiểm tra độ trễ bot."),
         _row(BotCommands.StatsCommand, "Xem tài nguyên máy chủ."),
         _row(BotCommands.UserSetCommand, "Cài đặt cá nhân."),
@@ -81,105 +80,6 @@ MIRROR_HELP_TABLE = "\n".join(
         _row(BotCommands.ClearLocalsCommand, "Xóa biến exec [Owner]."),
         "",
         "Gửi riêng từng lệnh không kèm tham số để xem hướng dẫn chi tiết.",
-    ]
-)
-
-
-ENTERTAINMENT_HELP_TABLE = "\n".join(
-    [
-        "🎮 <b>BẢNG LỆNH GIẢI TRÍ</b>",
-        "",
-        "<b>Nhân vật, mini-game và xếp hạng</b>",
-        _row(BotCommands.InventoryCommand, "Chỉ xem các set trang bị đang sở hữu."),
-        _row(BotCommands.GameTopCommand, "Xem bảng xếp hạng."),
-        _row(BotCommands.GameStatsCommand, "Xem toàn bộ chỉ số và thành tích nhân vật."),
-        _row(BotCommands.DuckRaceCommand, "Đua vịt miễn phí; hồi lệnh 30 giây."),
-        _row(BotCommands.WerewolfCommand, "Phòng Ma Sói 5-10 người; bot làm quản trò."),
-        _row(
-            BotCommands.DiscipleCommand,
-            "Xem cấp, XP, chỉ số đệ tử và trạng thái hợp thể.",
-        ),
-        _row(
-            BotCommands.FusionCommand,
-            "Hợp thể 10 phút; chỉ cộng HP và tấn công.",
-        ),
-        _row(
-            BotCommands.FusionPotionCommand,
-            "Bật hợp thể vĩnh viễn hoặc tách hợp thể ngay.",
-        ),
-        _row(
-            BotCommands.MaxOwnDiscipleCommand,
-            "Tự max đệ tử của chính mình lên cấp tối đa.",
-        ),
-        "",
-        "<b>Cửa hàng, cược và chuyển xu</b>",
-        _row(BotCommands.ShopCommand, "Mở shop chung: set, bùa và thuyền vịt."),
-        _row(BotCommands.BuyCommand, "[tên_vật_phẩm] để mua trong shop."),
-        _row(BotCommands.TaiXiuCommand, "[tai|xiu] [xu|all]."),
-        _row(BotCommands.NoHuCommand, "[xu|all]."),
-        _row(BotCommands.DiceBetCommand, "[1-6] [xu|all]."),
-        _row(BotCommands.RedeemCodeCommand, "[mã] để nhận quà."),
-        _row(BotCommands.PayCommand, "[@user|ID] [xu|all]."),
-        _row(BotCommands.DropCommand, "[xu|all] để thả rương trong nhóm."),
-        _row(BotCommands.PickupCommand, "Reply rương để nhặt."),
-        "",
-        "<b>Trang bị</b>",
-        "Tân thủ mặc áo phông, quần short và dùng tay không x1; "
-        "không nhận chỉ số trang bị.",
-        _row(BotCommands.EquipCommand, "Xem hoặc chọn set đang dùng."),
-        _row(
-            BotCommands.MergeEquipmentCommand,
-            "[set_id] thấp hơn đúng 1 tier; tối đa +25.",
-        ),
-        _row(
-            BotCommands.RepairEquipmentCommand,
-            "[giap|vukhi], phí 1-10 triệu xu; không mất thuộc tính.",
-        ),
-        _row(
-            BotCommands.AutoRepairCommand,
-            "[on|off|status], tự sửa giáp và vũ khí sau lượt boss.",
-        ),
-        "",
-        "<b>Boss</b>",
-        _row(
-            BotCommands.SummonBossCommand,
-            "list, random hoặc boss_id; gọi được nhiều boss, tồn tại 60 phút.",
-        ),
-        _row(
-            BotCommands.BossStatusCommand,
-            "Xem nhiều boss; xuyên giáp 80%, dưới 50% HP sẽ cuồng nộ.",
-        ),
-        _row(
-            BotCommands.AttackBossCommand,
-            "attack [mã_trận] để sư phụ và đệ tử đánh; autoboss vẫn được giữ.",
-        ),
-        _row(
-            BotCommands.TrainingDummyCommand,
-            "bunhin/autobunhin: sư phụ nhận thưởng, đệ tử tự đánh để tăng cấp.",
-        ),
-        _row(BotCommands.ExecuteBossCommand, "Kết liễu boss siêu cấp trả phí."),
-        "",
-        "<b>Quản trị game [Owner]</b>",
-        _row(BotCommands.CreateCodeCommand, "[xu] để tạo code."),
-        _row(BotCommands.DeleteCodeCommand, "[mã] để xóa code."),
-        _row(BotCommands.SetCoinsCommand, "[user|all] [xu]."),
-        _row(
-            BotCommands.MaxLevelCommand,
-            "[user_id|@username], max cấp và tặng Graphine Tối Thượng +25 bất hoại.",
-        ),
-        _row(
-            BotCommands.MaxDiscipleCommand,
-            "Không cần tham số; Owner tự max đệ tử của chính mình.",
-        ),
-        _row(BotCommands.GiftCoinsCommand, "[user] [xu]."),
-        _row(BotCommands.LuckyCommand, "[user] [0-100]."),
-        _row(BotCommands.UnluckyCommand, "[user]."),
-        _row(
-            BotCommands.EntertainmentToggleCommand,
-            "[on|off|status] [group_id]; Owner dùng thêm global.",
-        ),
-        _row(BotCommands.AllowGroupCommand, "Duyệt nhóm dùng bot."),
-        _row(BotCommands.DeleteGroupCommand, "Gỡ quyền nhóm."),
     ]
 )
 
@@ -240,5 +140,3 @@ async def arg_usage(_, query):
 @new_task
 async def bot_help(_, message):
     await send_message(message, MIRROR_HELP_TABLE)
-    if await entertainment_enabled(message.chat.id):
-        await send_message(message, ENTERTAINMENT_HELP_TABLE)
