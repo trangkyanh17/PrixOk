@@ -335,3 +335,5 @@ def add_handlers():
             & CustomFilters.authorized,
         )
     )
+    from bot.modules.game_setup import add_game_handlers
+    add_game_handlers()
