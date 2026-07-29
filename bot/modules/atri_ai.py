@@ -19,7 +19,7 @@ from bot.core.config_manager import Config
 VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 MAX_INPUT_CHARS = 6000
 MAX_HISTORY_MESSAGES = 14
-MAX_OUTPUT_TOKENS = 800
+MAX_OUTPUT_TOKENS = 2048
 USER_COOLDOWN_SECONDS = 3.0
 
 _chat_history: dict[tuple[int, int], deque[dict[str, Any]]] = defaultdict(
@@ -192,7 +192,10 @@ async def _vertex_generate(
 ) -> str:
     project = _setting("VERTEX_PROJECT_ID") or _setting("GOOGLE_CLOUD_PROJECT")
     location = _setting("VERTEX_LOCATION", "global")
-    model = _setting("VERTEX_MODEL", "gemini-3.1-flash-lite")
+    model = _setting("VERTEX_MODEL", "gemini-3.5-flash-lite")
+    thinking_level = _setting("VERTEX_THINKING_LEVEL", "medium").casefold()
+    if thinking_level not in {"minimal", "low", "medium", "high"}:
+        thinking_level = "medium"
 
     if not project:
         raise RuntimeError("VERTEX_PROJECT_ID chưa được cấu hình.")
@@ -209,8 +212,9 @@ async def _vertex_generate(
         },
         "contents": [*history, {"role": "user", "parts": current_parts}],
         "generationConfig": {
-            "temperature": 0.85,
-            "topP": 0.95,
+            "thinkingConfig": {
+                "thinkingLevel": thinking_level,
+            },
             "maxOutputTokens": MAX_OUTPUT_TOKENS,
         },
     }
@@ -331,7 +335,8 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
         await message.reply_text(
             "Atri AI\n"
             f"Trạng thái: {state}\n"
-            f"Model: {_setting('VERTEX_MODEL', 'gemini-3.1-flash-lite')}\n"
+            f"Model: {_setting('VERTEX_MODEL', 'gemini-3.5-flash-lite')}\n"
+            f"Thinking: {_setting('VERTEX_THINKING_LEVEL', 'medium')}\n"
             f"Gọi Atri, mention bot, reply bot hoặc dùng /ai{suffix} nội_dung.\n"
             f"Quản trị: /atri{suffix} on|off, /resetai{suffix}",
             quote=True,
