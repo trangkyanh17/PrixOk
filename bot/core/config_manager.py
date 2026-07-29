@@ -77,7 +77,8 @@ class Config:
     USE_SERVICE_ACCOUNTS = False
     VERTEX_PROJECT_ID = ""
     VERTEX_LOCATION = "global"
-    VERTEX_MODEL = "gemini-3.1-flash-lite"
+    VERTEX_MODEL = "gemini-3.5-flash-lite"
+    VERTEX_THINKING_LEVEL = "medium"
     WEB_PINCODE = False
     YT_DLP_OPTIONS = {}
 
