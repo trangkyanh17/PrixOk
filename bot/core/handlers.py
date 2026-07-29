@@ -1,7 +1,9 @@
+from pyrogram import filters
 from pyrogram.filters import command, regex
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler, EditedMessageHandler
 
 from ..modules import *
+from ..modules.atri_ai import atri_message
 from ..helper.telegram_helper.bot_commands import BotCommands
 from ..helper.telegram_helper.filters import CustomFilters
 from .telegram_manager import TgClient
@@ -334,6 +336,13 @@ def add_handlers():
             filters=command(BotCommands.NzbSearchCommand, case_sensitive=True)
             & CustomFilters.authorized,
         )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            atri_message,
+            filters=filters.incoming & (filters.text | filters.photo),
+        ),
+        group=20,
     )
     from bot.modules.game_setup import add_game_handlers
     add_game_handlers()

@@ -75,6 +75,9 @@ class Config:
     USER_SESSION_STRING = ""
     USER_TRANSMISSION = False
     USE_SERVICE_ACCOUNTS = False
+    VERTEX_PROJECT_ID = ""
+    VERTEX_LOCATION = "global"
+    VERTEX_MODEL = "gemini-3.1-flash-lite"
     WEB_PINCODE = False
     YT_DLP_OPTIONS = {}
 
