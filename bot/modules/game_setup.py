@@ -7,6 +7,7 @@ from bot import LOGGER
 from bot.core.telegram_manager import TgClient
 from bot.helper.telegram_helper.filters import CustomFilters
 
+from .atri_music_tools import music_command, scmusic_command, ytmusic_command
 from .game_casino import tai_xiu, xuc_xac
 from .game_common import command_name
 from .game_duck import duck_race
@@ -63,14 +64,17 @@ def add_game_handlers() -> None:
     bot.add_handler(_message(xuc_xac, CMD_DICE, authorized))
     bot.add_handler(_message(xuc_xac, CMD_DICE_SHORT, authorized))
     bot.add_handler(_message(werewolf_command, CMD_WEREWOLF, authorized))
-    bot.add_handler(
-        _message(owner_set_coins, CMD_OWNER_SET_COINS, owner)
-    )
+    bot.add_handler(_message(owner_set_coins, CMD_OWNER_SET_COINS, owner))
     bot.add_handler(_message(admin_set_coins, CMD_SET_COINS, sudo))
     bot.add_handler(_message(toggle_games, CMD_TOGGLE, sudo))
     bot.add_handler(CallbackQueryHandler(werewolf_callback, filters=regex("^ws ")))
 
+    # Nhạc tách nguồn để tránh kết quả lẫn giữa YouTube và SoundCloud.
+    bot.add_handler(_message(music_command, "music", authorized))
+    bot.add_handler(_message(ytmusic_command, "ytmusic", authorized))
+    bot.add_handler(_message(scmusic_command, "scmusic", authorized))
+
     LOGGER.info(
-        "Đã nạp khu giải trí: đua vịt, tài xỉu, "
-        "xúc xắc, ma sói và hệ thống tiền tệ."
+        "Đã nạp khu giải trí và lệnh nhạc tách nguồn: "
+        "/music, /ytmusic, /scmusic."
     )
