@@ -2,7 +2,9 @@ from logging import getLogger
 from os import path as ospath, listdir
 from re import search as re_search
 from secrets import token_urlsafe
+from urllib.parse import urlparse
 from yt_dlp import YoutubeDL, DownloadError
+from yt_dlp.networking.impersonate import ImpersonateTarget
 
 
 from .... import task_dict_lock, task_dict
@@ -63,6 +65,11 @@ class YoutubeDLHelper:
             "noprogress": True,
             "allow_playlist_files": True,
             "overwrites": True,
+
+            # YTDLP_BROWSER_IMPERSONATION
+            # Cần cho TikTok và các website dùng browser/TLS challenge.
+            "impersonate": ImpersonateTarget.from_str("chrome"),
+
             "writethumbnail": True,
             "trim_file_name": 220,
             "fragment_retries": 10,
@@ -132,16 +139,27 @@ class YoutubeDLHelper:
         self._listener.is_cancelled = True
         async_to_sync(self._listener.on_download_error, error)
 
+    # TIKTOK_COMPAT_CENTRALIZED_V3
+    def _apply_tiktok_compat(self):
+        link = str(self._listener.link or "")
+        host = (urlparse(link).hostname or "").lower()
+
+        if host == "tiktok.com" or host.endswith(".tiktok.com"):
+            # Ép lại sau mọi option của user/config.
+            self.opts["cookiefile"] = "/app/cookies.txt"
+            self.opts["impersonate"] = (
+                ImpersonateTarget.from_str("chrome")
+            )
+
     def _extract_meta_data(self):
+        self._apply_tiktok_compat()
+
         if self._listener.link.startswith(("rtmp", "mms", "rstp", "rtmps")):
             self.opts["external_downloader"] = "ffmpeg"
         with YoutubeDL(self.opts) as ydl:
-            try:
-                result = ydl.extract_info(self._listener.link, download=False)
-                if result is None:
-                    raise ValueError("Info result is None")
-            except Exception as e:
-                return self._on_download_error(str(e))
+            result = ydl.extract_info(self._listener.link, download=False)
+            if result is None:
+                raise ValueError("yt-dlp returned no metadata")
             if "entries" in result:
                 for entry in result["entries"]:
                     if not entry:
@@ -169,28 +187,40 @@ class YoutubeDLHelper:
 
     def _download(self, path):
         try:
+            self._apply_tiktok_compat()
             with YoutubeDL(self.opts) as ydl:
-                try:
-                    ydl.download([self._listener.link])
-                except DownloadError as e:
-                    if not self._listener.is_cancelled:
-                        self._on_download_error(str(e))
-                    return
+                ydl.download([self._listener.link])
             if self.is_playlist and (
                 not ospath.exists(path) or len(listdir(path)) == 0
             ):
-                self._on_download_error(
-                    "No video available to download from this playlist. Check logs for more details"
+                raise DownloadError(
+                    "No video available to download from this playlist"
                 )
-                return
             if self._listener.is_cancelled:
                 return
             async_to_sync(self._listener.on_download_complete)
-        except:
-            pass
-        return
+        except DownloadError as exc:
+            if not self._listener.is_cancelled:
+                LOGGER.error("yt-dlp download failed: %s", exc)
+                self._on_download_error(str(exc))
+        except Exception as exc:
+            LOGGER.exception("Unexpected yt-dlp failure")
+            if not self._listener.is_cancelled:
+                self._on_download_error(
+                    f"Unexpected yt-dlp error: {type(exc).__name__}: {exc}"
+                )
 
     async def add_download(self, path, qual, playlist, options):
+        # TikTok thường yêu cầu browser/TLS fingerprint hợp lệ.
+        if (
+            isinstance(self._listener.link, str)
+            and re_search(
+                r"https?://(?:www\\.|vt\\.|vm\\.)?tiktok\\.com/",
+                self._listener.link,
+            )
+        ):
+            self.opts["impersonate"] = ImpersonateTarget.from_str("chrome")
+
         if playlist:
             self.opts["ignoreerrors"] = True
             self.is_playlist = True
@@ -233,9 +263,22 @@ class YoutubeDLHelper:
         if options:
             self._set_options(options)
 
+        self._apply_tiktok_compat()
+
         self.opts["format"] = qual
 
-        await sync_to_async(self._extract_meta_data)
+        try:
+            await sync_to_async(self._extract_meta_data)
+        except DownloadError as exc:
+            LOGGER.error("yt-dlp metadata extraction failed: %s", exc)
+            await self._listener.on_download_error(str(exc))
+            return
+        except Exception as exc:
+            LOGGER.exception("Unexpected yt-dlp metadata failure")
+            await self._listener.on_download_error(
+                f"yt-dlp metadata error: {type(exc).__name__}: {exc}"
+            )
+            return
         if self._listener.is_cancelled:
             return
 

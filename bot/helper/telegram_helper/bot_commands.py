@@ -31,6 +31,7 @@ class BotCommands:
     AddSudoCommand = f"addsudo{i}"
     RmSudoCommand = f"rmsudo{i}"
     PingCommand = f"ping{i}"
+    SpeedtestCommand = [f"speedtest{i}", f"speed{i}"]
     RestartCommand = f"restart{i}"
     StatsCommand = f"stats{i}"
     HelpCommand = f"help{i}"

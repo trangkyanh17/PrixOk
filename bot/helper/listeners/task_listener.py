@@ -98,6 +98,24 @@ class TaskListener(TaskConfig):
         await sleep(2)
         if self.is_cancelled:
             return
+
+        # The unrestricted CDN links are already local at this point. Remove
+        # the remote AllDebrid magnet on success as well as on failure.
+        if magnet_id := getattr(self, "_alldebrid_magnet_id", 0) or 0:
+            try:
+                from ..mirror_leech_utils.download_utils.alldebrid_resolver import (
+                    delete_magnet,
+                )
+
+                await delete_magnet(magnet_id)
+            except Exception as exc:
+                LOGGER.warning(
+                    "Failed to clean AllDebrid magnet %s after download: %s",
+                    magnet_id,
+                    exc,
+                )
+            finally:
+                self._alldebrid_magnet_id = 0
         multi_links = False
         if (
             self.folder_name
@@ -456,8 +474,12 @@ class TaskListener(TaskConfig):
                 )
 
                 await delete_magnet(magnet_id)
-            except:
-                pass
+            except Exception as exc:
+                LOGGER.warning(
+                    "Failed to clean AllDebrid magnet %s after error: %s",
+                    magnet_id,
+                    exc,
+                )
             self._alldebrid_magnet_id = 0
 
         torbox_torrent_id = getattr(self, "_torbox_torrent_id", 0) or 0

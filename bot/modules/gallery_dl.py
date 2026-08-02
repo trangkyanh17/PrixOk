@@ -1,3 +1,4 @@
+from bot.helper.ext_utils.parsing import parse_literal
 from gallery_dl import extractor
 
 from .. import LOGGER, bot_loop, task_dict_lock, DOWNLOAD_DIR
@@ -91,7 +92,7 @@ class GalleryDL(TaskListener):
             self.multi = 0
 
         try:
-            opt = eval(args["-opt"]) if args["-opt"] else {}
+            opt = parse_literal(args["-opt"], dict) if args["-opt"] else {}
         except Exception as e:
             LOGGER.error(e)
             opt = {}

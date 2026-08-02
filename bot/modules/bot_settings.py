@@ -31,6 +31,7 @@ from .. import (
     auth_chats,
     sudo_users,
 )
+from ..helper.ext_utils.parsing import parse_literal
 from ..helper.ext_utils.bot_utils import (
     SetInterval,
     new_task,
@@ -310,9 +311,9 @@ async def edit_variable(_, message, pre_message, key):
     elif value.isdigit():
         value = int(value)
     elif value.startswith("[") and value.endswith("]"):
-        value = eval(value)
+        value = parse_literal(value, (list, dict))
     elif value.startswith("{") and value.endswith("}"):
-        value = eval(value)
+        value = parse_literal(value, (list, dict))
     Config.set(key, value)
     await update_buttons(pre_message, "var")
     await delete_message(message)
@@ -380,7 +381,7 @@ async def edit_nzb(_, message, pre_message, key):
         value = int(value)
     elif value.startswith("[") and value.endswith("]"):
         try:
-            value = ",".join(eval(value))
+            value = ",".join(parse_literal(value, (list, tuple)))
         except Exception as e:
             LOGGER.error(e)
             await update_buttons(pre_message, "nzb")
@@ -399,7 +400,7 @@ async def edit_nzb_server(_, message, pre_message, key, index=0):
     if key == "newser":
         if value.startswith("{") and value.endswith("}"):
             try:
-                value = eval(value)
+                value = parse_literal(value, dict)
             except:
                 await send_message(message, "Invalid dict format!")
                 await update_buttons(pre_message, "nzbserver")

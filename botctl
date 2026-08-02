@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+cd "$(dirname "$(readlink -f "$0")")"
+
+exec docker compose \
+  -f ./docker-compose.yml \
+  -f ./runtime.override.yml \
+  "$@"

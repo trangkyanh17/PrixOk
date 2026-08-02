@@ -2,6 +2,7 @@ from aiofiles.os import path, makedirs, listdir, rename
 from aioshutil import rmtree
 from json import dump
 from random import randint
+from asyncio import create_task, sleep, wait_for
 from re import match
 
 from .. import LOGGER
@@ -83,8 +84,27 @@ class JDownloader(MyJdApi):
             if await path.exists("/JDownloader/tmp"):
                 await rmtree("/JDownloader/tmp")
         cmd = "java -Dsun.jnu.encoding=UTF-8 -Dfile.encoding=UTF-8 -Djava.awt.headless=true -jar /JDownloader/JDownloader.jar"
-        self.is_connected = True
-        stdout, stderr, code = await cmd_exec(cmd, shell=True)
+        process_task = create_task(cmd_exec(cmd, shell=True))
+        self.is_connected = False
+
+        for _ in range(45):
+            if process_task.done():
+                break
+            try:
+                await wait_for(self.device.ping(), timeout=3)
+            except Exception:
+                await sleep(2)
+                continue
+            self.is_connected = True
+            self.error = ""
+            LOGGER.info("JDownloader local API is ready")
+            break
+
+        if not self.is_connected and not process_task.done():
+            self.error = "JDownloader local API did not become ready within 90 seconds"
+            LOGGER.error(self.error)
+
+        stdout, stderr, code = await process_task
         self.is_connected = False
 
         if stdout:

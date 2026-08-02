@@ -4,12 +4,17 @@ from pyrogram.handlers import MessageHandler, CallbackQueryHandler, EditedMessag
 
 from ..modules import *
 from ..modules.atri_ai import atri_message
+from ..modules.atri_web_tools import atri_tools_message, sync_bot_command_menu
+from ..modules.atri_free_tools import atri_free_tools_message, start_free_tools
 from ..helper.telegram_helper.bot_commands import BotCommands
 from ..helper.telegram_helper.filters import CustomFilters
 from .telegram_manager import TgClient
 
 
 def add_handlers():
+    from bot import bot_loop as _free_tools_loop
+
+    _free_tools_loop.create_task(start_free_tools(TgClient.bot))
     TgClient.bot.add_handler(
         MessageHandler(
             authorize,
@@ -251,6 +256,16 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            run_speedtest,
+            filters=command(
+                BotCommands.SpeedtestCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.sudo,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             bot_help,
             filters=command(BotCommands.HelpCommand, case_sensitive=True)
             & CustomFilters.authorized,
@@ -339,10 +354,42 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
+            atri_free_tools_message,
+            filters=(
+                filters.incoming
+                & filters.text
+                & CustomFilters.authorized
+            ),
+        ),
+        group=18,
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            atri_tools_message,
+            filters=(
+                filters.incoming
+                & filters.text
+                & CustomFilters.authorized
+            ),
+        ),
+        group=19,
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
             atri_message,
-            filters=filters.incoming & (filters.text | filters.photo),
+            filters=(
+                filters.incoming
+                & (filters.text | filters.photo | filters.sticker)
+                & CustomFilters.authorized
+            ),
         ),
         group=20,
     )
+    from bot import bot_loop
+
+    bot_loop.create_task(
+        sync_bot_command_menu(TgClient.bot)
+    )
+
     from bot.modules.game_setup import add_game_handlers
     add_game_handlers()
