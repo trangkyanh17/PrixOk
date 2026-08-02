@@ -13,6 +13,7 @@ from tenacity import (
 
 from .... import intervals
 from ....core.config_manager import Config
+from ...ext_utils.parsing import parse_json_object
 from ...ext_utils.bot_utils import async_to_sync, SetInterval
 from ...ext_utils.files_utils import get_mime_type
 from ...mirror_leech_utils.gdrive_utils.helper import GoogleDriveHelper
@@ -182,7 +183,7 @@ class GoogleDriveUpload(GoogleDriveHelper):
                     continue
                 if err.resp.get("content-type", "").startswith("application/json"):
                     reason = (
-                        eval(err.content).get("error").get("errors")[0].get("reason")
+                        parse_json_object(err.content).get("error", {}).get("errors", [{}])[0].get("reason", "")
                     )
                     if reason not in [
                         "userRateLimitExceeded",

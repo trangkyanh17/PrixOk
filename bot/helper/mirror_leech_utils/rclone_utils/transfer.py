@@ -1,12 +1,13 @@
 from aiofiles import open as aiopen
 from aiofiles.os import path as aiopath, makedirs, listdir
 from asyncio import create_subprocess_exec, gather, wait_for
-from asyncio.subprocess import PIPE
+from asyncio.subprocess import PIPE, STDOUT
 from configparser import RawConfigParser
 from json import loads
 from logging import getLogger
 from random import randrange
-from re import findall as re_findall
+from collections import deque
+from re import search as re_search, sub as re_sub
 
 from ....core.config_manager import Config
 from ...ext_utils.bot_utils import cmd_exec, sync_to_async
@@ -33,6 +34,7 @@ class RcloneTransferHelper:
         self._sa_index = 0
         self._sa_number = 0
         self._use_service_accounts = Config.USE_SERVICE_ACCOUNTS
+        self._output_tail = deque(maxlen=200)
 
     @property
     def transferred_size(self):
@@ -55,29 +57,38 @@ class RcloneTransferHelper:
         return self._size
 
     async def _progress(self):
-        while not (
-            self._proc.returncode is not None
-            or self._proc.stdout.at_eof()
-            or self._listener.is_cancelled
-        ):
+        self._output_tail.clear()
+        while self._proc.returncode is None and not self._listener.is_cancelled:
             try:
-                data = await wait_for(self._proc.stdout.readline(), 60)
-            except:
+                raw = await wait_for(self._proc.stdout.readline(), 65)
+            except TimeoutError:
+                LOGGER.warning("rclone produced no output for 65 seconds")
+                continue
+            if not raw:
                 break
-            if not data:
-                break
-            data = data.decode().strip()
-            if data := re_findall(
-                r"Transferred:\s+([\d.]+\s*\w+)\s+/\s+([\d.]+\s*\w+),\s+([\d.]+%)\s*,\s+([\d.]+\s*\w+/s),\s+ETA\s+([\dwdhms]+)",
-                data,
-            ):
+
+            line = raw.decode(errors="replace").replace("\r", "").strip()
+            line = re_sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line)
+            if not line:
+                continue
+            self._output_tail.append(line)
+
+            match = re_search(
+                r"Transferred:\s*([^/]+?)\s*/\s*([^,]+),\s*"
+                r"([\d.]+%)\s*,\s*([^,]+?/s)\s*,\s*ETA\s*(\S+)",
+                line,
+            )
+            if match:
                 (
                     self._transferred_size,
                     self._size,
                     self._percentage,
                     self._speed,
                     self._eta,
-                ) = data[0]
+                ) = (item.strip() for item in match.groups())
+
+    def _process_error(self) -> str:
+        return "\n".join(self._output_tail).strip()
 
     def _switch_service_account(self):
         if self._sa_index == self._sa_number - 1:
@@ -115,17 +126,16 @@ class RcloneTransferHelper:
         return sa_conf_file
 
     async def _start_download(self, cmd, remote_type):
-        self._proc = await create_subprocess_exec(*cmd, stdout=PIPE, stderr=PIPE)
+        self._proc = await create_subprocess_exec(*cmd, stdout=PIPE, stderr=STDOUT)
         await self._progress()
-        _, stderr = await self._proc.communicate()
-        return_code = self._proc.returncode
+        return_code = await self._proc.wait()
         if self._listener.is_cancelled:
             return
 
         if return_code == 0:
             await self._listener.on_download_complete()
         elif return_code != -9:
-            error = stderr.decode().strip()
+            error = self._process_error()
             if not error and remote_type == "drive" and self._use_service_accounts:
                 error = "Mostly your service accounts don't have access to this drive!"
             LOGGER.error(error)
@@ -227,10 +237,9 @@ class RcloneTransferHelper:
         return link
 
     async def _start_upload(self, cmd, remote_type):
-        self._proc = await create_subprocess_exec(*cmd, stdout=PIPE, stderr=PIPE)
+        self._proc = await create_subprocess_exec(*cmd, stdout=PIPE, stderr=STDOUT)
         await self._progress()
-        _, stderr = await self._proc.communicate()
-        return_code = self._proc.returncode
+        return_code = await self._proc.wait()
 
         if self._listener.is_cancelled:
             return False
@@ -239,7 +248,7 @@ class RcloneTransferHelper:
         elif return_code == 0:
             return True
         else:
-            error = stderr.decode().strip()
+            error = self._process_error()
             LOGGER.error(error)
             if (
                 self._sa_number != 0
@@ -312,12 +321,14 @@ class RcloneTransferHelper:
         if remote_type == "drive" and not self._listener.rc_flags:
             cmd.extend(
                 (
+                    "--drive-chunk-size",
+                    "128M",
                     "--tpslimit",
-                    "1",
+                    "10",
                     "--tpslimit-burst",
-                    "1",
+                    "10",
                     "--transfers",
-                    "1",
+                    "4",
                 )
             )
 
@@ -391,10 +402,9 @@ class RcloneTransferHelper:
                 )
             )
 
-        self._proc = await create_subprocess_exec(*cmd, stdout=PIPE, stderr=PIPE)
+        self._proc = await create_subprocess_exec(*cmd, stdout=PIPE, stderr=STDOUT)
         await self._progress()
-        _, stderr = await self._proc.communicate()
-        return_code = self._proc.returncode
+        return_code = await self._proc.wait()
 
         if self._listener.is_cancelled:
             return None, None
@@ -433,7 +443,7 @@ class RcloneTransferHelper:
                     return None, destination
 
         else:
-            error = stderr.decode().strip()
+            error = self._process_error()
             LOGGER.error(error)
             await self._listener.on_upload_error(error[:4000])
             return None, None
@@ -455,7 +465,9 @@ class RcloneTransferHelper:
             "--fast-list",
             "--config",
             config_path,
-            "-P",
+            "--stats",
+            "1s",
+            "--stats-one-line",
             source,
             destination,
             "-L",

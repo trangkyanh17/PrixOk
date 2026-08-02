@@ -47,3 +47,44 @@ qBittorrent/config/rss/
 qBittorrent/config/categories.json
 qBittorrent/config/qBittorrent-data.conf
 qBittorrent/config/watched_folders.json
+
+# VPS private/runtime files
+config.py
+config.env
+config.env.*
+.env
+.env.*
+!.env.example
+rclone.conf
+rclone.conf.*
+cookies.txt
+.netrc
+.safe-proxy
+.safe-proxy.*
+*.session
+*.session-journal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*.json
+*service-account*.json
+*token*.json
+atri_data/
+secrets/
+accounts/
+service_accounts/
+downloads/
+
+# Local source backups
+*-before-*
+*.before-*
+.last-gemini-model-backup
+
+# Local archives
+*.tar
+*.tar.gz
+*.zip

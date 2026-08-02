@@ -1,3 +1,4 @@
+from bot.helper.ext_utils.parsing import parse_literal
 from aiofiles.os import path as aiopath, remove, makedirs, listdir
 from aiofiles import open as aiopen
 from asyncio import sleep, gather
@@ -553,7 +554,7 @@ class TaskConfig:
                     if self.clone_dump_chats.startswith(
                         "["
                     ) and self.clone_dump_chats.endswith("]"):
-                        self.clone_dump_chats = eval(self.clone_dump_chats)
+                        self.clone_dump_chats = parse_literal(self.clone_dump_chats, (list, tuple))
                     else:
                         self.clone_dump_chats = [self.clone_dump_chats]
                 temp_dict = {}

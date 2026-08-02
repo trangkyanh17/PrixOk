@@ -12,6 +12,7 @@ from tenacity import (
     RetryError,
 )
 
+from ...ext_utils.parsing import parse_json_object
 from ...ext_utils.bot_utils import async_to_sync
 from ...ext_utils.bot_utils import SetInterval
 from ...mirror_leech_utils.gdrive_utils.helper import GoogleDriveHelper
@@ -186,7 +187,7 @@ class GoogleDriveDownload(GoogleDriveHelper):
                     continue
                 if err.resp.get("content-type", "").startswith("application/json"):
                     reason = (
-                        eval(err.content).get("error").get("errors")[0].get("reason")
+                        parse_json_object(err.content).get("error", {}).get("errors", [{}])[0].get("reason", "")
                     )
                     if "fileNotDownloadable" in reason and "document" in mime_type:
                         self.proc_bytes -= self.file_processed_bytes

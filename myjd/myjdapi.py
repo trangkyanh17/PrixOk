@@ -755,8 +755,9 @@ class MyJdApi:
         try:
             response = res.json()
         except JSONDecodeError as exc:
+            body = res.text[:1000]
             raise MYJDDecodeException(
-                "Failed to decode response: {}", response
+                f"Failed to decode MyJDownloader response: {body}"
             ) from exc
         if res.status_code != 200:
             msg = (
@@ -770,7 +771,7 @@ class MyJdApi:
             )
             msg += "\n"
             if params_request is not None:
-                msg += "DATA:\n" + params_request
+                msg += "DATA:\n" + repr(params_request)
             raise (
                 MYJDApiException.get_exception(
                     response.get("src", "UNKNOWN_SOURCE"),

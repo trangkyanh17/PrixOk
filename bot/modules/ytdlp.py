@@ -1,10 +1,13 @@
+from bot.helper.ext_utils.parsing import parse_literal
 from httpx import AsyncClient
 from asyncio import wait_for, Event
 from functools import partial
 from pyrogram.filters import regex, user
 from pyrogram.handlers import CallbackQueryHandler
 from time import time
+from urllib.parse import urlparse
 from yt_dlp import YoutubeDL
+from yt_dlp.networking.impersonate import ImpersonateTarget
 
 from .. import LOGGER, bot_loop, task_dict_lock, DOWNLOAD_DIR
 from ..core.config_manager import Config
@@ -18,6 +21,10 @@ from ..helper.ext_utils.links_utils import is_url
 from ..helper.ext_utils.status_utils import get_readable_file_size, get_readable_time
 from ..helper.listeners.task_listener import TaskListener
 from ..helper.mirror_leech_utils.download_utils.yt_dlp_download import YoutubeDLHelper
+from ..helper.mirror_leech_utils.download_utils.cobalt_resolver import (
+    is_tiktok_url,
+    resolve_tiktok_url,
+)
 from ..helper.telegram_helper.button_build import ButtonMaker
 from ..helper.telegram_helper.message_utils import (
     send_message,
@@ -323,7 +330,7 @@ class YtDlp(TaskListener):
             self.multi = 0
 
         try:
-            opt = eval(args["-opt"]) if args["-opt"] else {}
+            opt = parse_literal(args["-opt"], dict) if args["-opt"] else {}
         except Exception as e:
             LOGGER.error(e)
             opt = {}
@@ -420,6 +427,45 @@ class YtDlp(TaskListener):
         if "mdisk.me" in self.link:
             self.name, self.link = await _mdisk(self.link, self.name)
 
+        # COBALT_TIKTOK_ROUTE_V1
+        # TikTok được giải qua Cobalt trước khi yt-dlp
+        # lấy metadata hoặc bắt đầu download.
+        if is_tiktok_url(self.link):
+            original_tiktok_url = self.link
+
+            try:
+                cobalt_url, cobalt_name = (
+                    await resolve_tiktok_url(
+                        original_tiktok_url
+                    )
+                )
+            except Exception as e:
+                LOGGER.error(
+                    "Cobalt TikTok resolver failed: %s",
+                    e,
+                )
+                await send_message(
+                    self.message,
+                    f"{self.tag} Cobalt TikTok lỗi: {e}",
+                )
+                await self.remove_from_same_dir()
+                return
+
+            self.link = cobalt_url
+
+            if not self.name:
+                self.name = cobalt_name
+
+            # Cobalt đã chọn chất lượng tối đa.
+            # Bỏ menu chất lượng riêng cho TikTok.
+            qual = "best"
+
+            LOGGER.info(
+                "TikTok routed through Cobalt: %s -> %s",
+                original_tiktok_url,
+                self.link,
+            )
+
         try:
             await self.before_start()
         except Exception as e:
@@ -438,6 +484,15 @@ class YtDlp(TaskListener):
                     else:
                         qual = value
                 options[key] = value
+        # TIKTOK_INITIAL_EXTRACT_IMPERSONATION_V1
+        host = (urlparse(self.link).hostname or "").lower()
+
+        if host == "tiktok.com" or host.endswith(".tiktok.com"):
+            options["cookiefile"] = "/app/cookies.txt"
+            options["impersonate"] = (
+                ImpersonateTarget.from_str("chrome")
+            )
+
         options["playlist_items"] = "0"
         try:
             result = await sync_to_async(extract_info, self.link, options)
