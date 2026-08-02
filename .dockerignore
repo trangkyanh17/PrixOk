@@ -1,18 +1,58 @@
-mltbenv/
-.git/
+# VCS / editor / caches
+.git
+.github
+.gitignore
+.vscode
+.idea
 __pycache__/
-*.pyc
-*.log
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
+# Runtime logs and downloads
+*.log
+log.txt
+downloads/
+aria2c.conf
+*.aria2
+
+# Secrets and private deployment material
+.env
+.env.*
+!.env.example
 config.py
-config.env
-rclone.conf
-rclone.conf.*
-cookies.txt
+*.pem
+*.key
+*.p12
+*.pfx
+*.pickle
 *.session
 *.session-journal
-
+*.token
+.safe-proxy
+.safe-proxy.*
+credentials*.json
+service-account*.json
+token*.json
 accounts/
-service_accounts/
-downloads/
-docker-compose.override.yml
+rclone/
+rclone.conf
+rclone_sa/
+cookies.txt
+.netrc
+list_drives.txt
+shorteners.txt
+
+# Atri persistent/private data
+atri_data/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Local archives and test artifacts
+*.tar
+*.tar.gz
+*.zip
+coverage.xml
+htmlcov/
