@@ -20,6 +20,14 @@ from bot.modules.atri_tools.weather import (
     execute_weather_tool,
 )
 
+from bot.modules.atri_tools.delta_force_cn import (
+    SEARCH_DELTA_FORCE_CN_DECLARATION,
+    GET_DELTA_FORCE_CN_HISTORY_DECLARATION,
+    COMPARE_DELTA_FORCE_CN_SEASONS_DECLARATION,
+    DELTA_FORCE_CN_TOOL_NAMES,
+    execute_delta_force_cn_tool,
+)
+
 from bot.modules.atri_runtime import (
     get_runtime_model,
     get_runtime_state,
@@ -40,11 +48,41 @@ from bot.modules.atri_memory import (
     save_chat_history,
 )
 
+from bot.modules.atri_long_memory import (
+    add_memory_card,
+    archive_chat_turn,
+    build_long_memory_context,
+    forget_all_long_memory,
+    get_long_memory_stats,
+)
+
+
 
 VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 MAX_INPUT_CHARS = 6000
-MAX_HISTORY_MESSAGES = 14
-MAX_OUTPUT_TOKENS = 2048
+MAX_HISTORY_MESSAGES = max(
+    8,
+    int(
+        os.getenv(
+            "ATRI_RECENT_HISTORY_MESSAGES",
+            "24",
+        )
+    ),
+)
+MAX_OUTPUT_TOKENS = max(
+    512,
+    min(
+        32768,
+        int(os.getenv("ATRI_MAX_OUTPUT_TOKENS", "8192")),
+    ),
+)
+MAX_CONTINUATION_ROUNDS = max(
+    0,
+    min(
+        4,
+        int(os.getenv("ATRI_MAX_CONTINUATION_ROUNDS", "2")),
+    ),
+)
 USER_COOLDOWN_SECONDS = 3.0
 MAX_RUNTIME_CHATS = max(10, int(os.getenv("ATRI_MAX_ACTIVE_CHATS", "500")))
 RUNTIME_STATE_TTL_SECONDS = max(
@@ -72,6 +110,10 @@ _last_state_sweep = 0.0
 _global_request_times: deque[float] = deque()
 _global_quota_lock = asyncio.Lock()
 _vertex_slots = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+# Context một-lần do subsystem khác đã thực thi trước khi Atri trả lời.
+# Key gồm (chat_id, message_id), không persist xuống database.
+_external_action_context: dict[tuple[int, int], str] = {}
 
 _credentials = None
 _credentials_lock = asyncio.Lock()
@@ -165,6 +207,22 @@ def _chat_key(message) -> tuple[int, int]:
     )
 
 
+def set_external_action_context(message, text: str) -> None:
+    key = (
+        int(message.chat.id),
+        int(getattr(message, "id", 0) or 0),
+    )
+    _external_action_context[key] = str(text or "").strip()[:2400]
+
+
+def _pop_external_action_context(message) -> str:
+    key = (
+        int(message.chat.id),
+        int(getattr(message, "id", 0) or 0),
+    )
+    return _external_action_context.pop(key, "")
+
+
 def _command_name(text: str) -> str:
     first = text.strip().split(maxsplit=1)[0]
     return first.split("@", 1)[0].casefold()
@@ -198,6 +256,10 @@ SYSTEM_PROMPT_PATH = Path(
     "/app/atri_data/atri_system_prompt.txt"
 )
 
+DELTA_FORCE_CN_RULES_PATH = Path(
+    "/app/atri_data/delta_force_cn_rules.txt"
+)
+
 
 def _system_instruction(user_id: int) -> str:
     if int(user_id) == int(Config.OWNER_ID):
@@ -221,6 +283,24 @@ def _system_instruction(user_id: int) -> str:
         base_prompt = (
             "Bạn là Atri, một humanoid hiệu suất cao. "
             "Trả lời tiếng Việt tự nhiên, chính xác và không bịa."
+        )
+
+    # DELTA_FORCE_CN_RULES_LOADED
+    try:
+        _delta_force_cn_rules = DELTA_FORCE_CN_RULES_PATH.read_text(
+            encoding="utf-8"
+        ).strip()
+    except OSError:
+        _delta_force_cn_rules = ""
+
+    if _delta_force_cn_rules:
+        base_prompt = (
+            base_prompt
+            + "\n\n"
+            + "==================================================\n"
+            + "KNOWLEDGE BASE DELTA FORCE CHINA S1-S10\n"
+            + "==================================================\n"
+            + _delta_force_cn_rules
         )
 
     return (
@@ -310,11 +390,44 @@ def _extract_text(payload: dict[str, Any]) -> str:
     return text
 
 
+# ATRI_AUTO_CONTINUE_MAX_TOKENS_V1
+def _candidate_finish_reason(payload: dict[str, Any]) -> str:
+    candidates = payload.get("candidates") or []
+    if not candidates or not isinstance(candidates[0], dict):
+        return ""
+    return str(
+        candidates[0].get("finishReason") or ""
+    ).strip().upper()
+
+
+def _merge_response_text(current: str, continuation: str) -> str:
+    current = str(current or "")
+    continuation = str(continuation or "")
+
+    if not current:
+        return continuation.strip()
+    if not continuation:
+        return current.rstrip()
+
+    left = current.rstrip()
+    right = continuation.lstrip()
+
+    max_overlap = min(len(left), len(right), 600)
+    for overlap in range(max_overlap, 15, -1):
+        if left[-overlap:].casefold() == right[:overlap].casefold():
+            return left + right[overlap:]
+
+    if left[-1:].isalnum() and right[:1].isalnum():
+        return left + " " + right
+    return left + right
+
+
 async def _vertex_generate(
     *,
     user_id: int,
     history: list[dict[str, Any]],
     current_parts: list[dict[str, Any]],
+    memory_context: str = "",
 ) -> str:
     project = _setting("VERTEX_PROJECT_ID") or _setting(
         "GOOGLE_CLOUD_PROJECT"
@@ -350,7 +463,10 @@ async def _vertex_generate(
         "systemInstruction": {
             "parts": [
                 {
-                    "text": _system_instruction(user_id),
+                    "text": (
+                        _system_instruction(user_id)
+                        + memory_context
+                    ),
                 }
             ],
         },
@@ -359,6 +475,9 @@ async def _vertex_generate(
             {
                 "functionDeclarations": [
                     WEATHER_TOOL_DECLARATION,
+                    SEARCH_DELTA_FORCE_CN_DECLARATION,
+                    GET_DELTA_FORCE_CN_HISTORY_DECLARATION,
+                    COMPARE_DELTA_FORCE_CN_SEASONS_DECLARATION,
                 ],
             }
         ],
@@ -473,7 +592,10 @@ async def _vertex_generate(
             f"Vertex request thất bại: {last_error}"
         )
 
-    for tool_round in range(3):
+    response_text = ""
+    continuation_rounds = 0
+
+    for request_round in range(3 + MAX_CONTINUATION_ROUNDS):
         response_payload = await post_vertex(payload)
 
         candidates = response_payload.get("candidates") or []
@@ -506,7 +628,58 @@ async def _vertex_generate(
                 function_calls.append(function_call)
 
         if not function_calls:
-            return _extract_text(response_payload)
+            chunk = _extract_text(response_payload)
+            response_text = _merge_response_text(
+                response_text,
+                chunk,
+            )
+            finish_reason = _candidate_finish_reason(
+                response_payload
+            )
+
+            if (
+                finish_reason == "MAX_TOKENS"
+                and continuation_rounds < MAX_CONTINUATION_ROUNDS
+            ):
+                continuation_rounds += 1
+                LOGGER.info(
+                    "Atri auto-continuing truncated response "
+                    "round=%s/%s model=%s chars=%s",
+                    continuation_rounds,
+                    MAX_CONTINUATION_ROUNDS,
+                    model,
+                    len(response_text),
+                )
+                contents.append(model_content)
+                contents.append(
+                    {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "text": (
+                                    "Tiếp tục chính xác câu trả lời "
+                                    "đang dang dở ngay sau ký tự cuối. "
+                                    "Không mở đầu lại, không xin lỗi, "
+                                    "không nhắc lại phần đã viết và "
+                                    "hãy hoàn tất đầy đủ phần còn lại."
+                                )
+                            }
+                        ],
+                    }
+                )
+                payload["contents"] = contents
+                continue
+
+            if finish_reason == "MAX_TOKENS":
+                LOGGER.warning(
+                    "Atri response reached MAX_TOKENS after "
+                    "%s continuation rounds; model=%s chars=%s",
+                    continuation_rounds,
+                    model,
+                    len(response_text),
+                )
+
+            return response_text
 
         function_response_parts: list[dict[str, Any]] = []
 
@@ -518,10 +691,16 @@ async def _vertex_generate(
                 arguments = {}
 
             try:
-                tool_result = await execute_weather_tool(
-                    name,
-                    arguments,
-                )
+                if name in DELTA_FORCE_CN_TOOL_NAMES:
+                    tool_result = await execute_delta_force_cn_tool(
+                        name,
+                        arguments,
+                    )
+                else:
+                    tool_result = await execute_weather_tool(
+                        name,
+                        arguments,
+                    )
             except Exception as exc:
                 LOGGER.exception(
                     "Atri weather tool failed: %s",
@@ -721,7 +900,9 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
         return True
 
     if _matches_command(command, "atri"):
-        if argument in {"on", "off"}:
+        normalized_argument = argument.strip().casefold()
+
+        if normalized_argument in {"on", "off"}:
             if not await _is_chat_admin(client, message):
                 await message.reply_text(
                     "Chỉ Prix hoặc quản trị viên mới đổi trạng thái Atri.",
@@ -730,7 +911,7 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
                 )
                 return True
 
-            if argument == "off":
+            if normalized_argument == "off":
                 _disabled_chats.add(key)
                 reply = "Đã tắt Atri trong chat này."
             else:
@@ -748,7 +929,102 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
             f"Model: {_setting('VERTEX_MODEL', 'gemini-3.5-flash-lite')}\n"
             f"Thinking: {_setting('VERTEX_THINKING_LEVEL', 'medium')}\n"
             f"Gọi Atri, mention bot, reply bot hoặc dùng /ai{suffix} nội_dung.\n"
-            f"Quản trị: /atri{suffix} on|off, /resetai{suffix}",
+            f"Quản trị: /atri{suffix} on|off, /resetai{suffix}\n"
+            f"Trí nhớ: /remember{suffix}, /memstat{suffix}, /forgetall{suffix}",
+            quote=True,
+            parse_mode=None,
+        )
+        return True
+
+    if _matches_command(command, "remember"):
+        if not await _is_chat_admin(client, message):
+            await message.reply_text(
+                "Chỉ Prix hoặc quản trị viên mới ghi ký ức dài hạn.",
+                quote=True,
+                parse_mode=None,
+            )
+            return True
+
+        memory_text = argument.strip()
+
+        if not memory_text:
+            await message.reply_text(
+                "Dùng /remember nội_dung_cần_nhớ.",
+                quote=True,
+                parse_mode=None,
+            )
+            return True
+
+        created = await add_memory_card(
+            key,
+            memory_text,
+            source="manual",
+        )
+
+        await message.reply_text(
+            (
+                "Đã ghi vào trí nhớ dài hạn."
+                if created
+                else "Ký ức này đã tồn tại."
+            ),
+            quote=True,
+            parse_mode=None,
+        )
+        return True
+
+    if _matches_command(command, "memstat"):
+        if not await _is_chat_admin(client, message):
+            await message.reply_text(
+                "Chỉ Prix hoặc quản trị viên mới xem thống kê trí nhớ.",
+                quote=True,
+                parse_mode=None,
+            )
+            return True
+
+        stats = await get_long_memory_stats(key)
+
+        await message.reply_text(
+            "Trí nhớ dài hạn Atri\n"
+            f"Tin đã lưu: {stats['archive_messages']}\n"
+            f"Tin người dùng: {stats['user_messages']}\n"
+            f"Tin Atri: {stats['model_messages']}\n"
+            f"Ký ức ghim: {stats['memory_cards']}\n"
+            f"Dung lượng DB: {stats['database_bytes']} byte",
+            quote=True,
+            parse_mode=None,
+        )
+        return True
+
+    if _matches_command(command, "forgetall"):
+        user = getattr(message, "from_user", None)
+        user_id = int(getattr(user, "id", 0) or 0)
+
+        if user_id != int(Config.OWNER_ID):
+            await message.reply_text(
+                "Chỉ Prix mới được xóa toàn bộ trí nhớ dài hạn.",
+                quote=True,
+                parse_mode=None,
+            )
+            return True
+
+        if argument.strip().casefold() != "confirm":
+            await message.reply_text(
+                "Lệnh này xóa vĩnh viễn trí nhớ của chat hiện tại. "
+                "Dùng /forgetall confirm để xác nhận.",
+                quote=True,
+                parse_mode=None,
+            )
+            return True
+
+        deleted = await forget_all_long_memory(key)
+        _chat_history.pop(key, None)
+        _loaded_memory_keys.discard(key)
+        await clear_chat_history(key)
+
+        await message.reply_text(
+            "Đã xóa toàn bộ trí nhớ Atri của chat này.\n"
+            f"Archive: {deleted['archive_deleted']}\n"
+            f"Ký ức ghim: {deleted['cards_deleted']}",
             quote=True,
             parse_mode=None,
         )
@@ -768,7 +1044,10 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
         _loaded_memory_keys.discard(key)
         await clear_chat_history(key)
         await message.reply_text(
-            "Đã xóa ngữ cảnh Atri của chat này.",
+            (
+                "Đã xóa ngữ cảnh gần của Atri. "
+                "Archive và ký ức dài hạn vẫn được giữ."
+            ),
             quote=True,
             parse_mode=None,
         )
@@ -828,10 +1107,62 @@ def _build_prompt(message, text: str, command: str) -> str:
     if text:
         context_parts.append(f"Nội dung: {text}")
 
+    external_action = _pop_external_action_context(message)
+    if external_action:
+        context_parts.append(
+            "TRẠNG THÁI HỆ THỐNG VỪA XẢY RA:\n"
+            + external_action
+            + "\n"
+            + "Hành động trên đã được thực thi thành công TRƯỚC khi bạn trả lời. "
+            + "Hãy phản hồi như Atri đang chat bình thường với người dùng, "
+            + "giữ đúng tính cách/system prompt hiện tại. "
+            + "Có thể vui, trêu, dỗi hoặc phản ứng tự nhiên theo ngữ cảnh. "
+            + "Không đọc lại log kỹ thuật, Telegram ID, username fingerprint, "
+            + "API hay câu chữ máy móc. "
+            + "Không hỏi xác nhận và không nói rằng bạn không thể thực hiện, "
+            + "vì thao tác đã hoàn tất."
+        )
+
     return "\n\n".join(context_parts)[:MAX_INPUT_CHARS].strip()
 
 
-async def atri_message(client, message) -> None:
+async def reply_after_external_action(
+    client,
+    message,
+    context: str,
+) -> None:
+    set_external_action_context(
+        message,
+        context,
+    )
+
+    user = getattr(message, "from_user", None)
+
+    if user is not None:
+        _last_request_at.pop(
+            int(user.id),
+            None,
+        )
+
+    try:
+        await atri_message(
+            client,
+            message,
+            force_reply=True,
+        )
+    finally:
+        # atri_message/_build_prompt thường đã pop context.
+        # Dòng này chỉ cleanup nếu request bị return sớm.
+        _pop_external_action_context(message)
+
+
+
+async def atri_message(
+    client,
+    message,
+    *,
+    force_reply: bool = False,
+) -> None:
     # STICKER_AUTO_LEARN_ENTRY
     if getattr(message, "sticker", None) is not None:
         await learn_sticker_from_message(message)
@@ -853,11 +1184,14 @@ async def atri_message(client, message) -> None:
     ).strip()
 
     command = _command_name(raw_text) if raw_text.startswith("/") else ""
-    argument = _command_argument(raw_text).casefold() if command else ""
+    argument = _command_argument(raw_text) if command else ""
 
     if (
         _matches_command(command, "atri")
         or _matches_command(command, "resetai")
+        or _matches_command(command, "remember")
+        or _matches_command(command, "memstat")
+        or _matches_command(command, "forgetall")
         or _matches_command(command, "amodel")
         or _matches_command(command, "athink")
         or _matches_command(command, "stickerlearn")
@@ -875,7 +1209,15 @@ async def atri_message(client, message) -> None:
     if key in _disabled_chats:
         return
 
-    if not await _should_reply(client, message, raw_text, command):
+    if (
+        not force_reply
+        and not await _should_reply(
+            client,
+            message,
+            raw_text,
+            command,
+        )
+    ):
         return
 
     prompt_text = _build_prompt(message, raw_text, command)
@@ -896,9 +1238,17 @@ async def atri_message(client, message) -> None:
 
     now = time.monotonic()
     user_id = int(user.id)
-    previous = _last_request_at.get(user_id, 0.0)
-    if now - previous < USER_COOLDOWN_SECONDS:
+    previous = _last_request_at.get(
+        user_id,
+        0.0,
+    )
+
+    if (
+        not force_reply
+        and now - previous < USER_COOLDOWN_SECONDS
+    ):
         return
+
     _last_request_at[user_id] = now
 
     if not await _consume_global_quota():
@@ -927,11 +1277,25 @@ async def atri_message(client, message) -> None:
         history = list(_chat_history[key])
 
         try:
+            memory_context = await build_long_memory_context(
+                key,
+                prompt_text,
+                recent_history=history,
+            )
+        except Exception:
+            LOGGER.exception(
+                "Failed to build Atri long memory context for %s",
+                key,
+            )
+            memory_context = ""
+
+        try:
             async with _vertex_slots:
                 response_text = await _vertex_generate(
                     user_id=user_id,
                     history=history,
                     current_parts=current_parts,
+                    memory_context=memory_context,
                 )
         except Exception as exc:
             LOGGER.exception("Atri Vertex request failed")
@@ -981,6 +1345,18 @@ async def atri_message(client, message) -> None:
             )
         except Exception:
             LOGGER.exception("Failed to persist Atri chat history for %s", key)
+
+        try:
+            await archive_chat_turn(
+                key,
+                prompt_text,
+                response_text,
+            )
+        except Exception:
+            LOGGER.exception(
+                "Failed to archive Atri long memory for %s",
+                key,
+            )
 
     await _send_chunks(message, response_text)
     # STICKER_RANDOM_AFTER_AI_REPLY

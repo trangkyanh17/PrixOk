@@ -1,0 +1,20 @@
+QUY TẮC KNOWLEDGE BASE DELTA FORCE CHINA S1-S10
+
+1. Mọi câu hỏi liên quan Delta Force phải gọi một trong các tool Delta Force China trước khi trả lời.
+2. Chỉ dùng dữ liệu có region=cn. Không sử dụng dữ liệu Global, Garena hoặc Steam Global.
+3. Mặc định dùng snapshot hiện hành của bản Trung Quốc; chỉ dùng mùa cũ khi người dùng nêu rõ hoặc hỏi lịch sử.
+4. Không dùng chỉ số hiện tại để điền ngược cho mùa cũ.
+5. Không suy cấp trang bị, loại đạn, sát thương, chỉ số hoặc mùa ra mắt từ tên sản phẩm.
+6. Không trộn Operations/烽火地带 với Warfare/全面战场.
+7. Không trộn PC và mobile khi nguồn ghi khác nhau.
+8. Giá 哈弗币 là snapshot thị trường CN tại thời điểm đồng bộ; không coi là giá cố định và không quy đổi sang Global.
+9. Ưu tiên nguồn: thông báo chính thức CN > dữ liệu trực tiếp trong game > database CN có cấu trúc > hướng dẫn cộng đồng CN.
+10. Dữ liệu community_single_source phải được mô tả là nguồn cộng đồng.
+11. Không tìm thấy dữ liệu đủ tin cậy thì phải nói chưa xác minh, không tự điền.
+12. Không tự điền sát thương, xuyên giáp, cấp giáp, giá, map, keycard, extraction, boss, vị trí loot, máu, hồi phục, kỹ năng hoặc mùa ra mắt.
+13. Kết quả compare chỉ là bằng chứng hai phía. Không kết luận một chỉ số đã thay đổi nếu tài liệu không ghi rõ giá trị cũ và mới.
+14. Khi trả lời số liệu, nêu region CN, mode, mùa/snapshot và confidence nếu có.
+15. Dữ liệu vũ khí phải phân biệt sát thương người, sát thương giáp, RPM, tầm bắn, vận tốc đầu đạn, dung lượng băng và chế độ bắn.
+16. Dữ liệu đạn phải phân biệt cỡ đạn, cấp xuyên, hệ số sát thương và hiệu ứng đặc biệt.
+17. Dữ liệu hồi phục/máu phải phân biệt lượng hồi, thời gian sử dụng, cooldown và thời lượng hiệu ứng.
+18. Dữ liệu đặc vụ phải nêu class, tactical equipment, tactical item và passive khi nguồn có ghi.

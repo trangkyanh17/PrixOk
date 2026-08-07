@@ -1,0 +1,314 @@
+[
+  {
+    "season": 1,
+    "name_cn": "起源",
+    "name_vi": "Khởi Nguyên",
+    "name_en": "Genesis",
+    "release_date": "2024-09-26",
+    "summary_vi": "Mùa mở màn chính thức của bản Trung Quốc. S1 起源 bắt đầu ngày 26/09/2024, có season pass, operator, skin vũ khí/phương tiện, safe box và vật tư chiến đấu.",
+    "highlights": [
+      "S1 起源",
+      "season pass",
+      "official China launch"
+    ],
+    "sources": [
+      {
+        "title": "〖S1起源〗赛季现已开启！",
+        "url": "https://www.taptap.cn/moment/588180835585229127",
+        "type": "official_taptap"
+      },
+      {
+        "title": "TapTap game information and update history",
+        "url": "https://www.taptap.cn/app/330259/all-info?platform=android",
+        "type": "official_taptap"
+      }
+    ]
+  },
+  {
+    "season": 2,
+    "name_cn": "聚变",
+    "name_vi": "Tụ Biến",
+    "name_en": "Fusion",
+    "release_date": "2024-11-21",
+    "summary_vi": "S2 聚变 thêm operator hỗ trợ 佐娅 (Zoya), khu vực 巴别塔 tại 巴克什, bản đồ Warfare 堑壕战 và hoạt động hợp tác 衔尾蛇, kèm vũ khí, vật phẩm và tối ưu mới.",
+    "highlights": [
+      "佐娅",
+      "巴别塔",
+      "堑壕战",
+      "衔尾蛇"
+    ],
+    "sources": [
+      {
+        "title": "11月21日更新公告丨新赛季聚变明日开启！",
+        "url": "https://www.taptap.cn/moment/608238361529812084",
+        "type": "official_taptap"
+      },
+      {
+        "title": "11月21日不停机更新公告丨异常问题修复",
+        "url": "https://www.taptap.cn/moment/608771038611767433",
+        "type": "official_taptap"
+      },
+      {
+        "title": "三角洲行动全新赛季 聚变介绍",
+        "url": "https://www.taptap.cn/game-event/5853",
+        "type": "official_taptap"
+      }
+    ]
+  },
+  {
+    "season": 3,
+    "name_cn": "焰火",
+    "name_vi": "Diễm Hỏa",
+    "name_en": "Fireworks",
+    "release_date": "2025-01-15",
+    "summary_vi": "S3 焰火 thêm operator công binh 深蓝, bản đồ Warfare 刀锋 và 断轨, vũ khí QCQ171/QJB201/SR-9, chế độ 红鼠窝竞技场, khu vực mở rộng tại 零号大坝 và nội dung mới ở 巴克什/航天基地.",
+    "highlights": [
+      "深蓝",
+      "刀锋",
+      "断轨",
+      "QCQ171",
+      "QJB201",
+      "SR-9",
+      "红鼠窝竞技场"
+    ],
+    "sources": [
+      {
+        "title": "1月15日更新公告丨新赛季“焰火”即将开启！",
+        "url": "https://www.taptap.cn/moment/627825157368447374",
+        "type": "official_taptap"
+      },
+      {
+        "title": "1月15日全新赛季焰火开启丨更新内容速览！",
+        "url": "https://www.taptap.cn/moment/628369540056614747",
+        "type": "official_taptap"
+      },
+      {
+        "title": "《三角洲行动》焰火新赛季前瞻直播回顾总结",
+        "url": "https://www.taptap.cn/moment/627108645108189299",
+        "type": "official_taptap"
+      }
+    ]
+  },
+  {
+    "season": 4,
+    "name_cn": "黑夜之子",
+    "name_vi": "Đứa Con Bóng Đêm",
+    "name_en": "Night Child",
+    "release_date": "2025-04-17",
+    "summary_vi": "S4 黑夜之子 thêm operator突击 无名, chế độ đêm tại 零号大坝 và 堑壕战, chế độ Warfare 胜者为王, cùng vũ khí, đạn, phụ kiện, phương tiện và class gadget mới.",
+    "highlights": [
+      "无名",
+      "零号大坝-夜战",
+      "堑壕战-夜战",
+      "胜者为王"
+    ],
+    "sources": [
+      {
+        "title": "4月17日更新公告丨新赛季〖黑夜之子〗即将开启！",
+        "url": "https://www.taptap.cn/moment/660988005640571701",
+        "type": "official_taptap"
+      },
+      {
+        "title": "《三角洲行动》全新黑夜之子赛季前瞻直播回顾",
+        "url": "https://www.taptap.cn/moment/660419417493999290",
+        "type": "official_taptap"
+      },
+      {
+        "title": "三角洲行动全新赛季 黑夜之子介绍",
+        "url": "https://www.taptap.cn/game-event/7170",
+        "type": "official_taptap"
+      }
+    ]
+  },
+  {
+    "season": 5,
+    "name_cn": "破壁",
+    "name_vi": "Phá Bích",
+    "name_en": "Breakthrough",
+    "release_date": "2025-07-03",
+    "summary_vi": "S5 破壁 thêm map Operations 潮汐监狱, map Warfare 风暴眼, operator突击 克莱尔/疾风, boss 渡鸦, KC-17, 复合弓, hệ thống 收藏室, phương tiện, phụ kiện và class gadget mới.",
+    "highlights": [
+      "潮汐监狱",
+      "风暴眼",
+      "克莱尔",
+      "疾风",
+      "渡鸦",
+      "KC-17",
+      "复合弓",
+      "收藏室"
+    ],
+    "sources": [
+      {
+        "title": "7月3日更新公告丨新赛季〖破壁〗即将开启！",
+        "url": "https://www.taptap.cn/moment/688682918087756459",
+        "type": "official_taptap"
+      },
+      {
+        "title": "《三角洲行动》新赛季“破壁”前瞻直播回顾",
+        "url": "https://www.taptap.cn/moment/687956944526248606",
+        "type": "official_taptap"
+      },
+      {
+        "title": "三角洲行动全新赛季 破壁介绍",
+        "url": "https://www.taptap.cn/game-event/7973",
+        "type": "official_taptap"
+      }
+    ]
+  },
+  {
+    "season": 6,
+    "name_cn": "烈火冲天",
+    "name_vi": "Liệt Hỏa Xung Thiên",
+    "name_en": "Blazing Sky",
+    "release_date": "2025-09-17",
+    "summary_vi": "S6 烈火冲天 bắt đầu ngày 17/09/2025; season pass chính thức xác nhận operator侦察 银翼. Bản cập nhật còn bổ sung nội dung không chiến, phương tiện/vũ khí và chuỗi hoạt động kỷ niệm; chi tiết số liệu chỉ được dùng khi tìm thấy trong tài liệu nguồn.",
+    "highlights": [
+      "银翼",
+      "air combat",
+      "anniversary content"
+    ],
+    "sources": [
+      {
+        "title": "9月17日更新公告丨新赛季〖烈火冲天〗即将开启！",
+        "url": "https://www.taptap.cn/moment/716647746391510541",
+        "type": "official_taptap"
+      },
+      {
+        "title": "9月17日更新公告丨异常问题修复",
+        "url": "https://www.taptap.cn/moment/717445727537598052",
+        "type": "official_taptap"
+      },
+      {
+        "title": "〖烈火冲天〗赛季通行证内容展示",
+        "url": "https://www.taptap.cn/moment/717431351149594341",
+        "type": "official_taptap"
+      }
+    ]
+  },
+  {
+    "season": 7,
+    "name_cn": "阿萨拉",
+    "name_vi": "Ahsarah",
+    "name_en": "Ahsarah",
+    "release_date": "2025-11-13",
+    "summary_vi": "S7 阿萨拉 thêm operator công binh 比特, map Warfare 金字塔, sự kiện 零号大坝-水淹, gameplay 超感追查, hành động tháo bom giá trị cao, đạn và tactical item mới.",
+    "highlights": [
+      "比特",
+      "金字塔",
+      "零号大坝-水淹",
+      "超感追查"
+    ],
+    "sources": [
+      {
+        "title": "11月13日更新公告丨新赛季〖阿萨拉〗即将开启！",
+        "url": "https://www.taptap.cn/moment/737063259911229160",
+        "type": "official_taptap"
+      },
+      {
+        "title": "《三角洲行动》阿萨拉新赛季前瞻直播回顾",
+        "url": "https://www.taptap.cn/moment/736343016238745373",
+        "type": "official_taptap"
+      },
+      {
+        "title": "三角洲行动全新赛季 阿萨拉介绍",
+        "url": "https://www.taptap.cn/game-event/9363",
+        "type": "official_taptap"
+      }
+    ]
+  },
+  {
+    "season": 8,
+    "name_cn": "蝶变时刻",
+    "name_vi": "Thời Khắc Biến Đổi",
+    "name_en": "Metamorphosis",
+    "release_date": "2026-01-29",
+    "summary_vi": "S8 蝶变时刻 thêm operator hỗ trợ 蝶, map Warfare 余震, 航天基地2.0 và gameplay Operations 赤枭巡猎. Chỉ số vũ khí chỉ được đưa vào khi crawler lấy được nguồn CN tương ứng.",
+    "highlights": [
+      "蝶",
+      "余震",
+      "航天基地2.0",
+      "赤枭巡猎"
+    ],
+    "sources": [
+      {
+        "title": "1月29日更新公告丨新赛季〖蝶变时刻〗即将开启！",
+        "url": "https://www.taptap.cn/moment/764882478857978781",
+        "type": "official_taptap"
+      },
+      {
+        "title": "《三角洲行动》蝶变时刻新赛季前瞻直播回顾",
+        "url": "https://www.taptap.cn/moment/764282327130964856",
+        "type": "official_taptap"
+      },
+      {
+        "title": "三角洲行动全新赛季 蝶变时刻介绍",
+        "url": "https://www.taptap.cn/game-event/10220",
+        "type": "official_taptap"
+      }
+    ]
+  },
+  {
+    "season": 9,
+    "name_cn": "回声",
+    "name_vi": "Hồi Âm",
+    "name_en": "Echo",
+    "release_date": "2026-04-16",
+    "summary_vi": "S9 回声 bắt đầu ngày 16/04/2026, bổ sung gameplay/mode mới cho Operations, map đa môi trường mới cho Warfare, operator侦察 và vũ khí mới. Tên và thông số chi tiết phải được xác nhận từ tài liệu CN được crawler lưu.",
+    "highlights": [
+      "回声",
+      "Operations new mode",
+      "Warfare amphibious map",
+      "recon operator"
+    ],
+    "sources": [
+      {
+        "title": "《三角洲行动》回声新赛季前瞻直播回顾",
+        "url": "https://www.taptap.cn/moment/792145208341954936",
+        "type": "official_taptap"
+      },
+      {
+        "title": "4月16日更新公告丨异常问题修复",
+        "url": "https://www.taptap.cn/moment/793788424942259005",
+        "type": "official_taptap"
+      },
+      {
+        "title": "三角洲行动全新赛季 回声介绍",
+        "url": "https://www.taptap.cn/game-event/11108",
+        "type": "official_taptap"
+      }
+    ]
+  },
+  {
+    "season": 10,
+    "name_cn": "裂变",
+    "name_vi": "Phân Hạch",
+    "name_en": "Fission",
+    "release_date": "2026-06-26",
+    "summary_vi": "S10 裂变 thêm map Operations AZ3, map Warfare 克劳狄斗兽场, gameplay Warfare mới, phương tiện và vũ khí mới; liên kết 彩虹六号：围攻 mở ngày 10/07/2026. Tên súng/operator chi tiết được lấy từ nguồn CN live, không lấy từ Global/Garena.",
+    "highlights": [
+      "AZ3",
+      "克劳狄斗兽场",
+      "new Warfare gameplay",
+      "new vehicle",
+      "new weapons",
+      "彩虹六号：围攻"
+    ],
+    "sources": [
+      {
+        "title": "6月26日更新公告|新赛季〖裂变〗即将开启！",
+        "url": "https://www.taptap.cn/moment/818547052643355247",
+        "type": "official_taptap"
+      },
+      {
+        "title": "《三角洲行动》裂变新赛季前瞻直播回顾",
+        "url": "https://www.taptap.cn/moment/818259428405939502",
+        "type": "official_taptap"
+      },
+      {
+        "title": "三角洲行动全新赛季 裂变介绍",
+        "url": "https://www.taptap.cn/game-event/11830",
+        "type": "official_taptap"
+      }
+    ]
+  }
+]
