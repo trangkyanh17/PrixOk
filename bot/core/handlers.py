@@ -4,6 +4,10 @@ from pyrogram.handlers import MessageHandler, CallbackQueryHandler, EditedMessag
 
 from ..modules import *
 from ..modules.atri_ai import atri_message
+from ..modules.atri_skills import add_atri_skills_handlers
+from ..modules.atri_thinking_control import add_atri_thinking_handlers
+from ..modules.atri_provider_control import add_atri_provider_control_handlers
+from ..modules.atri_command_ui import add_atri_command_ui_handlers
 from ..modules.atri_rose import add_atri_rose_handlers
 from ..modules.atri_rose_natural import add_atri_rose_natural_handlers
 from ..modules.atri_web_tools import atri_tools_message, sync_bot_command_menu
@@ -14,6 +18,10 @@ from .telegram_manager import TgClient
 
 
 def add_handlers():
+    add_atri_skills_handlers(TgClient.bot)
+    add_atri_command_ui_handlers(TgClient.bot)
+    add_atri_thinking_handlers(TgClient.bot)
+    add_atri_provider_control_handlers(TgClient.bot)
     add_atri_rose_natural_handlers(TgClient.bot)
     add_atri_rose_handlers(TgClient.bot)
     from bot import bot_loop as _free_tools_loop
@@ -394,6 +402,3 @@ def add_handlers():
     bot_loop.create_task(
         sync_bot_command_menu(TgClient.bot)
     )
-
-    from bot.modules.game_setup import add_game_handlers
-    add_game_handlers()

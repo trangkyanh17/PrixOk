@@ -33,3 +33,7 @@ uvloop
 xattr
 gallery-dl
 yt-dlp[default,curl-cffi]
+
+mcp>=2,<3
+uv
+sentry-sdk>=2,<3

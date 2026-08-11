@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import asyncio
 import json
 import os
@@ -49,7 +50,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def _initialize_sync() -> None:
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS chat_memory (
@@ -124,7 +125,7 @@ def _load_sync(key: Any) -> list[dict[str, Any]]:
     _initialize_sync()
     chat_key = _key_to_text(key)
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         row = connection.execute(
             """
             SELECT history_json
@@ -163,7 +164,7 @@ def _save_sync(
         separators=(",", ":"),
     )
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
         connection.execute(
             """
@@ -208,7 +209,7 @@ def _clear_sync(key: Any) -> None:
     _initialize_sync()
     chat_key = _key_to_text(key)
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute(
             """
             DELETE FROM chat_memory
