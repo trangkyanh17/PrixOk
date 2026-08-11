@@ -120,8 +120,6 @@ ADMIN_COMMANDS = {
     "auth", "unauth", "addsudo", "rmsudo", "bsetting", "bs",
     "users", "restart", "log", "shell", "exec", "aexec",
     "clearlocals",
-    
-    
 }
 
 ROSE_MOD_COMMANDS = {
@@ -162,14 +160,11 @@ ROSE_BACKUP_COMMANDS = {
 
 OWNER_COMMANDS = {
     "shell", "exec", "aexec", "clearlocals",
-    
-    
 }
 
 SUDO_COMMANDS = {
     "auth", "unauth", "bsetting", "bs",
     "users", "restart", "log",
-    
 }
 
 ADMIN_GROUP_COMMANDS = (
