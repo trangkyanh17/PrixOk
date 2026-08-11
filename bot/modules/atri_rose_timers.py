@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import asyncio
 import os
 import sqlite3
@@ -42,7 +43,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def _init_sync() -> None:
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS rose_timed_actions (
@@ -74,7 +75,7 @@ def _save_sync(
 ) -> None:
     _init_sync()
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute(
             """
             INSERT INTO rose_timed_actions(
@@ -109,7 +110,7 @@ def _cancel_sync(
 ) -> None:
     _init_sync()
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute(
             """
             DELETE FROM rose_timed_actions
@@ -129,7 +130,7 @@ def _due_sync(
 ) -> list[dict]:
     _init_sync()
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         rows = connection.execute(
             """
             SELECT chat_id, user_id, action, expires_at
