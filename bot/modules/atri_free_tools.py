@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import asyncio
 import calendar
 import os
@@ -97,7 +98,7 @@ def connect() -> sqlite3.Connection:
 
 
 def db_init() -> None:
-    with connect() as con:
+    with closing(connect()) as con, con:
         con.executescript('''
         CREATE TABLE IF NOT EXISTS reminders(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,7 +136,7 @@ def db_init() -> None:
 
 
 def db_add(chat_id: int, thread_id: int, user_id: int, user_name: str, body: str, due: datetime) -> int:
-    with connect() as con:
+    with closing(connect()) as con, con:
         pending = con.execute(
             'SELECT COUNT(*) FROM reminders WHERE chat_id=? AND user_id=? AND sent_utc IS NULL AND failed_utc IS NULL',
             (chat_id, user_id),
@@ -150,7 +151,7 @@ def db_add(chat_id: int, thread_id: int, user_id: int, user_name: str, body: str
 
 
 def db_list(chat_id: int, user_id: int) -> list[sqlite3.Row]:
-    with connect() as con:
+    with closing(connect()) as con, con:
         return list(con.execute(
             'SELECT id,body,due_utc FROM reminders WHERE chat_id=? AND user_id=? AND sent_utc IS NULL AND failed_utc IS NULL ORDER BY due_utc LIMIT 50',
             (chat_id, user_id),
@@ -158,7 +159,7 @@ def db_list(chat_id: int, user_id: int) -> list[sqlite3.Row]:
 
 
 def db_delete(chat_id: int, user_id: int, reminder_id: int) -> int:
-    with connect() as con:
+    with closing(connect()) as con, con:
         return con.execute(
             'DELETE FROM reminders WHERE id=? AND chat_id=? AND user_id=? AND sent_utc IS NULL AND failed_utc IS NULL',
             (reminder_id, chat_id, user_id),
@@ -167,7 +168,7 @@ def db_delete(chat_id: int, user_id: int, reminder_id: int) -> int:
 
 def db_due() -> list[sqlite3.Row]:
     now = datetime.now(timezone.utc).isoformat()
-    with connect() as con:
+    with closing(connect()) as con, con:
         return list(con.execute(
             '''SELECT * FROM reminders
                WHERE sent_utc IS NULL
@@ -180,7 +181,7 @@ def db_due() -> list[sqlite3.Row]:
 
 
 def db_sent(reminder_id: int) -> None:
-    with connect() as con:
+    with closing(connect()) as con, con:
         con.execute(
             '''UPDATE reminders
                SET sent_utc=?, next_attempt_utc=NULL, last_error=NULL
@@ -191,7 +192,7 @@ def db_sent(reminder_id: int) -> None:
 
 def db_failed(reminder_id: int, error: str) -> tuple[int, bool]:
     now = datetime.now(timezone.utc)
-    with connect() as con:
+    with closing(connect()) as con, con:
         row = con.execute(
             'SELECT attempts FROM reminders WHERE id=? AND sent_utc IS NULL',
             (reminder_id,),
@@ -586,6 +587,78 @@ def _music_thumbnail(info: dict[str, Any]) -> str:
     return ''
 
 
+
+# MUSIC_SINGLE_MESSAGE_COVER_V1
+def _music_thumb_file(
+    info: dict[str, Any],
+    folder: Path,
+) -> Path | None:
+    """Download and convert album art for Telegram's audio thumbnail."""
+    from urllib.request import Request, urlopen
+
+    url = _music_thumbnail(info)
+    if not url:
+        return None
+
+    ffmpeg = shutil.which('ffmpeg')
+    if not ffmpeg:
+        return None
+
+    source = folder / 'music-cover-source'
+    output = folder / 'music-cover.jpg'
+    request = Request(
+        url,
+        headers={
+            'User-Agent': (
+                'Mozilla/5.0 (X11; Linux x86_64) '
+                'AppleWebKit/537.36 Chrome/131 Safari/537.36'
+            ),
+            'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+    )
+
+    with urlopen(request, timeout=20) as response:
+        payload = response.read(5 * 1024 * 1024 + 1)
+
+    if not payload or len(payload) > 5 * 1024 * 1024:
+        return None
+
+    source.write_bytes(payload)
+
+    for quality in (4, 8, 12, 18, 24):
+        result = subprocess.run(
+            [
+                ffmpeg,
+                '-y',
+                '-hide_banner',
+                '-loglevel',
+                'error',
+                '-i',
+                str(source),
+                '-vf',
+                'scale=320:320:force_original_aspect_ratio=decrease',
+                '-frames:v',
+                '1',
+                '-q:v',
+                str(quality),
+                str(output),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if (
+            result.returncode == 0
+            and output.is_file()
+            and 0 < output.stat().st_size < 200 * 1024
+        ):
+            return output
+
+    output.unlink(missing_ok=True)
+    return None
+
 def _music_duration_text(seconds: int) -> str:
     seconds = max(0, int(seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -635,7 +708,7 @@ def _music_drive_connect() -> sqlite3.Connection:
 
 
 def _music_drive_last_refresh() -> float:
-    with _music_drive_connect() as con:
+    with closing(_music_drive_connect()) as con, con:
         row = con.execute(
             "SELECT value FROM music_drive_meta "
             "WHERE key='refreshed_at'"
@@ -697,7 +770,7 @@ def _music_drive_refresh() -> None:
         ))
 
     refreshed_at = datetime.now(timezone.utc).timestamp()
-    with _music_drive_connect() as con:
+    with closing(_music_drive_connect()) as con, con:
         con.execute('BEGIN IMMEDIATE')
         con.execute('DELETE FROM music_drive_files')
         con.executemany(
@@ -769,7 +842,7 @@ def _music_drive_find_duplicate(info: dict[str, Any]) -> str:
         exact.add(f'{artist} {title}')
         exact.add(f'{title} {artist}')
 
-    with _music_drive_connect() as con:
+    with closing(_music_drive_connect()) as con, con:
         if exact:
             placeholders = ','.join('?' for _ in exact)
             row = con.execute(
@@ -1086,21 +1159,17 @@ async def run_media(
                 )
             caption = '\n'.join(caption_lines)
 
-            audio_caption: str | None = caption
-            thumbnail = _music_thumbnail(info)
-            if thumbnail:
+            thumb_path: Path | None = None
+            if _music_thumbnail(info):
                 try:
-                    await message.reply_photo(
-                        thumbnail,
-                        caption=caption,
-                        quote=True,
-                        parse_mode=None,
+                    thumb_path = await asyncio.to_thread(
+                        _music_thumb_file,
+                        info,
+                        folder,
                     )
-                    audio_caption = None
                 except Exception:
                     LOGGER.warning(
-                        'Atri music cover send failed: %s',
-                        thumbnail,
+                        'Atri music embedded cover failed',
                         exc_info=True,
                     )
 
@@ -1109,7 +1178,8 @@ async def run_media(
                 title=title[:128],
                 performer=creator or None,
                 duration=duration or None,
-                caption=audio_caption,
+                caption=caption,
+                thumb=str(thumb_path) if thumb_path else None,
                 quote=True,
                 parse_mode=None,
             )

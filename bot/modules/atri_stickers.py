@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import asyncio
 import logging
 import math
@@ -50,7 +51,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def _initialize_sync() -> None:
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS stickers (
@@ -103,7 +104,7 @@ def _initialize_sync() -> None:
 def _get_setting_sync(key: str) -> str:
     _initialize_sync()
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         row = connection.execute(
             """
             SELECT setting_value
@@ -123,7 +124,7 @@ def _get_setting_sync(key: str) -> str:
 def _set_setting_sync(key: str, value: str) -> None:
     _initialize_sync()
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute(
             """
             INSERT INTO sticker_settings(
@@ -184,7 +185,7 @@ def _learn_sync(
     _initialize_sync()
     now = int(time.time())
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute(
             """
             INSERT INTO stickers(
@@ -296,7 +297,7 @@ def _recent_send_state_sync(
     now = int(time.time())
     hour_ago = now - 3600
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         latest = connection.execute(
             """
             SELECT MAX(sent_at) AS latest
@@ -336,7 +337,7 @@ def _candidate_rows_sync(
 ) -> list[sqlite3.Row]:
     _initialize_sync()
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         recent_rows = connection.execute(
             """
             SELECT file_unique_id
@@ -386,7 +387,7 @@ def _record_sent_sync(
 
     now = int(time.time())
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute(
             """
             INSERT INTO sticker_sent_history(
@@ -412,7 +413,7 @@ def _delete_sticker_sync(
 ) -> None:
     _initialize_sync()
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.execute(
             """
             DELETE FROM stickers
@@ -576,7 +577,7 @@ async def maybe_send_random_sticker(
 def _stats_sync() -> dict[str, int]:
     _initialize_sync()
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         row = connection.execute(
             """
             SELECT

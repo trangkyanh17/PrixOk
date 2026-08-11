@@ -2,6 +2,64 @@ from . import LOGGER, bot_loop
 from .core.telegram_manager import TgClient
 from .core.config_manager import Config
 
+# ATRI_PRODUCTION_WORKER_SINGLETON_V133
+import fcntl as _atri_v133_fcntl
+import hashlib as _atri_v133_hashlib
+import os as _atri_v133_os
+from pathlib import Path as _AtriV133Path
+
+_ATRI_V133_LOCK_PATH = _AtriV133Path("/app/.atri-prixok-bot-v133.lock")
+_ATRI_V133_LOCK_HANDLE = _ATRI_V133_LOCK_PATH.open("a+", encoding="utf-8")
+try:
+    _atri_v133_fcntl.flock(
+        _ATRI_V133_LOCK_HANDLE.fileno(),
+        _atri_v133_fcntl.LOCK_EX | _atri_v133_fcntl.LOCK_NB,
+    )
+except BlockingIOError:
+    LOGGER.error(
+        "ATRI_PRODUCTION_WORKER_V133_DUPLICATE_BLOCKED pid=%s lock=%s",
+        _atri_v133_os.getpid(),
+        _ATRI_V133_LOCK_PATH,
+    )
+    raise SystemExit(73)
+
+_ATRI_V133_LOCK_HANDLE.seek(0)
+_ATRI_V133_LOCK_HANDLE.truncate()
+_ATRI_V133_LOCK_HANDLE.write(str(_atri_v133_os.getpid()) + "\n")
+_ATRI_V133_LOCK_HANDLE.flush()
+_atri_v133_os.fchmod(_ATRI_V133_LOCK_HANDLE.fileno(), 0o600)
+
+_ATRI_V133_AI_PATH = _AtriV133Path(__file__).resolve().parent / "modules" / "atri_ai.py"
+_ATRI_V133_REQUIRED_AI_MARKERS = (
+    "ATRI_DOCUMENT_EXECUTION_BRIDGE_V128",
+    "ATRI_DOCUMENT_TELEGRAM_SENDER_V128",
+    "ATRI_DOCUMENT_PROGRESSIVE_FINALIZER_V132",
+)
+_atri_v133_ai_bytes = _ATRI_V133_AI_PATH.read_bytes()
+_atri_v133_ai_text = _atri_v133_ai_bytes.decode("utf-8")
+_atri_v133_missing = [
+    marker
+    for marker in _ATRI_V133_REQUIRED_AI_MARKERS
+    if _atri_v133_ai_text.count(marker) != 1
+]
+if _atri_v133_missing:
+    LOGGER.critical(
+        "ATRI_PRODUCTION_WORKER_V133_SOURCE_REJECTED markers=%s",
+        ",".join(_atri_v133_missing),
+    )
+    raise RuntimeError("ATRI_V133_REQUIRED_DOCUMENT_MARKERS_INVALID")
+
+_ATRI_V133_AI_SHA256 = _atri_v133_hashlib.sha256(_atri_v133_ai_bytes).hexdigest()
+_ATRI_V133_MAIN_SHA256 = _atri_v133_hashlib.sha256(
+    _AtriV133Path(__file__).resolve().read_bytes()
+).hexdigest()
+LOGGER.info(
+    "ATRI_PRODUCTION_WORKER_V133_READY pid=%s main_sha256=%s ai_sha256=%s",
+    _atri_v133_os.getpid(),
+    _ATRI_V133_MAIN_SHA256,
+    _ATRI_V133_AI_SHA256,
+)
+
 Config.load()
 
 
@@ -62,5 +120,31 @@ add_aria2_callbacks()
 create_help_buttons()
 add_handlers()
 
+# Warm Semgrep MCP in the background during bot startup so users do not
+# pay uvx/MCP initialization latency on their first Semgrep request.
+from .modules.atri_tools.code_plugins import (
+    prewarm_remaining_code_plugins,
+    prewarm_semgrep_mcp,
+)
+
+bot_loop.create_task(
+    prewarm_semgrep_mcp(),
+    name="atri-semgrep-boot-prewarm",
+)
+LOGGER.info("SEMGREP_MCP_BOOT_PREWARM_SCHEDULED")
+
+bot_loop.create_task(
+    prewarm_remaining_code_plugins(),
+    name="atri-mcp-remaining-boot-prewarm",
+)
+LOGGER.info("MCP_REMAINING_BOOT_PREWARM_SCHEDULED")
+
 LOGGER.info("Bot Started!")
+# ATRI_PRODUCTION_WORKER_ONLINE_V133
+LOGGER.info(
+    "ATRI_PRODUCTION_WORKER_V133_ONLINE pid=%s main_sha256=%s ai_sha256=%s",
+    _atri_v133_os.getpid(),
+    _ATRI_V133_MAIN_SHA256,
+    _ATRI_V133_AI_SHA256,
+)
 bot_loop.run_forever()

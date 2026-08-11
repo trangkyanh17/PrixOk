@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import asyncio
 import io
 import inspect
@@ -89,7 +90,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def _init_db_sync() -> None:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         db.executescript("""
         CREATE TABLE IF NOT EXISTS rose_settings(chat_id INTEGER,key TEXT,value TEXT,PRIMARY KEY(chat_id,key));
         CREATE TABLE IF NOT EXISTS rose_warnings(chat_id INTEGER,user_id INTEGER,count INTEGER,reasons_json TEXT,updated_at INTEGER,PRIMARY KEY(chat_id,user_id));
@@ -126,7 +127,7 @@ async def _db(function, *args):
 
 
 def _get_setting_sync(chat_id: int, key: str) -> str:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         row = db.execute("SELECT value FROM rose_settings WHERE chat_id=? AND key=?", (chat_id, key)).fetchone()
     return str(row["value"]) if row else DEFAULTS.get(key, "")
 
@@ -136,7 +137,7 @@ async def _setting(chat_id: int, key: str) -> str:
 
 
 def _set_setting_sync(chat_id: int, key: str, value: str) -> None:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         db.execute("INSERT INTO rose_settings(chat_id,key,value) VALUES(?,?,?) ON CONFLICT(chat_id,key) DO UPDATE SET value=excluded.value", (chat_id, key, value))
         db.commit()
 
@@ -149,7 +150,7 @@ def _rows_sync(table: str, chat_id: int, order: str) -> list[dict[str, Any]]:
     allowed = {"rose_notes", "rose_filters", "rose_locks", "rose_allowlist", "rose_blocklist", "rose_approved"}
     if table not in allowed:
         raise ValueError("bad table")
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         rows = db.execute(f"SELECT * FROM {table} WHERE chat_id=? ORDER BY {order}", (chat_id,)).fetchall()
     return [dict(row) for row in rows]
 
@@ -157,7 +158,7 @@ def _rows_sync(table: str, chat_id: int, order: str) -> list[dict[str, Any]]:
 def _insert_sync(table: str, columns: tuple[str, ...], values: tuple[Any, ...]) -> None:
     if table not in {"rose_allowlist", "rose_blocklist", "rose_approved", "rose_locks"}:
         raise ValueError("bad table")
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         db.execute(f"INSERT OR REPLACE INTO {table}({','.join(columns)}) VALUES({','.join('?' for _ in values)})", values)
         db.commit()
 
@@ -166,7 +167,7 @@ def _delete_sync(table: str, chat_id: int, key: str, value: Any) -> int:
     allowed = {( "rose_notes", "name"), ("rose_filters", "trigger"), ("rose_locks", "lock_type"), ("rose_allowlist", "item"), ("rose_blocklist", "item"), ("rose_approved", "user_id")}
     if (table, key) not in allowed:
         raise ValueError("bad delete")
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         cur = db.execute(f"DELETE FROM {table} WHERE chat_id=? AND {key}=?", (chat_id, value))
         db.commit()
     return max(0, cur.rowcount)
@@ -175,7 +176,7 @@ def _delete_sync(table: str, chat_id: int, key: str, value: Any) -> int:
 def _get_payload_sync(table: str, chat_id: int, key: str, value: str) -> dict[str, Any] | None:
     if (table, key) not in {("rose_notes", "name"), ("rose_filters", "trigger")}:
         raise ValueError("bad payload")
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         row = db.execute(f"SELECT * FROM {table} WHERE chat_id=? AND {key}=?", (chat_id, value)).fetchone()
     return dict(row) if row else None
 
@@ -183,7 +184,7 @@ def _get_payload_sync(table: str, chat_id: int, key: str, value: str) -> dict[st
 def _save_payload_sync(table: str, chat_id: int, key: str, value: str, payload: str, user_id: int) -> None:
     if (table, key) not in {("rose_notes", "name"), ("rose_filters", "trigger")}:
         raise ValueError("bad payload")
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         db.execute(f"INSERT INTO {table}(chat_id,{key},payload_json,created_by,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(chat_id,{key}) DO UPDATE SET payload_json=excluded.payload_json,created_by=excluded.created_by,updated_at=excluded.updated_at", (chat_id, value, payload, user_id, int(time.time())))
         db.commit()
 
@@ -788,7 +789,7 @@ async def _send_payload(client, chat_id: int, data: dict[str, Any], message, use
 
 
 def _warn_sync(chat_id: int, user_id: int, reason: str) -> tuple[int, list[str]]:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         row = db.execute("SELECT count,reasons_json FROM rose_warnings WHERE chat_id=? AND user_id=?", (chat_id, user_id)).fetchone()
         count = int(row["count"] or 0) if row else 0
         try:
@@ -805,7 +806,7 @@ def _warn_sync(chat_id: int, user_id: int, reason: str) -> tuple[int, list[str]]
 
 
 def _get_warns_sync(chat_id: int, user_id: int) -> tuple[int, list[str]]:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         row = db.execute("SELECT count,reasons_json FROM rose_warnings WHERE chat_id=? AND user_id=?", (chat_id, user_id)).fetchone()
     if not row:
         return 0, []
@@ -817,7 +818,7 @@ def _get_warns_sync(chat_id: int, user_id: int) -> tuple[int, list[str]]:
 
 
 def _reset_warns_sync(chat_id: int, user_id: int) -> int:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         cur = db.execute("DELETE FROM rose_warnings WHERE chat_id=? AND user_id=?", (chat_id, user_id))
         db.commit()
     return max(0, cur.rowcount)
@@ -926,7 +927,7 @@ async def _issue_warn(
 
 
 def _approved_sync(chat_id: int, user_id: int) -> bool:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         row = db.execute("SELECT 1 FROM rose_approved WHERE chat_id=? AND user_id=?", (chat_id, user_id)).fetchone()
     return row is not None
 
@@ -1005,13 +1006,13 @@ async def _violation(client, message, user, mode: str, reason: str, seconds: int
 
 
 def _fed_for_chat_sync(chat_id: int) -> dict[str, Any] | None:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         row = db.execute("SELECT f.* FROM rose_fed_chats c JOIN rose_federations f ON f.fed_id=c.fed_id WHERE c.chat_id=?", (chat_id,)).fetchone()
     return dict(row) if row else None
 
 
 def _fed_ban_sync(fed_id: str, user_id: int) -> dict[str, Any] | None:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         row = db.execute("SELECT * FROM rose_fed_bans WHERE fed_id=? AND user_id=?", (fed_id, user_id)).fetchone()
     return dict(row) if row else None
 
@@ -1019,7 +1020,7 @@ def _fed_ban_sync(fed_id: str, user_id: int) -> dict[str, Any] | None:
 async def _captcha_expire(client, chat_id: int, user_id: int, token: str, timeout: int) -> None:
     await asyncio.sleep(timeout)
     def pop():
-        with _connect() as db:
+        with closing(_connect()) as db, db:
             row = db.execute("SELECT * FROM rose_captchas WHERE chat_id=? AND user_id=? AND token=? AND expires_at<=?", (chat_id, user_id, token, int(time.time()))).fetchone()
             if not row:
                 return None
@@ -1049,7 +1050,7 @@ async def rose_callback(client, query) -> None:
         await query.answer("Nút này không dành cho bạn.", show_alert=True)
         return
     def consume():
-        with _connect() as db:
+        with closing(_connect()) as db, db:
             row = db.execute("SELECT 1 FROM rose_captchas WHERE chat_id=? AND user_id=? AND token=? AND expires_at>=?", (chat_id, user_id, token, int(time.time()))).fetchone()
             if not row:
                 return False
@@ -1097,7 +1098,7 @@ async def _member_event(client, message) -> bool:
                 markup = InlineKeyboardMarkup([[InlineKeyboardButton("Tôi không phải bot", callback_data=f"rose_captcha:{message.chat.id}:{user.id}:{token}")]])
                 sent = await client.send_message(message.chat.id, text + "\n\nNhấn nút để được mở chat.", reply_markup=markup, parse_mode=None)
                 def store():
-                    with _connect() as db:
+                    with closing(_connect()) as db, db:
                         db.execute("INSERT OR REPLACE INTO rose_captchas(chat_id,user_id,token,expires_at,message_id) VALUES(?,?,?,?,?)", (message.chat.id, int(user.id), token, int(time.time()) + timeout, int(sent.id)))
                         db.commit()
                 await _db(store)
@@ -1706,7 +1707,7 @@ async def _locks(client, message, cmd: str, arg: str) -> bool:
         if not await _require_owner(client, message):
             return True
         def clear():
-            with _connect() as db:
+            with closing(_connect()) as db, db:
                 cur = db.execute("DELETE FROM rose_allowlist WHERE chat_id=?", (message.chat.id,))
                 db.commit()
             return max(0, cur.rowcount)
@@ -1790,7 +1791,7 @@ async def _controls(client, message, cmd: str, arg: str) -> bool:
 
 
 def _fed_info_sync(fed_id: str) -> dict[str, Any] | None:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         fed = db.execute("SELECT * FROM rose_federations WHERE fed_id=?", (fed_id,)).fetchone()
         if not fed:
             return None
@@ -1803,7 +1804,7 @@ def _fed_info_sync(fed_id: str) -> dict[str, Any] | None:
 
 
 def _fed_admin_sync(fed_id: str, user_id: int) -> bool:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         fed = db.execute("SELECT owner_id FROM rose_federations WHERE fed_id=?", (fed_id,)).fetchone()
         if not fed:
             return False
@@ -1824,7 +1825,7 @@ async def _federation(client, message, cmd: str, arg: str) -> bool:
             return True
         fed_id = secrets.token_hex(4)
         def create():
-            with _connect() as db:
+            with closing(_connect()) as db, db:
                 db.execute("INSERT INTO rose_federations(fed_id,name,owner_id,created_at) VALUES(?,?,?,?)", (fed_id, arg.strip(), actor, int(time.time())))
                 db.commit()
         await _db(create)
@@ -1840,7 +1841,7 @@ async def _federation(client, message, cmd: str, arg: str) -> bool:
             await message.reply_text("Không tìm thấy federation.", quote=True)
             return True
         def join():
-            with _connect() as db:
+            with closing(_connect()) as db, db:
                 db.execute("INSERT OR REPLACE INTO rose_fed_chats(fed_id,chat_id,joined_at) VALUES(?,?,?)", (fed_id, message.chat.id, int(time.time())))
                 db.commit()
         await _db(join)
@@ -1850,7 +1851,7 @@ async def _federation(client, message, cmd: str, arg: str) -> bool:
         if not await _require_owner(client, message):
             return True
         def leave():
-            with _connect() as db:
+            with closing(_connect()) as db, db:
                 cur = db.execute("DELETE FROM rose_fed_chats WHERE chat_id=?", (message.chat.id,))
                 db.commit()
             return max(0, cur.rowcount)
@@ -1869,14 +1870,14 @@ async def _federation(client, message, cmd: str, arg: str) -> bool:
         return True
     if cmd == "fbanlist":
         def list_bans():
-            with _connect() as db:
+            with closing(_connect()) as db, db:
                 return [dict(row) for row in db.execute("SELECT * FROM rose_fed_bans WHERE fed_id=? ORDER BY created_at DESC LIMIT 100", (fed_id,)).fetchall()]
         rows = await _db(list_bans)
         await message.reply_text("\n".join(f"- {row['user_id']}: {row['reason'] or 'không lý do'}" for row in rows) or "Federation ban list trống.", quote=True)
         return True
     if cmd == "fedadmins":
         def list_admins():
-            with _connect() as db:
+            with closing(_connect()) as db, db:
                 return [int(info["owner_id"]), *[int(row["user_id"]) for row in db.execute("SELECT user_id FROM rose_fed_admins WHERE fed_id=?", (fed_id,)).fetchall()]]
         admins = await _db(list_admins)
         await message.reply_text("Fed admins:\n" + "\n".join(f"- {item}" for item in admins), quote=True)
@@ -1893,7 +1894,7 @@ async def _federation(client, message, cmd: str, arg: str) -> bool:
             await message.reply_text("Reply hoặc chỉ định user.", quote=True)
             return True
         def set_admin(add: bool):
-            with _connect() as db:
+            with closing(_connect()) as db, db:
                 if add:
                     db.execute("INSERT OR IGNORE INTO rose_fed_admins(fed_id,user_id) VALUES(?,?)", (fed_id, int(user.id)))
                 else:
@@ -1908,7 +1909,7 @@ async def _federation(client, message, cmd: str, arg: str) -> bool:
             await message.reply_text("Reply hoặc chỉ định user.", quote=True)
             return True
         def update(add: bool):
-            with _connect() as db:
+            with closing(_connect()) as db, db:
                 if add:
                     db.execute("INSERT OR REPLACE INTO rose_fed_bans(fed_id,user_id,reason,banned_by,created_at) VALUES(?,?,?,?,?)", (fed_id, int(user.id), reason, actor, int(time.time())))
                 else:
@@ -1935,7 +1936,7 @@ async def _federation(client, message, cmd: str, arg: str) -> bool:
             await message.reply_text("Dùng /delfed confirm để xác nhận.", quote=True)
             return True
         def delete():
-            with _connect() as db:
+            with closing(_connect()) as db, db:
                 for table in ("rose_fed_admins", "rose_fed_chats", "rose_fed_bans"):
                     db.execute(f"DELETE FROM {table} WHERE fed_id=?", (fed_id,))
                 db.execute("DELETE FROM rose_federations WHERE fed_id=?", (fed_id,))
@@ -1947,7 +1948,7 @@ async def _federation(client, message, cmd: str, arg: str) -> bool:
 
 def _export_sync(chat_id: int) -> dict[str, Any]:
     result: dict[str, Any] = {"version": 1, "chat_id": chat_id}
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         result["settings"] = {str(row["key"]): str(row["value"]) for row in db.execute("SELECT key,value FROM rose_settings WHERE chat_id=?", (chat_id,))}
         for key, table in (("notes", "rose_notes"), ("filters", "rose_filters"), ("locks", "rose_locks"), ("allowlist", "rose_allowlist"), ("blocklist", "rose_blocklist"), ("approved", "rose_approved")):
             result[key] = [dict(row) for row in db.execute(f"SELECT * FROM {table} WHERE chat_id=?", (chat_id,)).fetchall()]
@@ -1955,7 +1956,7 @@ def _export_sync(chat_id: int) -> dict[str, Any]:
 
 
 def _import_sync(chat_id: int, payload: dict[str, Any]) -> None:
-    with _connect() as db:
+    with closing(_connect()) as db, db:
         for key, value in (payload.get("settings") or {}).items():
             db.execute("INSERT OR REPLACE INTO rose_settings(chat_id,key,value) VALUES(?,?,?)", (chat_id, str(key), str(value)))
         specs = {
@@ -2002,7 +2003,7 @@ async def _backup(client, message, cmd: str, arg: str) -> bool:
         await message.reply_text("Lệnh này xóa cấu hình quản trị nhóm. Dùng /reset confirm.", quote=True)
         return True
     def reset():
-        with _connect() as db:
+        with closing(_connect()) as db, db:
             for table in ("rose_settings", "rose_warnings", "rose_notes", "rose_filters", "rose_locks", "rose_allowlist", "rose_blocklist", "rose_approved", "rose_captchas"):
                 db.execute(f"DELETE FROM {table} WHERE chat_id=?", (message.chat.id,))
             db.commit()
