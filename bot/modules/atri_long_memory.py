@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import asyncio
 import hashlib
 import json
@@ -124,7 +125,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def _create_schema_sync() -> None:
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS chat_archive (
@@ -384,7 +385,7 @@ def _insert_memory_card_sync(
         _normalize(content).encode("utf-8")
     ).hexdigest()
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         cursor = connection.execute(
             """
             INSERT OR IGNORE INTO memory_cards(
@@ -447,7 +448,7 @@ def _archive_turn_sync(
         ("model", model_text, now + 1),
     )
 
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         for role, content, created_at in rows:
             content = str(content or "").strip()
 
@@ -530,7 +531,7 @@ def _search_archive_sync(
     list[sqlite3.Row],
     list[sqlite3.Row],
 ]:
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         cards = connection.execute(
             """
             SELECT
@@ -728,7 +729,7 @@ async def build_long_memory_context(
 
 
 def _stats_sync(chat_key: str) -> dict[str, Any]:
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         archive = connection.execute(
             """
             SELECT
@@ -797,7 +798,7 @@ async def get_long_memory_stats(
 
 
 def _forget_all_sync(chat_key: str) -> dict[str, int]:
-    with _connect() as connection:
+    with closing(_connect()) as connection, connection:
         archive_cursor = connection.execute(
             """
             DELETE FROM chat_archive
