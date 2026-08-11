@@ -402,4 +402,3 @@ def add_handlers():
     bot_loop.create_task(
         sync_bot_command_menu(TgClient.bot)
     )
-
