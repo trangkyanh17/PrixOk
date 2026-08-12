@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -20,6 +18,14 @@ from .atri_provider_control import (
     resolve_provider_model,
     resolve_provider_thinking,
 )
+from .atri_provider_config import (
+    load_provider_config,
+    provider_env_path,
+)
+from .atri_provider_request import (
+    build_chat_payload,
+    build_provider_headers,
+)
 
 
 # ATRI_FREE_POOL_V1
@@ -29,34 +35,13 @@ from .atri_provider_control import (
 # - Multimodal requests stay on Vertex.
 # - Missing keys or provider failures always fall back to Vertex.
 
-ENV_PATH = Path(
-    os.getenv(
-        "ATRI_FREE_PROVIDERS_ENV",
-        "/home/prix/secrets/prixok/free-providers.env",
-    )
-)
-
 DEFAULT_CHAIN = (
-    "novita_ling",
     "cerebras_gptoss",
     "groq_gptoss",
-    "novita_macaron",
     "openrouter_free",
 )
 
 _PROVIDER_DEFS: dict[str, dict[str, str]] = {
-    "novita_ling": {
-        "provider": "novita",
-        "key_name": "NOVITA_API_KEY",
-        "url": "https://api.novita.ai/openai/v1/chat/completions",
-        "model": "inclusionai/ling-3.0-flash",
-    },
-    "novita_macaron": {
-        "provider": "novita",
-        "key_name": "NOVITA_API_KEY",
-        "url": "https://api.novita.ai/openai/v1/chat/completions",
-        "model": "mindai/macaron-v1-venti",
-    },
     "cerebras_gptoss": {
         "provider": "cerebras",
         "key_name": "CEREBRAS_API_KEY",
@@ -216,8 +201,6 @@ def _atri_task_cooldown_until(
     )
     return max(local_until, global_until)
 
-_ENV_CACHE: dict[str, str] = {}
-_ENV_MTIME_NS = -1
 _CLIENT: httpx.AsyncClient | None = None
 _CLIENT_LOCK = asyncio.Lock()
 _COOLDOWN_UNTIL: dict[str, float] = {}
@@ -273,63 +256,8 @@ def _truthy(value: str | None, default: bool = False) -> bool:
     }
 
 
-def _load_env_file() -> dict[str, str]:
-    global _ENV_CACHE, _ENV_MTIME_NS
-
-    try:
-        stat = ENV_PATH.stat()
-        mtime_ns = stat.st_mtime_ns
-    except FileNotFoundError:
-        _ENV_CACHE = {}
-        _ENV_MTIME_NS = -1
-        return {}
-
-    if mtime_ns == _ENV_MTIME_NS:
-        return dict(_ENV_CACHE)
-
-    values: dict[str, str] = {}
-
-    for raw_line in ENV_PATH.read_text(
-        encoding="utf-8",
-        errors="replace",
-    ).splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-
-        if (
-            len(value) >= 2
-            and value[0] == value[-1]
-            and value[0] in {"'", '"'}
-        ):
-            value = value[1:-1]
-
-        if key:
-            values[key] = value
-
-    _ENV_CACHE = values
-    _ENV_MTIME_NS = mtime_ns
-    return dict(values)
-
-
 def _config() -> dict[str, str]:
-    values = _load_env_file()
-    for key, value in os.environ.items():
-        if key.startswith(
-            (
-                "ATRI_FREE_",
-                "NOVITA_",
-                "CEREBRAS_",
-                "GROQ_",
-                "OPENROUTER_",
-            )
-        ):
-            values[key] = value
-    return values
+    return load_provider_config()
 
 
 def _get_int(
@@ -344,15 +272,6 @@ def _get_int(
     except Exception:
         value = default
     return max(minimum, min(maximum, value))
-
-
-def _thinking_effort(level: str) -> str:
-    level = str(level or "medium").casefold()
-    if level in {"minimal", "low"}:
-        return "low"
-    if level == "high":
-        return "high"
-    return "medium"
 
 
 async def _get_client() -> httpx.AsyncClient:
@@ -501,81 +420,15 @@ async def _call_provider(
 ) -> str:
     provider = spec["provider"]
 
-    payload: dict[str, Any] = {
-        "model": spec["model"],
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": 0.7,
-    }
-
-    # ATRI_PROVIDER_REASONING_V1
-    if provider == "cerebras":
-        level = str(thinking_level or "medium").casefold()
-
-        if spec["model"] == "zai-glm-4.7" and level == "minimal":
-            payload["reasoning_effort"] = "none"
-        else:
-            payload["reasoning_effort"] = _thinking_effort(level)
-
-    elif provider == "groq":
-        payload["reasoning_effort"] = _thinking_effort(
-            thinking_level
-        )
-
-    elif provider == "openrouter":
-        # ATRI_OPENROUTER_DYNAMIC_ROUTER_REASONING_FIX_V1
-        # Dynamic OpenRouter routers do not expose reasoning controls.
-        # Fixed reasoning-capable models still receive the requested
-        # provider-specific thinking effort.
-        if spec["model"] not in {
-            "openrouter/free",
-            "openrouter/auto",
-        }:
-            effort = str(
-                thinking_level or "medium"
-            ).casefold()
-
-            if effort not in {
-                "minimal",
-                "low",
-                "medium",
-                "high",
-            }:
-                effort = "medium"
-
-            payload["reasoning"] = {
-                "effort": effort,
-                "exclude": True,
-            }
-
-    elif provider == "novita":
-        payload["enable_thinking"] = (
-            str(thinking_level).casefold() != "minimal"
-        )
-        payload["separate_reasoning"] = True
-
-    # ATRI_GROQ_QWEN36_REASONING_V241_ADAPTIVE
-    # Applied after generic provider reasoning so Qwen's
-    # none/default semantics win without rewriting old branches.
-    if (
-        provider == "groq"
-        and str(spec.get("model", "")) == "qwen/qwen3.6-27b"
-    ):
-        qwen_level = str(thinking_level or "medium").casefold()
-        if qwen_level in {"minimal", "low"}:
-            payload["reasoning_effort"] = "none"
-            payload.pop("reasoning_format", None)
-        else:
-            payload["reasoning_effort"] = "default"
-            payload["reasoning_format"] = "hidden"
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    if provider == "openrouter":
-        headers["X-Title"] = "Atri AI"
+    payload = build_chat_payload(
+        provider=provider,
+        model=spec["model"],
+        messages=messages,
+        thinking_level=thinking_level,
+        max_tokens=max_tokens,
+        temperature=0.7,
+    )
+    headers = build_provider_headers(provider, api_key)
 
     client = await _get_client()
 
@@ -1157,7 +1010,7 @@ def free_pool_status() -> dict[str, Any]:
 
     return {
         "enabled": enabled,
-        "env_path": str(ENV_PATH),
+        "env_path": str(provider_env_path()),
         "chain": items,
     }
 

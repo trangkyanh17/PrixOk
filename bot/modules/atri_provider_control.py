@@ -18,6 +18,7 @@ from .atri_provider_capabilities import (
     CANDIDATE_CHOICES,
     audit_age_seconds,
     audit_capabilities,
+    audit_report_text,
     compact_report,
     filter_model_choices,
     heal_model,
@@ -523,7 +524,7 @@ def provider_control_rows(
     rows.append(
         [
             InlineKeyboardButton(
-                "🔎 Audit model API",
+                "🔎 Audit API/model",
                 callback_data="apc:audit",
             )
         ]
@@ -696,7 +697,10 @@ async def atri_provider_control_callback(_, query) -> None:
         elif data == "apc:audit":
             await query.answer("Đang audit model API...")
 
-            report = await audit_capabilities()
+            report = await asyncio.wait_for(
+                audit_capabilities(),
+                timeout=60.0,
+            )
             _heal_state()
 
             LOGGER.info(
@@ -704,6 +708,14 @@ async def atri_provider_control_callback(_, query) -> None:
                 uid,
                 compact_report(report),
             )
+
+            msg = getattr(query, "message", None)
+            if msg is not None:
+                await msg.reply_text(
+                    audit_report_text(report),
+                    quote=True,
+                    parse_mode=None,
+                )
 
         elif (
             len(parts) == 3
