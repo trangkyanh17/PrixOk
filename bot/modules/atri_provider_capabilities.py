@@ -275,11 +275,12 @@ def task_model_candidates(
 
 def _blank_state() -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "updated_at": 0,
         "last_audit_at": 0,
         "models": {},
         "discovered": {},
+        "alert_snapshot": {},
     }
 
 
@@ -299,6 +300,8 @@ def _load_state() -> dict[str, Any]:
         state["models"] = {}
     if not isinstance(state.get("discovered"), dict):
         state["discovered"] = {}
+    if not isinstance(state.get("alert_snapshot"), dict):
+        state["alert_snapshot"] = {}
 
     return state
 
@@ -1039,5 +1042,237 @@ def audit_report_text(report: dict[str, Any]) -> str:
                 f"• {icons.get(status, '⚠️')} {short_label}: "
                 f"{reason}{http_text}"
             )
+
+    return "\n".join(lines)[:3900]
+
+
+def _key_health(status: str) -> str:
+    normalized = str(status or "unknown").casefold()
+    if normalized == "ok":
+        return "ok"
+    if normalized in {"missing", "invalid", "denied"}:
+        return "bad"
+    return "transient"
+
+
+def build_audit_alert_snapshot(
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+
+    for provider in ("cerebras", "groq", "openrouter", "vertex"):
+        provider_report = report.get(provider)
+        if not isinstance(provider_report, dict):
+            continue
+
+        key_result = provider_report.get("key", {})
+        if not isinstance(key_result, dict):
+            key_result = {}
+
+        key = {
+            "status": str(key_result.get("status", "unknown")),
+            "reason": str(key_result.get("reason", "unknown")),
+            "http_status": key_result.get("http_status"),
+        }
+        models: dict[str, Any] = {}
+
+        for model, result in provider_report.get("models", {}).items():
+            if not isinstance(result, dict):
+                continue
+            models[str(model)] = {
+                "status": str(result.get("status", "unknown")),
+                "reason": str(result.get("reason", "unknown")),
+                "http_status": result.get("http_status"),
+            }
+
+        statuses = [
+            str(item.get("status", "unknown"))
+            for item in models.values()
+        ]
+        key_health = _key_health(key["status"])
+
+        if key_health == "bad":
+            provider_status = "key_bad"
+        elif any(status == "ok" for status in statuses):
+            provider_status = "healthy"
+        elif statuses and all(status == "dead" for status in statuses):
+            provider_status = "all_dead"
+        else:
+            provider_status = "unavailable"
+
+        snapshot[provider] = {
+            "key": key,
+            "models": models,
+            "provider_status": provider_status,
+        }
+
+    return snapshot
+
+
+def current_audit_alert_snapshot() -> dict[str, Any]:
+    stored = _STATE.get("alert_snapshot", {})
+    if isinstance(stored, dict) and stored:
+        return json.loads(json.dumps(stored))
+
+    legacy_report: dict[str, Any] = {}
+    for provider, choices in CANDIDATE_CHOICES.items():
+        models = {
+            model: model_record(provider, model)
+            for model, _ in choices
+        }
+        legacy_report[provider] = {
+            "key": {
+                "status": "unknown",
+                "reason": "baseline_not_audited",
+                "http_status": None,
+            },
+            "models": models,
+        }
+
+    return build_audit_alert_snapshot(legacy_report)
+
+
+def audit_alert_events(
+    report: dict[str, Any],
+    previous_snapshot: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    current = build_audit_alert_snapshot(report)
+    previous = (
+        previous_snapshot
+        if isinstance(previous_snapshot, dict)
+        else current_audit_alert_snapshot()
+    )
+    events: list[dict[str, Any]] = []
+
+    for provider in ("cerebras", "groq", "openrouter", "vertex"):
+        before = previous.get(provider)
+        after = current.get(provider)
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            continue
+
+        before_key = before.get("key", {})
+        after_key = after.get("key", {})
+        before_key_health = _key_health(before_key.get("status", "unknown"))
+        after_key_health = _key_health(after_key.get("status", "unknown"))
+
+        if after_key_health == "bad" and before_key_health != "bad":
+            events.append({
+                "kind": "key_failed",
+                "provider": provider,
+                **after_key,
+            })
+        elif before_key_health == "bad" and after_key_health == "ok":
+            events.append({
+                "kind": "key_recovered",
+                "provider": provider,
+                **after_key,
+            })
+
+        before_models = before.get("models", {})
+        after_models = after.get("models", {})
+        for model, after_model in after_models.items():
+            before_model = before_models.get(model)
+            if not isinstance(before_model, dict):
+                continue
+
+            before_status = str(before_model.get("status", "unknown"))
+            after_status = str(after_model.get("status", "unknown"))
+
+            if after_status == "dead" and before_status != "dead":
+                events.append({
+                    "kind": "model_dead",
+                    "provider": provider,
+                    "model": model,
+                    **after_model,
+                })
+            elif before_status == "dead" and after_status == "ok":
+                events.append({
+                    "kind": "model_recovered",
+                    "provider": provider,
+                    "model": model,
+                    **after_model,
+                })
+
+        before_provider = str(before.get("provider_status", "unavailable"))
+        after_provider = str(after.get("provider_status", "unavailable"))
+
+        if after_provider == "all_dead" and before_provider != "all_dead":
+            events.append({
+                "kind": "provider_all_dead",
+                "provider": provider,
+            })
+        elif (
+            after_provider == "unavailable"
+            and before_provider == "healthy"
+        ):
+            events.append({
+                "kind": "provider_unavailable",
+                "provider": provider,
+            })
+        elif (
+            after_provider == "healthy"
+            and before_provider in {"all_dead", "unavailable"}
+        ):
+            events.append({
+                "kind": "provider_recovered",
+                "provider": provider,
+            })
+
+    return events
+
+
+def commit_audit_alert_snapshot(report: dict[str, Any]) -> None:
+    _STATE["alert_snapshot"] = build_audit_alert_snapshot(report)
+    _save_state()
+
+
+def audit_alert_text(events: list[dict[str, Any]]) -> str:
+    provider_labels = {
+        "cerebras": "Cerebras",
+        "groq": "Groq",
+        "openrouter": "OpenRouter",
+        "vertex": "Vertex",
+    }
+    model_labels = {
+        provider: dict(choices)
+        for provider, choices in CANDIDATE_CHOICES.items()
+    }
+    lines = ["🔔 Thay đổi trạng thái API/model Atri:"]
+
+    for event in events:
+        kind = str(event.get("kind", ""))
+        provider = str(event.get("provider", ""))
+        provider_label = provider_labels.get(provider, provider)
+        reason = str(event.get("reason", "unknown"))
+        http_status = event.get("http_status")
+        http_text = f" (HTTP {http_status})" if http_status else ""
+        model = str(event.get("model", ""))
+        model_label = model_labels.get(provider, {}).get(model, model)
+
+        if kind == "key_failed":
+            lines.append(
+                f"• ❌ {provider_label} key lỗi: {reason}{http_text}"
+            )
+        elif kind == "key_recovered":
+            lines.append(f"• ✅ {provider_label} key đã phục hồi")
+        elif kind == "model_dead":
+            lines.append(
+                f"• ⛔ {provider_label}/{model_label} chết: "
+                f"{reason}{http_text}"
+            )
+        elif kind == "model_recovered":
+            lines.append(
+                f"• ✅ {provider_label}/{model_label} đã phục hồi"
+            )
+        elif kind == "provider_all_dead":
+            lines.append(
+                f"• 🚨 {provider_label}: toàn bộ model đã chết"
+            )
+        elif kind == "provider_unavailable":
+            lines.append(
+                f"• ⚠️ {provider_label}: tạm thời không khả dụng"
+            )
+        elif kind == "provider_recovered":
+            lines.append(f"• ✅ {provider_label}: đã hoạt động lại")
 
     return "\n".join(lines)[:3900]
