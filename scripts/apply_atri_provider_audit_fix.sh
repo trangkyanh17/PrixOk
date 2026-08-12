@@ -6,7 +6,7 @@ set -Eeuo pipefail
 # the immutable, GitHub-verified source commit below.
 
 REPOSITORY="trangkyanh17/PrixOk"
-SOURCE_REF="${ATRI_FIX_SOURCE_REF:-675d13c7840e8523e2e3c9ff89c3f6f5d500a04a}"
+SOURCE_REF="${ATRI_FIX_SOURCE_REF:-fd362ba99dbd4104bb82dabd91f7e818b81f197d}"
 RAW_BASE="${ATRI_FIX_RAW_BASE:-https://raw.githubusercontent.com/${REPOSITORY}/${SOURCE_REF}}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_SOURCE_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
