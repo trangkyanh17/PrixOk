@@ -99,6 +99,12 @@ from .atri_skills import (
     skill_worker_context as _atri_skill_worker_context,
 )
 
+# ATRI_ATTACHMENT_INTEGRATION_V143
+from bot.modules.atri_attachment_runtime import (
+    build_attachment_context as _atri_build_attachment_context_v143,
+    process_attachment_response as _atri_process_attachment_response_v143,
+)
+
 
 
 VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
@@ -2182,6 +2188,25 @@ async def _vertex_generate(
     ):
         _atri_skill_text = str(current_parts[0].get("text", "")).strip()
 
+    # ATRI_ATTACHMENT_SKILL_ROUTING_V143
+    _atri_attachment_skill_header_v143 = ""
+    for _atri_part_v143 in current_parts:
+        if not isinstance(_atri_part_v143, dict):
+            continue
+        _atri_part_text_v143 = str(_atri_part_v143.get("text", "") or "")
+        if _atri_part_text_v143.startswith("[ATRI_PRIVATE_ATTACHMENT_V143]"):
+            _atri_attachment_skill_header_v143 = _atri_part_text_v143.split(
+                "[ATTACHMENT_CONTENT]",
+                1,
+            )[0][:2400]
+            break
+    if _atri_attachment_skill_header_v143:
+        _atri_skill_text = (
+            str(_atri_skill_text or "").strip()
+            + "\n\n"
+            + _atri_attachment_skill_header_v143
+        ).strip()
+
     _atri_skill_activation = _atri_skill_prepare_activation(
         _atri_skill_text,
         user_id=user_id,
@@ -2799,6 +2824,28 @@ def _split_reply_chunks(text: str) -> list[str]:
 
 # ATRI_TELEGRAM_PLAIN_FINAL_V13
 async def _send_chunks(message, text: str) -> None:
+    # ATRI_ATTACHMENT_RESPONSE_SENDER_V143
+    try:
+        _atri_attachment_result_v143 = await asyncio.wait_for(
+            _atri_process_attachment_response_v143(message, str(text or "")),
+            timeout=35.0,
+        )
+        text = str(_atri_attachment_result_v143.get("clean_text", text) or "")
+        if _atri_attachment_result_v143.get("executed"):
+            LOGGER.info(
+                "ATRI_ATTACHMENT_REPAIR_SENT filename=%s bytes=%s validator=%s",
+                _atri_attachment_result_v143.get("filename"),
+                _atri_attachment_result_v143.get("artifact_bytes"),
+                _atri_attachment_result_v143.get("validator"),
+            )
+        elif _atri_attachment_result_v143.get("error"):
+            LOGGER.error(
+                "ATRI_ATTACHMENT_REPAIR_REJECTED error=%s",
+                _atri_attachment_result_v143.get("error"),
+            )
+    except Exception:
+        LOGGER.exception("ATRI_ATTACHMENT_RESPONSE_PROCESS_FAIL")
+
     # ATRI_DOCUMENT_TELEGRAM_SENDER_V128
     try:
         import asyncio as _atri_document_asyncio_v128
@@ -2967,6 +3014,34 @@ class _AtriProgressiveReply:
                 )
 
     async def finalize(self, text: str) -> None:
+        # ATRI_ATTACHMENT_PROGRESSIVE_FINALIZER_V143
+        if self.sent_message is not None:
+            try:
+                _atri_attachment_result_v143 = await asyncio.wait_for(
+                    _atri_process_attachment_response_v143(
+                        self.source_message,
+                        str(text or ""),
+                    ),
+                    timeout=35.0,
+                )
+                text = str(
+                    _atri_attachment_result_v143.get("clean_text", text) or ""
+                )
+                if _atri_attachment_result_v143.get("executed"):
+                    LOGGER.info(
+                        "ATRI_ATTACHMENT_PROGRESSIVE_REPAIR_SENT filename=%s bytes=%s validator=%s",
+                        _atri_attachment_result_v143.get("filename"),
+                        _atri_attachment_result_v143.get("artifact_bytes"),
+                        _atri_attachment_result_v143.get("validator"),
+                    )
+                elif _atri_attachment_result_v143.get("error"):
+                    LOGGER.error(
+                        "ATRI_ATTACHMENT_PROGRESSIVE_REPAIR_REJECTED error=%s",
+                        _atri_attachment_result_v143.get("error"),
+                    )
+            except Exception:
+                LOGGER.exception("ATRI_ATTACHMENT_PROGRESSIVE_PROCESS_FAIL")
+
         # ATRI_DOCUMENT_PROGRESSIVE_FINALIZER_V132
         if self.sent_message is not None:
             try:
@@ -3471,15 +3546,10 @@ async def atri_message(
     *,
     force_reply: bool = False,
 ) -> None:
-    # STICKER_AUTO_LEARN_ENTRY
-    if getattr(message, "sticker", None) is not None:
+    # ATRI_STICKER_NATURAL_REPLY_V147
+    sticker_message_v147 = getattr(message, "sticker", None) is not None
+    if sticker_message_v147:
         await learn_sticker_from_message(message)
-        await maybe_send_random_sticker(
-            client,
-            message,
-            reason="sticker",
-        )
-        return
 
     user = getattr(message, "from_user", None)
     if user is None or getattr(user, "is_bot", False):
@@ -3511,6 +3581,37 @@ async def atri_message(
         except Exception:
             LOGGER.exception("Atri Gemini audio fallback failed")
 
+    # ATRI_ATTACHMENT_CONTEXT_ENTRY_V143
+    attachment_context_v143 = {
+        "present": False,
+        "parts": [],
+        "route_mode": "",
+        "default_prompt": "",
+    }
+    try:
+        attachment_context_v143 = await _atri_build_attachment_context_v143(message)
+    except Exception as _atri_attachment_exc_v143:
+        LOGGER.exception("ATRI_ATTACHMENT_CONTEXT_FAIL")
+        attachment_context_v143 = {
+            "present": True,
+            "parts": [
+                {
+                    "text": (
+                        "[ATRI_PRIVATE_ATTACHMENT_V143]\n"
+                        "Attachment processing failed safely: "
+                        + type(_atri_attachment_exc_v143).__name__
+                        + ". Do not claim that the attachment was inspected.\n"
+                        "[END_ATRI_PRIVATE_ATTACHMENT_V143]"
+                    )
+                }
+            ],
+            "route_mode": "tools",
+            "default_prompt": (
+                "Em chưa đọc được tệp đính kèm; hãy giải thích ngắn gọn giới hạn "
+                "và đề nghị người dùng gửi lại tệp hợp lệ."
+            ),
+        }
+
     command = _command_name(raw_text) if raw_text.startswith("/") else ""
     argument = _command_argument(raw_text) if command else ""
 
@@ -3539,6 +3640,7 @@ async def atri_message(
 
     if (
         not force_reply
+        and not sticker_message_v147
         and not await _should_reply(
             client,
             message,
@@ -3549,9 +3651,17 @@ async def atri_message(
         return
 
     prompt_text = _build_prompt(message, raw_text, command)
-    photo_part = await _photo_part(message)
+    attachment_parts_v143 = list(attachment_context_v143.get("parts", []) or [])
+    photo_part = None
+    if not attachment_parts_v143:
+        photo_part = await _photo_part(message)
 
-    if not prompt_text and photo_part is None and audio_part is None:
+    if (
+        not prompt_text
+        and not attachment_parts_v143
+        and photo_part is None
+        and audio_part is None
+    ):
         if _matches_command(command, "ai"):
             suffix = str(getattr(Config, "CMD_SUFFIX", "") or "")
             await message.reply_text(
@@ -3560,6 +3670,12 @@ async def atri_message(
                 parse_mode=None,
             )
         return
+
+    if not prompt_text and attachment_parts_v143:
+        prompt_text = str(
+            attachment_context_v143.get("default_prompt", "")
+            or "Hãy đọc tệp đính kèm và phản hồi tự nhiên theo nội dung."
+        )
 
     if not prompt_text and photo_part is not None:
         prompt_text = "Hãy xem và phản hồi tự nhiên về ảnh này."
@@ -3591,6 +3707,7 @@ async def atri_message(
         return
 
     current_parts: list[dict[str, Any]] = [{"text": prompt_text}]
+    current_parts.extend(attachment_parts_v143)
     if photo_part is not None:
         current_parts.append(photo_part)
     if audio_part is not None:
@@ -3626,6 +3743,11 @@ async def atri_message(
         # prompt_text may contain reply/context added by _build_prompt.
         route_text = raw_text.strip() or prompt_text
         route_mode = choose_atri_mode(route_text)
+        attachment_route_v143 = str(
+            attachment_context_v143.get("route_mode", "") or ""
+        ).casefold()
+        if route_mode == "chat" and attachment_route_v143 in {"code", "tools"}:
+            route_mode = attachment_route_v143
 
         force_github_mcp = (
             route_mode == "code"
