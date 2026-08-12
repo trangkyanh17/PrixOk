@@ -390,8 +390,19 @@ def add_handlers():
         MessageHandler(
             atri_message,
             filters=(
+                # ATRI_ATTACHMENT_FILTERS_V143
                 filters.incoming
-                & (filters.text | filters.photo | filters.sticker)
+                & (
+                    filters.text
+                    | filters.photo
+                    | filters.sticker
+                    | filters.animation
+                    | filters.video
+                    | filters.video_note
+                    | filters.document
+                    | filters.audio
+                    | filters.voice
+                )
                 & CustomFilters.authorized
             ),
         ),
