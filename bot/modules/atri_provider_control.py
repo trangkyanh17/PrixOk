@@ -17,8 +17,13 @@ from bot.core.config_manager import Config
 from .atri_provider_capabilities import (
     CANDIDATE_CHOICES,
     audit_age_seconds,
+    audit_alert_events,
+    audit_alert_text,
     audit_capabilities,
+    audit_report_text,
+    commit_audit_alert_snapshot,
     compact_report,
+    current_audit_alert_snapshot,
     filter_model_choices,
     heal_model,
     provider_has_live_model,
@@ -523,7 +528,7 @@ def provider_control_rows(
     rows.append(
         [
             InlineKeyboardButton(
-                "🔎 Audit model API",
+                "🔎 Audit API/model",
                 callback_data="apc:audit",
             )
         ]
@@ -639,21 +644,35 @@ def _reset() -> None:
 _CAPABILITY_WATCH_TASKS: set[asyncio.Task[Any]] = set()
 
 
-async def _background_capability_watch() -> None:
+async def _background_capability_watch(client) -> None:
     LOGGER.info("ATRI_CAPABILITY_WATCH_STARTED")
     await asyncio.sleep(90)
 
     while True:
         try:
             if audit_age_seconds() >= 24 * 3600:
-                report = await audit_capabilities(
-                    ("cerebras", "groq", "openrouter")
-                )
+                previous_snapshot = current_audit_alert_snapshot()
+                report = await audit_capabilities()
 
                 _heal_state()
 
+                events = audit_alert_events(
+                    report,
+                    previous_snapshot,
+                )
+                owner_id = _owner_id()
+                if events and owner_id > 0:
+                    await client.send_message(
+                        owner_id,
+                        audit_alert_text(events),
+                        parse_mode=None,
+                    )
+
+                commit_audit_alert_snapshot(report)
+
                 LOGGER.info(
-                    "ATRI_CAPABILITY_DAILY_AUDIT %s",
+                    "ATRI_CAPABILITY_DAILY_AUDIT alerts=%s %s",
+                    len(events),
                     compact_report(report),
                 )
         except Exception as exc:
@@ -696,14 +715,26 @@ async def atri_provider_control_callback(_, query) -> None:
         elif data == "apc:audit":
             await query.answer("Đang audit model API...")
 
-            report = await audit_capabilities()
+            report = await asyncio.wait_for(
+                audit_capabilities(),
+                timeout=60.0,
+            )
             _heal_state()
+            commit_audit_alert_snapshot(report)
 
             LOGGER.info(
                 "ATRI_CAPABILITY_MANUAL_AUDIT user=%s %s",
                 uid,
                 compact_report(report),
             )
+
+            msg = getattr(query, "message", None)
+            if msg is not None:
+                await msg.reply_text(
+                    audit_report_text(report),
+                    quote=True,
+                    parse_mode=None,
+                )
 
         elif (
             len(parts) == 3
@@ -792,7 +823,7 @@ def add_atri_provider_control_handlers(client) -> None:
         raise RuntimeError("Pyrogram client event loop unavailable")
 
     task = loop.create_task(
-        _background_capability_watch(),
+        _background_capability_watch(client),
         name="atri-capability-watch",
     )
     _CAPABILITY_WATCH_TASKS.add(task)

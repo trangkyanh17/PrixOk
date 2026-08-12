@@ -10,11 +10,26 @@ from typing import Any
 
 import httpx
 
+from .atri_provider_config import provider_api_keys
+from .atri_provider_request import (
+    build_chat_payload,
+    build_provider_headers,
+)
+
 
 # ATRI_PROVIDER_CAPABILITIES_V231
-STATE_PATH = Path("/app/atri_data/atri_provider_capabilities.json")
-ENV_PATH = Path("/home/prix/secrets/prixok/free-providers.env")
-VERTEX_KEY_PATH = Path("/app/vertex-service-account.json")
+STATE_PATH = Path(
+    os.environ.get(
+        "ATRI_PROVIDER_CAPABILITIES_STATE_PATH",
+        "/app/atri_data/atri_provider_capabilities.json",
+    )
+)
+VERTEX_KEY_PATH = Path(
+    os.environ.get(
+        "ATRI_VERTEX_KEY_PATH",
+        "/app/vertex-service-account.json",
+    )
+)
 
 CANDIDATE_CHOICES: dict[str, tuple[tuple[str, str], ...]] = {
     "cerebras": (
@@ -260,11 +275,12 @@ def task_model_candidates(
 
 def _blank_state() -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "updated_at": 0,
         "last_audit_at": 0,
         "models": {},
         "discovered": {},
+        "alert_snapshot": {},
     }
 
 
@@ -284,6 +300,8 @@ def _load_state() -> dict[str, Any]:
         state["models"] = {}
     if not isinstance(state.get("discovered"), dict):
         state["discovered"] = {}
+    if not isinstance(state.get("alert_snapshot"), dict):
+        state["alert_snapshot"] = {}
 
     return state
 
@@ -498,28 +516,6 @@ def supported_thinking_levels(
     )
 
 
-def _read_env() -> dict[str, str]:
-    values: dict[str, str] = {}
-
-    if not ENV_PATH.exists():
-        return values
-
-    try:
-        lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return values
-
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-
-    return values
-
-
 def _classify_probe(
     status_code: int | None,
     text: str,
@@ -534,12 +530,67 @@ def _classify_probe(
         return "unknown", "network_error"
     if status_code == 429:
         return "unknown", "rate_limited"
-    if status_code in {401, 403}:
+    if status_code == 401:
+        return "unknown", "key_invalid"
+    if status_code == 403:
         return "unknown", "auth_or_plan"
     if status_code >= 500:
         return "unknown", "provider_error"
 
     return "unknown", f"http_{status_code}"
+
+
+def _classify_key_check(
+    status_code: int | None,
+) -> tuple[str, str]:
+    if status_code is not None and 200 <= status_code < 300:
+        return "ok", "key_valid"
+    if status_code is None:
+        return "unknown", "network_error"
+    if status_code == 401:
+        return "invalid", "key_invalid"
+    if status_code == 403:
+        return "denied", "auth_or_plan"
+    if status_code == 429:
+        return "unknown", "rate_limited"
+    if status_code >= 500:
+        return "unknown", "provider_error"
+    return "unknown", f"http_{status_code}"
+
+
+async def _check_provider_key(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    key: str,
+    semaphore: asyncio.Semaphore,
+) -> dict[str, Any]:
+    if not key:
+        return {
+            "status": "missing",
+            "reason": "key_missing",
+            "http_status": None,
+        }
+
+    try:
+        async with semaphore:
+            response = await client.get(
+                url,
+                headers={"Authorization": "Bearer " + key},
+            )
+
+        status, reason = _classify_key_check(response.status_code)
+        return {
+            "status": status,
+            "reason": reason,
+            "http_status": response.status_code,
+        }
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "reason": type(exc).__name__,
+            "http_status": None,
+        }
 
 
 async def _discover_openai_models(
@@ -548,18 +599,21 @@ async def _discover_openai_models(
     provider: str,
     url: str,
     key: str,
-) -> list[str]:
-    if not key:
-        return []
-
+    semaphore: asyncio.Semaphore,
+) -> dict[str, Any]:
     try:
-        response = await client.get(
-            url,
-            headers={"Authorization": "Bearer " + key},
-        )
+        async with semaphore:
+            response = await client.get(
+                url,
+                headers={"Authorization": "Bearer " + key},
+            )
 
         if not response.is_success:
-            return []
+            return {
+                "status": "unknown",
+                "reason": f"http_{response.status_code}",
+                "models": [],
+            }
 
         data = response.json()
         items = data.get("data", []) if isinstance(data, dict) else []
@@ -573,17 +627,27 @@ async def _discover_openai_models(
         )
 
         _STATE.setdefault("discovered", {})[provider] = models
-        return models
-    except Exception:
-        return []
+        return {
+            "status": "ok",
+            "reason": "models_discovered",
+            "models": models,
+        }
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "reason": type(exc).__name__,
+            "models": [],
+        }
 
 
 async def _probe_openai_model(
     client: httpx.AsyncClient,
     *,
     url: str,
+    provider: str,
     key: str,
     model: str,
+    semaphore: asyncio.Semaphore,
 ) -> dict[str, Any]:
     if not key:
         return {
@@ -593,19 +657,20 @@ async def _probe_openai_model(
         }
 
     try:
-        response = await client.post(
-            url,
-            headers={
-                "Authorization": "Bearer " + key,
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": "Reply OK."}],
-                "max_tokens": 16,
-                "temperature": 0,
-            },
+        payload = build_chat_payload(
+            provider=provider,
+            model=model,
+            messages=[{"role": "user", "content": "Reply OK."}],
+            thinking_level="medium",
+            max_tokens=16,
+            temperature=0,
         )
+        async with semaphore:
+            response = await client.post(
+                url,
+                headers=build_provider_headers(provider, key),
+                json=payload,
+            )
 
         status, reason = _classify_probe(
             response.status_code,
@@ -650,6 +715,7 @@ async def _probe_vertex_model(
     token: str,
     project: str,
     model: str,
+    semaphore: asyncio.Semaphore,
 ) -> dict[str, Any]:
     if model == "auto":
         return {
@@ -679,25 +745,26 @@ async def _probe_vertex_model(
     )
 
     try:
-        response = await client.post(
-            url,
-            headers={
-                "Authorization": "Bearer " + token,
-                "Content-Type": "application/json",
-            },
-            json={
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [{"text": "Reply OK."}],
-                    }
-                ],
-                "generationConfig": {
-                    "maxOutputTokens": 16,
-                    "temperature": 0,
+        async with semaphore:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "Content-Type": "application/json",
                 },
-            },
-        )
+                json={
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [{"text": "Reply OK."}],
+                        }
+                    ],
+                    "generationConfig": {
+                        "maxOutputTokens": 16,
+                        "temperature": 0,
+                    },
+                },
+            )
 
         status, reason = _classify_probe(
             response.status_code,
@@ -728,24 +795,21 @@ async def audit_capabilities(
         )
     )
 
-    values = _read_env()
-
-    keys = {
-        "cerebras": values.get("CEREBRAS_API_KEY", ""),
-        "groq": values.get("GROQ_API_KEY", ""),
-        "openrouter": values.get("OPENROUTER_API_KEY", ""),
-    }
+    keys = provider_api_keys()
 
     endpoints = {
         "cerebras": {
+            "key": "https://api.cerebras.ai/v1/models",
             "models": "https://api.cerebras.ai/v1/models",
             "chat": "https://api.cerebras.ai/v1/chat/completions",
         },
         "groq": {
+            "key": "https://api.groq.com/openai/v1/models",
             "models": "https://api.groq.com/openai/v1/models",
             "chat": "https://api.groq.com/openai/v1/chat/completions",
         },
         "openrouter": {
+            "key": "https://openrouter.ai/api/v1/key",
             "models": "https://openrouter.ai/api/v1/models",
             "chat": "https://openrouter.ai/api/v1/chat/completions",
         },
@@ -753,33 +817,83 @@ async def audit_capabilities(
 
     report: dict[str, Any] = {}
 
+    semaphore = asyncio.Semaphore(4)
+
     async with httpx.AsyncClient(
-        timeout=httpx.Timeout(25.0),
+        timeout=httpx.Timeout(10.0, connect=4.0),
         follow_redirects=True,
     ) as client:
-        for provider in ("cerebras", "groq", "openrouter"):
-            if provider not in requested:
-                continue
+        async def audit_openai_provider(provider: str) -> None:
+            key = keys.get(provider, "")
+            key_result = await _check_provider_key(
+                client,
+                url=endpoints[provider]["key"],
+                key=key,
+                semaphore=semaphore,
+            )
+            provider_report: dict[str, Any] = {
+                "key": key_result,
+                "models": {},
+            }
 
-            key = keys[provider]
+            if key_result["status"] != "ok":
+                for model, _ in CANDIDATE_CHOICES[provider]:
+                    result = {
+                        "status": "unknown",
+                        "reason": key_result["reason"],
+                        "http_status": key_result["http_status"],
+                    }
+                    _set_model_record(
+                        provider,
+                        model,
+                        status=result["status"],
+                        reason=result["reason"],
+                        http_status=result["http_status"],
+                    )
+                    provider_report["models"][model] = result
+                report[provider] = provider_report
+                return
 
-            await _discover_openai_models(
+            discovery = await _discover_openai_models(
                 client,
                 provider=provider,
                 url=endpoints[provider]["models"],
                 key=key,
+                semaphore=semaphore,
             )
+            provider_report["discovery"] = {
+                "status": discovery["status"],
+                "reason": discovery["reason"],
+                "count": len(discovery["models"]),
+            }
+            discovered = set(discovery["models"])
 
-            provider_report = {}
+            async def probe(model: str) -> tuple[str, dict[str, Any]]:
+                if discovery["status"] == "ok" and model not in discovered:
+                    return model, {
+                        "status": "dead",
+                        "reason": "model_not_listed",
+                        "http_status": 404,
+                    }
 
-            for model, _ in CANDIDATE_CHOICES[provider]:
                 result = await _probe_openai_model(
                     client,
                     url=endpoints[provider]["chat"],
+                    provider=provider,
                     key=key,
                     model=model,
+                    semaphore=semaphore,
                 )
+                return model, result
 
+            model_results = await asyncio.gather(
+                *(
+                    probe(model)
+                    for model, _ in CANDIDATE_CHOICES[provider]
+                )
+            )
+
+            for model, result in model_results:
                 _set_model_record(
                     provider,
                     model,
@@ -787,13 +901,11 @@ async def audit_capabilities(
                     reason=result["reason"],
                     http_status=result["http_status"],
                 )
-
-                provider_report[model] = result
-                await asyncio.sleep(0.7)
+                provider_report["models"][model] = result
 
             report[provider] = provider_report
 
-        if "vertex" in requested:
+        async def audit_vertex() -> None:
             token = ""
             project = ""
 
@@ -802,16 +914,38 @@ async def audit_capabilities(
             except Exception:
                 pass
 
-            provider_report = {}
-
-            for model, _ in CANDIDATE_CHOICES["vertex"]:
+            async def probe_vertex(
+                model: str,
+            ) -> tuple[str, dict[str, Any]]:
                 result = await _probe_vertex_model(
                     client,
                     token=token,
                     project=project,
                     model=model,
+                    semaphore=semaphore,
                 )
+                return model, result
 
+            model_results = await asyncio.gather(
+                *(
+                    probe_vertex(model)
+                    for model, _ in CANDIDATE_CHOICES["vertex"]
+                )
+            )
+            provider_report: dict[str, Any] = {
+                "key": {
+                    "status": "ok" if token and project else "missing",
+                    "reason": (
+                        "service_account_valid"
+                        if token and project
+                        else "vertex_credentials_missing"
+                    ),
+                    "http_status": 200 if token and project else None,
+                },
+                "models": {},
+            }
+
+            for model, result in model_results:
                 _set_model_record(
                     "vertex",
                     model,
@@ -820,10 +954,18 @@ async def audit_capabilities(
                     http_status=result["http_status"],
                 )
 
-                provider_report[model] = result
-                await asyncio.sleep(0.4)
+                provider_report["models"][model] = result
 
             report["vertex"] = provider_report
+
+        tasks = [
+            audit_openai_provider(provider)
+            for provider in ("cerebras", "groq", "openrouter")
+            if provider in requested
+        ]
+        if "vertex" in requested:
+            tasks.append(audit_vertex())
+        await asyncio.gather(*tasks)
 
     _STATE["last_audit_at"] = int(time.time())
     _save_state()
@@ -835,9 +977,11 @@ def compact_report(report: dict[str, Any]) -> str:
     chunks: list[str] = []
 
     for provider in ("cerebras", "groq", "openrouter", "vertex"):
-        items = report.get(provider)
-        if not isinstance(items, dict):
+        provider_report = report.get(provider)
+        if not isinstance(provider_report, dict):
             continue
+
+        items = provider_report.get("models", {})
 
         counts = {"ok": 0, "dead": 0, "unknown": 0}
 
@@ -845,10 +989,290 @@ def compact_report(report: dict[str, Any]) -> str:
             status = str(result.get("status", "unknown"))
             counts[status if status in counts else "unknown"] += 1
 
+        key_status = str(
+            provider_report.get("key", {}).get("status", "unknown")
+        )
         chunks.append(
-            f"{provider}:ok={counts['ok']},"
+            f"{provider}:key={key_status},ok={counts['ok']},"
             f"dead={counts['dead']},"
             f"unknown={counts['unknown']}"
         )
 
     return " | ".join(chunks)
+
+
+def audit_report_text(report: dict[str, Any]) -> str:
+    labels = {
+        "cerebras": "Cerebras",
+        "groq": "Groq",
+        "openrouter": "OpenRouter",
+        "vertex": "Vertex",
+    }
+    icons = {"ok": "✅", "dead": "❌", "unknown": "⚠️"}
+    key_icons = {
+        "ok": "✅",
+        "missing": "❔",
+        "invalid": "❌",
+        "denied": "⛔",
+        "unknown": "⚠️",
+    }
+    lines = ["Kết quả audit API/model:"]
+
+    for provider in ("cerebras", "groq", "openrouter", "vertex"):
+        provider_report = report.get(provider)
+        if not isinstance(provider_report, dict):
+            continue
+
+        key_result = provider_report.get("key", {})
+        key_status = str(key_result.get("status", "unknown"))
+        key_reason = str(key_result.get("reason", "unknown"))
+        lines.append(
+            f"\n{labels[provider]}: "
+            f"{key_icons.get(key_status, '⚠️')} key={key_reason}"
+        )
+
+        models = provider_report.get("models", {})
+        for model, short_label in CANDIDATE_CHOICES[provider]:
+            result = models.get(model, {})
+            status = str(result.get("status", "unknown"))
+            reason = str(result.get("reason", "not_checked"))
+            http_status = result.get("http_status")
+            http_text = f" HTTP {http_status}" if http_status else ""
+            lines.append(
+                f"• {icons.get(status, '⚠️')} {short_label}: "
+                f"{reason}{http_text}"
+            )
+
+    return "\n".join(lines)[:3900]
+
+
+def _key_health(status: str) -> str:
+    normalized = str(status or "unknown").casefold()
+    if normalized == "ok":
+        return "ok"
+    if normalized in {"missing", "invalid", "denied"}:
+        return "bad"
+    return "transient"
+
+
+def build_audit_alert_snapshot(
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+
+    for provider in ("cerebras", "groq", "openrouter", "vertex"):
+        provider_report = report.get(provider)
+        if not isinstance(provider_report, dict):
+            continue
+
+        key_result = provider_report.get("key", {})
+        if not isinstance(key_result, dict):
+            key_result = {}
+
+        key = {
+            "status": str(key_result.get("status", "unknown")),
+            "reason": str(key_result.get("reason", "unknown")),
+            "http_status": key_result.get("http_status"),
+        }
+        models: dict[str, Any] = {}
+
+        for model, result in provider_report.get("models", {}).items():
+            if not isinstance(result, dict):
+                continue
+            models[str(model)] = {
+                "status": str(result.get("status", "unknown")),
+                "reason": str(result.get("reason", "unknown")),
+                "http_status": result.get("http_status"),
+            }
+
+        statuses = [
+            str(item.get("status", "unknown"))
+            for item in models.values()
+        ]
+        key_health = _key_health(key["status"])
+
+        if key_health == "bad":
+            provider_status = "key_bad"
+        elif any(status == "ok" for status in statuses):
+            provider_status = "healthy"
+        elif statuses and all(status == "dead" for status in statuses):
+            provider_status = "all_dead"
+        else:
+            provider_status = "unavailable"
+
+        snapshot[provider] = {
+            "key": key,
+            "models": models,
+            "provider_status": provider_status,
+        }
+
+    return snapshot
+
+
+def current_audit_alert_snapshot() -> dict[str, Any]:
+    stored = _STATE.get("alert_snapshot", {})
+    if isinstance(stored, dict) and stored:
+        return json.loads(json.dumps(stored))
+
+    legacy_report: dict[str, Any] = {}
+    for provider, choices in CANDIDATE_CHOICES.items():
+        models = {
+            model: model_record(provider, model)
+            for model, _ in choices
+        }
+        legacy_report[provider] = {
+            "key": {
+                "status": "unknown",
+                "reason": "baseline_not_audited",
+                "http_status": None,
+            },
+            "models": models,
+        }
+
+    return build_audit_alert_snapshot(legacy_report)
+
+
+def audit_alert_events(
+    report: dict[str, Any],
+    previous_snapshot: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    current = build_audit_alert_snapshot(report)
+    previous = (
+        previous_snapshot
+        if isinstance(previous_snapshot, dict)
+        else current_audit_alert_snapshot()
+    )
+    events: list[dict[str, Any]] = []
+
+    for provider in ("cerebras", "groq", "openrouter", "vertex"):
+        before = previous.get(provider)
+        after = current.get(provider)
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            continue
+
+        before_key = before.get("key", {})
+        after_key = after.get("key", {})
+        before_key_health = _key_health(before_key.get("status", "unknown"))
+        after_key_health = _key_health(after_key.get("status", "unknown"))
+
+        if after_key_health == "bad" and before_key_health != "bad":
+            events.append({
+                "kind": "key_failed",
+                "provider": provider,
+                **after_key,
+            })
+        elif before_key_health == "bad" and after_key_health == "ok":
+            events.append({
+                "kind": "key_recovered",
+                "provider": provider,
+                **after_key,
+            })
+
+        before_models = before.get("models", {})
+        after_models = after.get("models", {})
+        for model, after_model in after_models.items():
+            before_model = before_models.get(model)
+            if not isinstance(before_model, dict):
+                continue
+
+            before_status = str(before_model.get("status", "unknown"))
+            after_status = str(after_model.get("status", "unknown"))
+
+            if after_status == "dead" and before_status != "dead":
+                events.append({
+                    "kind": "model_dead",
+                    "provider": provider,
+                    "model": model,
+                    **after_model,
+                })
+            elif before_status == "dead" and after_status == "ok":
+                events.append({
+                    "kind": "model_recovered",
+                    "provider": provider,
+                    "model": model,
+                    **after_model,
+                })
+
+        before_provider = str(before.get("provider_status", "unavailable"))
+        after_provider = str(after.get("provider_status", "unavailable"))
+
+        if after_provider == "all_dead" and before_provider != "all_dead":
+            events.append({
+                "kind": "provider_all_dead",
+                "provider": provider,
+            })
+        elif (
+            after_provider == "unavailable"
+            and before_provider == "healthy"
+        ):
+            events.append({
+                "kind": "provider_unavailable",
+                "provider": provider,
+            })
+        elif (
+            after_provider == "healthy"
+            and before_provider in {"all_dead", "unavailable"}
+        ):
+            events.append({
+                "kind": "provider_recovered",
+                "provider": provider,
+            })
+
+    return events
+
+
+def commit_audit_alert_snapshot(report: dict[str, Any]) -> None:
+    _STATE["alert_snapshot"] = build_audit_alert_snapshot(report)
+    _save_state()
+
+
+def audit_alert_text(events: list[dict[str, Any]]) -> str:
+    provider_labels = {
+        "cerebras": "Cerebras",
+        "groq": "Groq",
+        "openrouter": "OpenRouter",
+        "vertex": "Vertex",
+    }
+    model_labels = {
+        provider: dict(choices)
+        for provider, choices in CANDIDATE_CHOICES.items()
+    }
+    lines = ["🔔 Thay đổi trạng thái API/model Atri:"]
+
+    for event in events:
+        kind = str(event.get("kind", ""))
+        provider = str(event.get("provider", ""))
+        provider_label = provider_labels.get(provider, provider)
+        reason = str(event.get("reason", "unknown"))
+        http_status = event.get("http_status")
+        http_text = f" (HTTP {http_status})" if http_status else ""
+        model = str(event.get("model", ""))
+        model_label = model_labels.get(provider, {}).get(model, model)
+
+        if kind == "key_failed":
+            lines.append(
+                f"• ❌ {provider_label} key lỗi: {reason}{http_text}"
+            )
+        elif kind == "key_recovered":
+            lines.append(f"• ✅ {provider_label} key đã phục hồi")
+        elif kind == "model_dead":
+            lines.append(
+                f"• ⛔ {provider_label}/{model_label} chết: "
+                f"{reason}{http_text}"
+            )
+        elif kind == "model_recovered":
+            lines.append(
+                f"• ✅ {provider_label}/{model_label} đã phục hồi"
+            )
+        elif kind == "provider_all_dead":
+            lines.append(
+                f"• 🚨 {provider_label}: toàn bộ model đã chết"
+            )
+        elif kind == "provider_unavailable":
+            lines.append(
+                f"• ⚠️ {provider_label}: tạm thời không khả dụng"
+            )
+        elif kind == "provider_recovered":
+            lines.append(f"• ✅ {provider_label}: đã hoạt động lại")
+
+    return "\n".join(lines)[:3900]
