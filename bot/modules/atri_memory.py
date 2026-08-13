@@ -17,9 +17,12 @@ DB_PATH = Path(
     )
 )
 
+# Keep only the recent conversational window. Long-term facts/preferences are
+# handled separately by atri_long_memory; retaining dozens of model turns here
+# made old jokes and motifs echo back into new replies.
 MAX_HISTORY_ITEMS = max(
     2,
-    int(os.getenv("ATRI_MEMORY_MAX_ITEMS", "40")),
+    int(os.getenv("ATRI_MEMORY_MAX_ITEMS", "12")),
 )
 MAX_CHAT_ROWS = max(
     10,
