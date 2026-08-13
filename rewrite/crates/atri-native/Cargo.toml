@@ -1,0 +1,22 @@
+[package]
+name = "atri-native"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+flate2.workspace = true
+hex.workspace = true
+regex.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+sha2.workspace = true
+tar.workspace = true
+thiserror.workspace = true
+walkdir.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

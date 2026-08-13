@@ -1,0 +1,65 @@
+name: Rewrite V150
+
+on:
+  push:
+    branches:
+      - rewrite/rust-go-ts-v150
+    paths:
+      - 'rewrite/**'
+      - '.github/workflows/rewrite-v150.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rewrite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Tests
+        run: cargo test --workspace
+      - name: Release build
+        run: cargo build --workspace --release
+      - name: Native hash smoke
+        run: |
+          printf 'abc' > /tmp/atri-hash.txt
+          ./target/release/atri-native hash /tmp/atri-hash.txt | grep -q ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rewrite/supervisor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - run: gofmt -w . && git diff --exit-code
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build .
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rewrite/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
