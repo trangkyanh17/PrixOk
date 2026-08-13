@@ -5,8 +5,12 @@ use std::env;
 
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
-    let Some(command) = args.next() else { bail!("usage: atri-native <hash|list-dir|inspect-archive> <path>"); };
-    let Some(path) = args.next() else { bail!("path is required"); };
+    let Some(command) = args.next() else {
+        bail!("usage: atri-native <hash|list-dir|inspect-archive> <path>");
+    };
+    let Some(path) = args.next() else {
+        bail!("path is required");
+    };
     let value = match command.as_str() {
         "hash" => json!({"sha256": hash_file_sha256(path)?}),
         "list-dir" => json!(list_dir_bounded(path, 20_000)?),

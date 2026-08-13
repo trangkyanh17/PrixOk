@@ -151,10 +151,8 @@ fn short_hash(value: &str) -> String {
 fn secret_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(
-            r"(?im)^(\s*(?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)(.+)$",
-        )
-        .unwrap()
+        Regex::new(r"(?im)^(\s*(?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)(.+)$")
+            .unwrap()
     })
 }
 

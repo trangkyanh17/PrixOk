@@ -53,8 +53,7 @@ impl AppConfig {
                     "https://generativelanguage.googleapis.com/v1beta".to_string()
                 }),
                 api_key: Some(required("GEMINI_API_KEY")?),
-                model: env::var("ATRI_MODEL")
-                    .unwrap_or_else(|_| "gemini-2.5-flash".to_string()),
+                model: env::var("ATRI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".to_string()),
                 project: None,
                 location: None,
                 oauth_access_token: None,
@@ -63,12 +62,10 @@ impl AppConfig {
                 kind: ProviderKind::Vertex,
                 base_url: String::new(),
                 api_key: None,
-                model: env::var("ATRI_MODEL")
-                    .unwrap_or_else(|_| "gemini-2.5-flash".to_string()),
+                model: env::var("ATRI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".to_string()),
                 project: Some(required("GOOGLE_CLOUD_PROJECT")?),
                 location: Some(
-                    env::var("GOOGLE_CLOUD_LOCATION")
-                        .unwrap_or_else(|_| "us-central1".to_string()),
+                    env::var("GOOGLE_CLOUD_LOCATION").unwrap_or_else(|_| "us-central1".to_string()),
                 ),
                 oauth_access_token: Some(required("GOOGLE_OAUTH_ACCESS_TOKEN")?),
             },
