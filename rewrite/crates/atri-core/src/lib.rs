@@ -53,7 +53,8 @@ impl AppConfig {
                     "https://generativelanguage.googleapis.com/v1beta".to_string()
                 }),
                 api_key: Some(required("GEMINI_API_KEY")?),
-                model: env::var("ATRI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".to_string()),
+                model: env::var("ATRI_MODEL")
+                    .unwrap_or_else(|_| "gemini-2.5-flash".to_string()),
                 project: None,
                 location: None,
                 oauth_access_token: None,
@@ -62,9 +63,13 @@ impl AppConfig {
                 kind: ProviderKind::Vertex,
                 base_url: String::new(),
                 api_key: None,
-                model: env::var("ATRI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".to_string()),
+                model: env::var("ATRI_MODEL")
+                    .unwrap_or_else(|_| "gemini-2.5-flash".to_string()),
                 project: Some(required("GOOGLE_CLOUD_PROJECT")?),
-                location: Some(env::var("GOOGLE_CLOUD_LOCATION").unwrap_or_else(|_| "us-central1".to_string())),
+                location: Some(
+                    env::var("GOOGLE_CLOUD_LOCATION")
+                        .unwrap_or_else(|_| "us-central1".to_string()),
+                ),
                 oauth_access_token: Some(required("GOOGLE_OAUTH_ACCESS_TOKEN")?),
             },
             _ => ProviderConfig {
@@ -82,7 +87,9 @@ impl AppConfig {
         Ok(Self {
             telegram_bot_token,
             provider,
-            data_dir: PathBuf::from(env::var("ATRI_DATA_DIR").unwrap_or_else(|_| "/app/atri_data".to_string())),
+            data_dir: PathBuf::from(
+                env::var("ATRI_DATA_DIR").unwrap_or_else(|_| "/app/atri_data".to_string()),
+            ),
             max_history_messages: env_usize("ATRI_RECENT_HISTORY_MESSAGES", 12)?,
             max_output_tokens: env_u32("ATRI_MAX_OUTPUT_TOKENS", 8192)?,
             request_timeout_seconds: env_u64("ATRI_REQUEST_TIMEOUT_SECONDS", 90)?,
@@ -156,7 +163,11 @@ pub fn parse_command(text: &str) -> Option<BotCommand> {
     if !token.starts_with('/') {
         return None;
     }
-    let name = token.trim_start_matches('/').split('@').next().unwrap_or("");
+    let name = token
+        .trim_start_matches('/')
+        .split('@')
+        .next()
+        .unwrap_or("");
     Some(match name.to_ascii_lowercase().as_str() {
         "start" => BotCommand::Start,
         "status" => BotCommand::Status,
@@ -172,7 +183,10 @@ mod tests {
 
     #[test]
     fn parses_commands_with_bot_suffix() {
-        assert_eq!(parse_command("/status@PrixOkBot x"), Some(BotCommand::Status));
+        assert_eq!(
+            parse_command("/status@PrixOkBot x"),
+            Some(BotCommand::Status)
+        );
         assert_eq!(parse_command("hello"), None);
     }
 }
