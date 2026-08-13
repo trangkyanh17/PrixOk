@@ -95,6 +95,23 @@ jobs:
             exit 1
           fi
 
+  python313-compat:
+    name: python-3.13-compat
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Compile Python source with production Python
+        run: python -m compileall -q bot scripts tests
+
   validate:
     name: validate
     runs-on: ubuntu-latest
