@@ -34,12 +34,15 @@ from ..helper.telegram_helper.message_utils import (
 from ..helper.telegram_helper.button_build import ButtonMaker
 
 
-async def _handle_cancel(query, mid, key):
+async def _handle_cancel(query, mid, chat_id, key):
     user_id = query.from_user.id
     async with task_dict_lock:
         task = task_dict.get(mid)
-    if task is None:
-        await query.answer("Task already cancelled or finished!", show_alert=True)
+    if task is None or task.listener.message.chat.id != chat_id:
+        await query.answer(
+            "Task already cancelled, finished, or changed!",
+            show_alert=True,
+        )
         return
     if task.listener.user_id != user_id and not await CustomFilters.sudo("", query):
         await query.answer("Not Yours!", show_alert=True)
@@ -101,11 +104,17 @@ async def status_pages(_, query):
     data = query.data.split()
     key = int(data[1])
     if data[2] == "canconf":
+        try:
+            mid = int(data[3])
+            chat_id = int(data[4])
+        except (IndexError, ValueError):
+            await query.answer("Invalid request!", show_alert=True)
+            return
         await query.answer()
         button = ButtonMaker()
         button.data_button(
             "Yes",
-            f"status {key} cancel {data[3]}",
+            f"status {key} cancel {mid} {chat_id}",
             style="green",
         )
         button.data_button(
@@ -123,11 +132,12 @@ async def status_pages(_, query):
     if data[2] == "cancel":
         try:
             mid = int(data[3])
+            chat_id = int(data[4])
         except (IndexError, ValueError):
             await query.answer("Invalid request!", show_alert=True)
             return
         await delete_message(query.message)
-        await _handle_cancel(query, mid, key)
+        await _handle_cancel(query, mid, chat_id, key)
         return
     await query.answer()
     if data[2] == "ref":

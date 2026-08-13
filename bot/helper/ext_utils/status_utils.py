@@ -229,7 +229,13 @@ async def get_readable_message(sid, is_user, page_no=1, status="All", page_step=
         else:
             msg += f"\n<b>Size: </b>{task.size()}"
         msg += f"\n<b>Gid: </b><code>{task.gid()}</code>\n\n"
-        task_ids.append((index + start_position, task.listener.mid))
+        task_ids.append(
+            (
+                index + start_position,
+                task.listener.mid,
+                task.listener.message.chat.id,
+            )
+        )
 
     if len(msg) == 0:
         if status == "All":
@@ -261,10 +267,10 @@ async def get_readable_message(sid, is_user, page_no=1, status="All", page_step=
         cancel_buttons = [
             InlineKeyboardButton(
                 text=f"❌ {num}",
-                callback_data=f"status {sid} canconf {mid}",
+                callback_data=f"status {sid} canconf {mid} {chat_id}",
                 style=ButtonStyle.DANGER,
             )
-            for num, mid in task_ids
+            for num, mid, chat_id in task_ids
         ]
         for i in range(0, len(cancel_buttons), 4):
             button.inline_keyboard.append(cancel_buttons[i : i + 4])
