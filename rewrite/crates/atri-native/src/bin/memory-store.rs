@@ -1,6 +1,10 @@
 use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::{env, path::Path, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    env,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 const MAX_CHAT_ROWS: i64 = 500;
 const RETENTION_SECONDS: i64 = 2_592_000;
@@ -24,7 +28,9 @@ fn open_db(path: impl AsRef<Path>) -> Result<Connection> {
 }
 
 fn now_seconds() -> Result<i64> {
-    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64)
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_secs() as i64)
 }
 
 fn load(conn: &Connection, chat_key: &str) -> Result<Option<String>> {
@@ -72,9 +78,15 @@ fn clear(conn: &Connection, chat_key: &str) -> Result<()> {
 
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
-    let Some(command) = args.next() else { bail!("command required") };
-    let Some(db) = args.next() else { bail!("database required") };
-    let Some(chat_key) = args.next() else { bail!("chat key required") };
+    let Some(command) = args.next() else {
+        bail!("command required")
+    };
+    let Some(db) = args.next() else {
+        bail!("database required")
+    };
+    let Some(chat_key) = args.next() else {
+        bail!("chat key required")
+    };
     let mut conn = open_db(db)?;
     match command.as_str() {
         "load" => {
@@ -83,8 +95,13 @@ fn main() -> Result<()> {
             }
         }
         "save" => {
-            let Some(history) = args.next() else { bail!("history required") };
-            let count = args.next().and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+            let Some(history) = args.next() else {
+                bail!("history required")
+            };
+            let count = args
+                .next()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0);
             save(&mut conn, &chat_key, &history, count)?;
         }
         "clear" => clear(&conn, &chat_key)?,
