@@ -76,6 +76,10 @@ This branch is experimental. Do not merge it into `main` or `dev`, and do not po
 - Experimental Go supervisor lifecycle wiring supports startup MCP prewarm, periodic health refresh/reconnect, idle-session pruning and graceful close on SIGINT/SIGTERM.
 - MCP supervisor lifecycle is disabled by default behind `ATRI_REWRITE_MCP_LIFECYCLE`; timeout, intervals, idle TTL, request timeout, plugin set and prewarm concurrency are configurable through environment variables.
 - Lifecycle status logging is deterministic, single-line and bounded so remote/plugin errors cannot inject unbounded multiline log output.
+- Experimental Go watchdog ports the current Termux watchdog semantics: tmux session checks/restart, Debian `flock` duplicate-worker guard, local shared-component health/repair, the same 30/60/120/300/600-second repair backoff and network-state transition probes.
+- Watchdog child commands run in dedicated process groups and receive TERM followed by bounded KILL escalation on cancellation, preventing shutdown from leaving repair/probe descendants behind.
+- MCP lifecycle and watchdog run under one coordinated supervisor context; an unexpected component exit cancels its peer, while SIGINT/SIGTERM shuts both down cleanly.
+- Go watchdog is disabled by default behind `ATRI_REWRITE_WATCHDOG`; bot/session/lock/distro paths plus command, repair, loop and network timeouts remain environment-configurable for Termux rollout.
 - Rewrite CI runs the Go race detector in addition to formatting, vet, normal tests and build.
 
 ### Ported builtin tools
@@ -158,11 +162,11 @@ The policy, schema, discovery, registry, concrete stdio/HTTP transport and opt-i
 
 ### Production/runtime parity
 
-- Complete Termux/Debian bot/process supervisor entrypoint; the current Go `main.go` only exposes the opt-in MCP lifecycle and remains inert by default.
-- Existing singleton lock/watchdog/autostart semantics.
-- Browser/Xvfb/proxy/aria2/qBittorrent/SAB/Serena warm-worker lifecycle.
+- Complete Termux/Debian entrypoint and live activation; Go `main.go` can now run the opt-in watchdog and MCP lifecycle together, but both remain disabled by default until Termux soak validation.
+- Port deployment-level autostart/service ownership and perform a controlled handoff from the current shell watchdog; the worker `flock` duplicate guard itself is already ported.
+- Replace the shell-backed shared-component repair boundary with native lifecycle ownership for Browser/Xvfb/proxy/aria2/qBittorrent/SAB/Serena warm workers after behavior is mapped and tested.
 - Production configuration loading and secret handling without exposing credentials to logs or tools.
-- Extend graceful shutdown, process supervision and restart behavior from the MCP lifecycle to the complete Android/proot process tree.
+- Extend direct child ownership/restart policy across the complete Android/proot process tree and verify TERM/KILL behavior under real Termux/proot descendants.
 
 ## Required validation gates before merge
 
