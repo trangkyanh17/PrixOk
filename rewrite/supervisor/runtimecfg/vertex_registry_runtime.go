@@ -3,6 +3,7 @@ package runtimecfg
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 type VertexRegistryRuntimeOptions struct {
@@ -42,15 +43,11 @@ func (service *VertexServiceRuntime) RegistryToolRuntime(
 	runtime.ProgressCallback = options.ProgressCallback
 	runtime.CodeToolConcurrency = options.CodeToolConcurrency
 	if options.CodeToolTimeout > 0 {
-		runtime.CodeToolTimeout = durationSeconds(options.CodeToolTimeout)
+		runtime.CodeToolTimeout = time.Duration(options.CodeToolTimeout) * time.Second
 	}
 	runtime.MaxContinuationRounds = options.MaxContinuationRounds
 	runtime.MaxEmptyTextRetries = options.MaxEmptyTextRetries
 	runtime.ForceGitHubMCP = options.ForceGitHubMCP
 	runtime.DirectPluginName = strings.TrimSpace(options.DirectPluginName)
 	return runtime, nil
-}
-
-func durationSeconds(value int) timeDuration {
-	return timeDuration(value) * timeSecond
 }

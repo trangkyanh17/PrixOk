@@ -8,9 +8,9 @@ import (
 
 type VertexServiceRuntime struct {
 	Credentials *ServiceAccountTokenProvider
-	APIBaseURL   string
-	Location     string
-	Model        string
+	APIBaseURL  string
+	Location    string
+	Model       string
 }
 
 func NewVertexServiceRuntime(

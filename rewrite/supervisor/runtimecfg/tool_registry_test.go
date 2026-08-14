@@ -81,21 +81,21 @@ func TestToolRegistryFiltersModeAndPrivacy(t *testing.T) {
 			Declaration: testToolDeclaration("public_chat"),
 			Privacy:     ToolPrivacyPublic,
 			Modes:       []string{"chat"},
-			Executor: func(context.Context, ToolContext, map[string]any) (any, error) { return nil, nil },
+			Executor:    func(context.Context, ToolContext, map[string]any) (any, error) { return nil, nil },
 		},
 		{
 			Name:        "private_chat",
 			Declaration: testToolDeclaration("private_chat"),
 			Privacy:     ToolPrivacyPrivate,
 			Modes:       []string{"chat"},
-			Executor: func(context.Context, ToolContext, map[string]any) (any, error) { return nil, nil },
+			Executor:    func(context.Context, ToolContext, map[string]any) (any, error) { return nil, nil },
 		},
 		{
 			Name:        "code_only",
 			Declaration: testToolDeclaration("code_only"),
 			Privacy:     ToolPrivacyPublic,
 			Modes:       []string{"code"},
-			Executor: func(context.Context, ToolContext, map[string]any) (any, error) { return nil, nil },
+			Executor:    func(context.Context, ToolContext, map[string]any) (any, error) { return nil, nil },
 		},
 	} {
 		registry.MustRegister(tool)
