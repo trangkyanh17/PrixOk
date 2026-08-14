@@ -1,0 +1,116 @@
+name: Rewrite V150
+
+on:
+  push:
+    branches:
+      - rewrite/rust-go-ts-v150
+      - main
+    paths:
+      - 'rewrite/**'
+      - 'termux/**'
+      - 'start.sh'
+      - '.github/workflows/rewrite-v150.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'rewrite/**'
+      - 'termux/**'
+      - 'start.sh'
+      - '.github/workflows/rewrite-v150.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rewrite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - name: Verify lockfile
+        run: test -f Cargo.lock
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check
+        run: cargo check --locked --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --locked --workspace
+      - name: Release build
+        run: cargo build --locked --workspace --release
+      - name: Native hash smoke
+        run: |
+          printf 'abc' > /tmp/atri-hash.txt
+          ./target/release/atri-native hash /tmp/atri-hash.txt | grep -q ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rewrite/supervisor
+    steps:
+      - uses: actions/checkout@v4
+      - name: Termux helper syntax and self-tests
+        run: |
+          bash -n ../termux-build.sh ../termux-all-in-one.sh ../termux-production-canary.sh ../termux-production-topology.sh ../termux-production-recovery-host.sh ../termux-production-recovery-common.sh ../termux-production-recovery-run.sh ../termux-v150-production-watchdog.sh ../termux-v150-bot-launcher.sh ../termux-v150-boot-hook.sh ../termux-v150-persistence-host.sh ../termux-v150-pre-reboot-check.sh ../termux-v150-deploy.sh ../../termux/prixok-bot.sh
+          ../termux-all-in-one.sh --self-test
+          ../termux-production-canary.sh --self-test
+          bash ../termux-production-topology.sh --self-test
+          bash ../termux-production-recovery-host.sh --self-test
+          bash ../termux-v150-persistence-host.sh --self-test
+          bash ../termux-v150-pre-reboot-check.sh --self-test
+          bash ../termux-v150-deploy.sh --self-test
+          bash -n ../termux-v150-production-watchdog.sh ../termux-v150-bot-launcher.sh ../termux-v150-boot-hook.sh
+          grep -q 'ATRI_PRODUCTION_LAUNCHER_GUARD=1' ../termux-v150-bot-launcher.sh
+          grep -q 'prixok-bot-v150.sh' ../termux-v150-production-watchdog.sh
+          ! grep -q 'atri-production-ensure.sh' ../../termux/prixok-bot.sh
+          grep -q 'RUN_SOURCE_UPDATE=0' ../../termux/prixok-bot.sh
+          grep -q 'exec python3 -m bot' ../../start.sh
+          ! grep -En 'local[^#]*timeout_seconds=.*deadline=.*timeout_seconds' ../termux-production-recovery-common.sh ../termux-v150-persistence-host.sh ../termux-v150-deploy.sh
+          ! grep -En 'kill[[:space:]]+-|tmux[[:space:]]+kill|git[[:space:]]+(pull|reset|checkout|clean)|update\.py|install[[:space:]]+-m|mv[[:space:]]+-f' ../termux-v150-pre-reboot-check.sh
+          ! grep -En 'git[[:space:]]+(pull|reset|checkout|clean)|update\.py' ../termux-v150-deploy.sh
+          bash -u -c '
+            MCP_PID=""
+            source ../termux-production-recovery-common.sh
+            wait_pid_gone 999999 1
+            tmp="$(mktemp)"
+            trap "rm -f \"$tmp\"" EXIT
+            printf "READY\n" >"$tmp"
+            wait_for_log_pattern "$tmp" READY 1
+          '
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - run: gofmt -w . && git diff --exit-code
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Race detector
+        run: go test -race -count=1 ./...
+      - name: Stripped supervisor build
+        run: go build -trimpath -ldflags='-s -w' -o /tmp/atri-supervisor .
+      - name: Android arm64 host watchdog cross-build
+        run: CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o /tmp/atri-supervisor-android-arm64 .
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rewrite/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify lockfile
+        run: test -f package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
