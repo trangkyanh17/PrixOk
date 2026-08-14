@@ -9,7 +9,7 @@ import (
 func TestMCPExplicitAndSelectedPlugins(t *testing.T) {
 	cases := map[string]string{
 		"use GitHub MCP to inspect this repo": "github",
-		"check chrome devtools network":        "chrome-devtools",
+		"check chrome devtools network":       "chrome-devtools",
 		"read Context 7 docs":                 "context7",
 		"run semgrep":                         "semgrep",
 	}
