@@ -27,9 +27,9 @@ func TestCerebrasRateWindowsRecoverLinearly(t *testing.T) {
 	state := NewSmartRouterState()
 	state.CaptureRateHeaders("cerebras", map[string]string{
 		"X-RateLimit-Remaining-Requests-Minute": "20",
-		"X-RateLimit-Limit-Requests-Minute": "100",
-		"X-RateLimit-Remaining-Tokens-Hour": "50",
-		"X-RateLimit-Limit-Tokens-Hour": "100",
+		"X-RateLimit-Limit-Requests-Minute":     "100",
+		"X-RateLimit-Remaining-Tokens-Hour":     "50",
+		"X-RateLimit-Limit-Tokens-Hour":         "100",
 	}, 100)
 	if got := state.Bottleneck["cerebras_gptoss"]; got != "req_minute" {
 		t.Fatalf("bottleneck=%q", got)
@@ -47,11 +47,11 @@ func TestGroqRatiosExpireAtReset(t *testing.T) {
 	state := NewSmartRouterState()
 	state.CaptureRateHeaders("groq", map[string]string{
 		"x-ratelimit-remaining-requests": "50",
-		"x-ratelimit-limit-requests": "100",
-		"x-ratelimit-remaining-tokens": "20",
-		"x-ratelimit-limit-tokens": "100",
-		"x-ratelimit-reset-requests": "120s",
-		"x-ratelimit-reset-tokens": "10s",
+		"x-ratelimit-limit-requests":     "100",
+		"x-ratelimit-remaining-tokens":   "20",
+		"x-ratelimit-limit-tokens":       "100",
+		"x-ratelimit-reset-requests":     "120s",
+		"x-ratelimit-reset-tokens":       "10s",
 	}, 100)
 	if got := state.EffectiveWeight("groq_gptoss", map[string]string{}, 100); !closeEnough(got, 0.2) {
 		t.Fatalf("initial weight=%v want=0.2", got)
@@ -84,8 +84,8 @@ func TestSmartOrderCanBeDisabled(t *testing.T) {
 	chain := []string{"groq_gptoss", "cerebras_gptoss"}
 	got := state.SmartOrder(chain, map[string]string{
 		"ATRI_FREE_SMART_ROUTER": "off",
-		"CEREBRAS_API_KEY": "c-key",
-		"GROQ_API_KEY": "g-key",
+		"CEREBRAS_API_KEY":       "c-key",
+		"GROQ_API_KEY":           "g-key",
 	}, 1)
 	if !reflect.DeepEqual(got, chain) {
 		t.Fatalf("got=%v want=%v", got, chain)
