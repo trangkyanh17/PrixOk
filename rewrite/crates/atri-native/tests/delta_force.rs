@@ -236,8 +236,5 @@ fn invalid_search_and_missing_database_return_safe_envelopes() {
         },
     );
     assert_eq!(missing["ok"], false);
-    assert!(missing["error"]
-        .as_str()
-        .unwrap()
-        .contains("chưa tồn tại"));
+    assert!(missing["error"].as_str().unwrap().contains("chưa tồn tại"));
 }

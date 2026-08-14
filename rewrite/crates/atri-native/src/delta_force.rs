@@ -405,18 +405,8 @@ pub fn compare_delta_force_cn_seasons(path: &Path, request: &DeltaCompareRequest
         Ok(connection) => connection,
         Err(error) => return json!({"ok": false, "error": error, "region": REGION}),
     };
-    let side_a = search_documents(
-        &connection,
-        &request.query,
-        Some(request.season_a),
-        limit,
-    );
-    let side_b = search_documents(
-        &connection,
-        &request.query,
-        Some(request.season_b),
-        limit,
-    );
+    let side_a = search_documents(&connection, &request.query, Some(request.season_a), limit);
+    let side_b = search_documents(&connection, &request.query, Some(request.season_b), limit);
 
     json!({
         "ok": true,

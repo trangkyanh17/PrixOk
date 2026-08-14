@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use atri_native::{
-    compare_delta_force_cn_seasons, get_delta_force_cn_history, hash_file_sha256,
-    inspect_archive, list_dir_bounded, search_delta_force_cn, ArchiveLimits, DeltaCompareRequest,
+    compare_delta_force_cn_seasons, get_delta_force_cn_history, hash_file_sha256, inspect_archive,
+    list_dir_bounded, search_delta_force_cn, ArchiveLimits, DeltaCompareRequest,
     DeltaHistoryRequest, DeltaSearchRequest,
 };
 use std::{env, path::Path};
@@ -52,10 +52,7 @@ fn main() -> Result<()> {
             let request: DeltaCompareRequest = serde_json::from_str(&json_argument(&mut args)?)?;
             println!(
                 "{}",
-                serde_json::to_string(&compare_delta_force_cn_seasons(
-                    Path::new(&db),
-                    &request
-                ))?
+                serde_json::to_string(&compare_delta_force_cn_seasons(Path::new(&db), &request))?
             );
         }
         other => bail!("unknown command: {other}"),
