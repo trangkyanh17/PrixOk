@@ -97,7 +97,7 @@ func NewConfiguredBuiltinRuntime(config BuiltinRuntimeConfig) (*BuiltinRuntime, 
 
 	registry, err := NewBuiltinToolRegistry(BuiltinToolOptions{
 		Weather: WeatherToolRuntime{
-			Client:        config.Client,
+			Client:       config.Client,
 			GeocodingURL: config.WeatherGeocodingURL,
 			ForecastURL:  config.WeatherForecastURL,
 		},
