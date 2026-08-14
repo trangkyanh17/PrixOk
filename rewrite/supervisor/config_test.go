@@ -97,3 +97,31 @@ func TestMCPConfigRejectsInvalidValues(t *testing.T) {
 		t.Fatalf("shutdown timeout=%s", config.ShutdownTimeout)
 	}
 }
+
+func TestLoadConfigTelegramShadowSettings(t *testing.T) {
+	config := loadConfig()
+	if config.TelegramShadowEnabled {
+		t.Fatal("Telegram shadow must default to disabled")
+	}
+	if config.TelegramShadowAddr != "127.0.0.1:18750" {
+		t.Fatalf("addr=%q", config.TelegramShadowAddr)
+	}
+	if config.TelegramShadowRetry != 15*time.Second {
+		t.Fatalf("retry=%s", config.TelegramShadowRetry)
+	}
+
+	t.Setenv("ATRI_V150_TELEGRAM_SHADOW", "true")
+	t.Setenv("ATRI_TELEGRAM_SHADOW_ADDR", "127.0.0.1:28750")
+	t.Setenv("ATRI_TELEGRAM_SHADOW_SECRET", "test-secret")
+	t.Setenv("ATRI_TELEGRAM_SHADOW_RETRY", "9")
+	config = loadConfig()
+	if !config.TelegramShadowEnabled {
+		t.Fatal("Telegram shadow should be enabled")
+	}
+	if config.TelegramShadowAddr != "127.0.0.1:28750" || config.TelegramShadowSecret != "test-secret" {
+		t.Fatalf("unexpected Telegram shadow config: %+v", config)
+	}
+	if config.TelegramShadowRetry != 9*time.Second {
+		t.Fatalf("retry=%s", config.TelegramShadowRetry)
+	}
+}

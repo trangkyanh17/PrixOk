@@ -115,10 +115,12 @@ bot_loop.run_until_complete(main())
 from .helper.ext_utils.bot_utils import create_help_buttons
 from .helper.listeners.aria2_listener import add_aria2_callbacks
 from .core.handlers import add_handlers
+from .modules.atri_v150_shadow import add_v150_shadow_handlers
 
 add_aria2_callbacks()
 create_help_buttons()
 add_handlers()
+add_v150_shadow_handlers(TgClient.bot)
 
 # Warm Semgrep MCP in the background during bot startup so users do not
 # pay uvx/MCP initialization latency on their first Semgrep request.
