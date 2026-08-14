@@ -22,7 +22,7 @@ func nextBackoff(current, minimum, maximum time.Duration) time.Duration {
 	return next
 }
 
-func main() {
+func runRewriteSupervisor() error {
 	config := loadConfig()
 	components := make([]supervisorComponent, 0, 2)
 
@@ -47,19 +47,21 @@ func main() {
 			HealthEvery: config.MCPHealthInterval,
 			PruneEvery:  config.MCPPruneInterval,
 		}, log.Printf)
-		components = append(components, supervisorComponent{
-			Name: "mcp",
-			Run:  lifecycle.Run,
-		})
+		components = append(components, supervisorComponent{Name: "mcp", Run: lifecycle.Run})
 	}
 
 	if len(components) == 0 {
-		return
+		return nil
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runSupervisorComponents(ctx, components); err != nil {
+	return runSupervisorComponentsWithTimeout(ctx, components, config.ShutdownTimeout)
+}
+
+func main() {
+	if err := runRewriteSupervisor(); err != nil {
 		log.Printf("rewrite supervisor stopped with error: %v", err)
+		os.Exit(1)
 	}
 }

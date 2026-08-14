@@ -26,6 +26,7 @@ func TestLoadConfigWatchdogSettings(t *testing.T) {
 	t.Setenv("ATRI_WATCHDOG_REPAIR_TIMEOUT", "88")
 	t.Setenv("ATRI_NETWORK_INTERVAL", "44")
 	t.Setenv("ATRI_NETWORK_TIMEOUT", "7")
+	t.Setenv("ATRI_REWRITE_SHUTDOWN_TIMEOUT", "19")
 
 	config := loadConfig()
 	if !config.WatchdogEnabled {
@@ -39,7 +40,7 @@ func TestLoadConfigWatchdogSettings(t *testing.T) {
 	}
 	if config.LoopInterval != 12*time.Second || config.CommandTimeout != 17*time.Second ||
 		config.RepairTimeout != 88*time.Second || config.NetworkCheckInterval != 44*time.Second ||
-		config.NetworkProbeTimeout != 7*time.Second {
+		config.NetworkProbeTimeout != 7*time.Second || config.ShutdownTimeout != 19*time.Second {
 		t.Fatalf("unexpected watchdog durations: %+v", config)
 	}
 }
@@ -77,6 +78,7 @@ func TestMCPConfigRejectsInvalidValues(t *testing.T) {
 	t.Setenv("ATRI_REWRITE_MCP_LIFECYCLE", "not-a-bool")
 	t.Setenv("ATRI_MCP_PREWARM_CONCURRENCY", "99")
 	t.Setenv("ATRI_MCP_PREWARM_TIMEOUT", "0")
+	t.Setenv("ATRI_REWRITE_SHUTDOWN_TIMEOUT", "0")
 	config := loadConfig()
 	if config.MCPLifecycleEnabled {
 		t.Fatal("invalid bool should fall back to false")
@@ -86,5 +88,8 @@ func TestMCPConfigRejectsInvalidValues(t *testing.T) {
 	}
 	if config.MCPPrewarmTimeout != 90*time.Second {
 		t.Fatalf("timeout=%s", config.MCPPrewarmTimeout)
+	}
+	if config.ShutdownTimeout != 15*time.Second {
+		t.Fatalf("shutdown timeout=%s", config.ShutdownTimeout)
 	}
 }

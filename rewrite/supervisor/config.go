@@ -21,6 +21,7 @@ type config struct {
 	RepairTimeout        time.Duration
 	NetworkCheckInterval time.Duration
 	NetworkProbeTimeout  time.Duration
+	ShutdownTimeout      time.Duration
 
 	MCPLifecycleEnabled   bool
 	MCPPrewarmPlugins     []string
@@ -47,6 +48,7 @@ func loadConfig() config {
 		RepairTimeout:        envDurationSeconds("ATRI_WATCHDOG_REPAIR_TIMEOUT", 270),
 		NetworkCheckInterval: envDurationSeconds("ATRI_NETWORK_INTERVAL", 180),
 		NetworkProbeTimeout:  envDurationSeconds("ATRI_NETWORK_TIMEOUT", 8),
+		ShutdownTimeout:      envDurationSeconds("ATRI_REWRITE_SHUTDOWN_TIMEOUT", 15),
 
 		MCPLifecycleEnabled: envBool("ATRI_REWRITE_MCP_LIFECYCLE", false),
 		MCPPrewarmPlugins: envCSV("ATRI_MCP_PREWARM_PLUGINS", []string{
