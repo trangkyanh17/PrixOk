@@ -123,12 +123,7 @@ impl LongMemoryStore {
         Ok(conn)
     }
 
-    pub fn add_memory_card(
-        &self,
-        chat_key: &str,
-        content: &str,
-        source: &str,
-    ) -> Result<bool> {
+    pub fn add_memory_card(&self, chat_key: &str, content: &str, source: &str) -> Result<bool> {
         let content = content.trim().chars().take(4000).collect::<String>();
         if content.is_empty() || normalize_text(&content).is_empty() {
             return Ok(false);
@@ -155,9 +150,10 @@ impl LongMemoryStore {
                 .query_map([chat_key], |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
 
-            if candidates.iter().any(|old| {
-                similarity(&content, old) >= self.config.auto_memory_dedupe_threshold
-            }) {
+            if candidates
+                .iter()
+                .any(|old| similarity(&content, old) >= self.config.auto_memory_dedupe_threshold)
+            {
                 return Ok(false);
             }
         }
