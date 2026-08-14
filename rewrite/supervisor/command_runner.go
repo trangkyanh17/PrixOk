@@ -58,6 +58,9 @@ func (execWatchdogRunner) Run(ctx context.Context, command watchdogCommand) erro
 	defer timer.Stop()
 	select {
 	case <-done:
+		// The group leader may exit on TERM while a descendant ignores it.
+		// Kill the remaining group before returning so no child survives shutdown.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		return ctx.Err()
 	case <-timer.C:
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)

@@ -3,7 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -45,6 +49,52 @@ func TestExecWatchdogRunnerStopsOnContextCancel(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("cancellation took %s", elapsed)
 	}
+}
+
+func TestExecWatchdogRunnerKillsTermIgnoringDescendant(t *testing.T) {
+	pidFile := t.TempDir() + "/child.pid"
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- (execWatchdogRunner{}).Run(ctx, watchdogCommand{
+			Path: "sh",
+			Args: []string{"-c", `trap 'exit 0' TERM; sh -c 'trap "" TERM; echo $$ > "$PID_FILE"; while :; do sleep 30; done' & wait`},
+			Env:  []string{"PID_FILE=" + pidFile},
+		})
+	}()
+
+	var childPID int
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(pidFile)
+		if err == nil {
+			childPID, err = strconv.Atoi(strings.TrimSpace(string(data)))
+			if err == nil && childPID > 0 {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if childPID <= 0 {
+		cancel()
+		<-done
+		t.Fatal("descendant did not publish its PID")
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("runner err=%v", err)
+	}
+
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		err := syscall.Kill(childPID, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("TERM-ignoring descendant %d survived runner cancellation", childPID)
 }
 
 func TestExecWatchdogRunnerCommandEnvOverridesParent(t *testing.T) {
