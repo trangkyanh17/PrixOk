@@ -24,26 +24,42 @@ func nextBackoff(current, minimum, maximum time.Duration) time.Duration {
 
 func main() {
 	config := loadConfig()
-	if !config.MCPLifecycleEnabled {
+	components := make([]supervisorComponent, 0, 2)
+
+	if config.WatchdogEnabled {
+		productionWatchdog := newWatchdog(config, execWatchdogRunner{}, isExecutableFile, log.Printf)
+		components = append(components, supervisorComponent{
+			Name: "watchdog",
+			Run:  productionWatchdog.Run,
+		})
+	}
+
+	if config.MCPLifecycleEnabled {
+		transportBackend := runtimecfg.NewMCPTransportBackend(nil)
+		transportBackend.RequestTimeout = config.MCPRequestTimeout
+		transportBackend.IdleTTL = config.MCPIdleTTL
+		backend := runtimecfg.NewSupervisedMCPBackend(transportBackend)
+
+		lifecycle := newMCPLifecycle(backend, mcpLifecycleConfig{
+			Plugins:     config.MCPPrewarmPlugins,
+			Concurrency: config.MCPPrewarmConcurrency,
+			Timeout:     config.MCPPrewarmTimeout,
+			HealthEvery: config.MCPHealthInterval,
+			PruneEvery:  config.MCPPruneInterval,
+		}, log.Printf)
+		components = append(components, supervisorComponent{
+			Name: "mcp",
+			Run:  lifecycle.Run,
+		})
+	}
+
+	if len(components) == 0 {
 		return
 	}
 
-	transportBackend := runtimecfg.NewMCPTransportBackend(nil)
-	transportBackend.RequestTimeout = config.MCPRequestTimeout
-	transportBackend.IdleTTL = config.MCPIdleTTL
-	backend := runtimecfg.NewSupervisedMCPBackend(transportBackend)
-
-	lifecycle := newMCPLifecycle(backend, mcpLifecycleConfig{
-		Plugins:     config.MCPPrewarmPlugins,
-		Concurrency: config.MCPPrewarmConcurrency,
-		Timeout:     config.MCPPrewarmTimeout,
-		HealthEvery: config.MCPHealthInterval,
-		PruneEvery:  config.MCPPruneInterval,
-	}, log.Printf)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := lifecycle.Run(ctx); err != nil {
-		log.Printf("MCP lifecycle stopped with error: %v", err)
+	if err := runSupervisorComponents(ctx, components); err != nil {
+		log.Printf("rewrite supervisor stopped with error: %v", err)
 	}
 }

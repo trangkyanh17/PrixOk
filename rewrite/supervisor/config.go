@@ -8,12 +8,17 @@ import (
 )
 
 type config struct {
+	WatchdogEnabled      bool
 	BotSession           string
 	BotLauncher          string
 	LocalHealth          string
 	BrowserEnsure        string
 	NetworkState         string
+	ProotDistro          string
+	BotLockPath          string
 	LoopInterval         time.Duration
+	CommandTimeout       time.Duration
+	RepairTimeout        time.Duration
 	NetworkCheckInterval time.Duration
 	NetworkProbeTimeout  time.Duration
 
@@ -29,12 +34,17 @@ type config struct {
 
 func loadConfig() config {
 	return config{
+		WatchdogEnabled:      envBool("ATRI_REWRITE_WATCHDOG", false),
 		BotSession:           envString("ATRI_BOT_SESSION", "prixok-bot"),
 		BotLauncher:          envString("ATRI_BOT_LAUNCHER", os.ExpandEnv("$HOME/prixok-bot.sh")),
 		LocalHealth:          envString("ATRI_LOCAL_HEALTH", os.ExpandEnv("$HOME/atri-production-local-health.sh")),
 		BrowserEnsure:        envString("ATRI_BROWSER_ENSURE", os.ExpandEnv("$HOME/atri-production-browser-ensure.sh")),
 		NetworkState:         envString("ATRI_NETWORK_STATE", os.ExpandEnv("$HOME/atri-production-network-state.sh")),
+		ProotDistro:          envString("ATRI_PROOT_DISTRO", "debian"),
+		BotLockPath:          envString("ATRI_BOT_LOCK_PATH", "/app/.atri-prixok-bot-v133.lock"),
 		LoopInterval:         envDurationSeconds("ATRI_WATCHDOG_INTERVAL", 30),
+		CommandTimeout:       envDurationSeconds("ATRI_WATCHDOG_COMMAND_TIMEOUT", 30),
+		RepairTimeout:        envDurationSeconds("ATRI_WATCHDOG_REPAIR_TIMEOUT", 270),
 		NetworkCheckInterval: envDurationSeconds("ATRI_NETWORK_INTERVAL", 180),
 		NetworkProbeTimeout:  envDurationSeconds("ATRI_NETWORK_TIMEOUT", 8),
 
