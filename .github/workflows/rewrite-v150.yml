@@ -69,6 +69,9 @@ jobs:
           bash ../termux-v150-pre-reboot-check.sh --self-test
           bash ../termux-v150-deploy.sh --self-test
           bash -n ../termux-v150-production-watchdog.sh ../termux-v150-bot-launcher.sh ../termux-v150-boot-hook.sh
+          grep -q 'boot_hook_lock_busy' ../termux-v150-boot-hook.sh
+          grep -q '9>&-' ../termux-v150-boot-hook.sh
+          grep -q 'exit 77' ../termux-v150-boot-hook.sh
           grep -q 'ATRI_PRODUCTION_LAUNCHER_GUARD=1' ../termux-v150-bot-launcher.sh
           grep -q 'prixok-bot-v150.sh' ../termux-v150-production-watchdog.sh
           ! grep -q 'atri-production-ensure.sh' ../../termux/prixok-bot.sh
