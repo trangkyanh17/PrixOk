@@ -18,6 +18,13 @@ BASE_MAIN = """from .core.handlers import add_handlers\n\nadd_handlers()\nprint(
 VALID_MODULE = """def add_v150_shadow_handlers(client):\n    return False\n"""
 
 
+@pytest.fixture(autouse=True)
+def debian_enable_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    enable_file = tmp_path / "debian-state" / "enabled"
+    monkeypatch.setenv("ATRI_V151_DEBIAN_ENABLE_FILE", str(enable_file))
+    return enable_file
+
+
 def make_trees(tmp_path: Path, module: str = VALID_MODULE):
     source = tmp_path / "source"
     live = tmp_path / "live"
@@ -30,12 +37,16 @@ def make_trees(tmp_path: Path, module: str = VALID_MODULE):
     return source, live
 
 
-def test_apply_preserves_custom_live_content_and_rollback_restores(tmp_path: Path):
+def test_apply_preserves_custom_live_content_and_rollback_restores(
+    tmp_path: Path, debian_enable_file: Path
+):
     source, live = make_trees(tmp_path)
     backup = tmp_path / "backup"
 
     result = patcher.apply(source, live, backup)
     assert result["applied"] is True
+    assert result["debian_enable_file"] == str(debian_enable_file)
+    assert debian_enable_file.is_file()
     main = (live / "bot" / "__main__.py").read_text(encoding="utf-8")
     assert main.count(patcher.IMPORT_LINE) == 1
     assert main.count(patcher.CALL_LINE) == 1
@@ -44,11 +55,29 @@ def test_apply_preserves_custom_live_content_and_rollback_restores(tmp_path: Pat
 
     rolled_back = patcher.rollback(live, backup)
     assert rolled_back["rolled_back"] is True
+    assert rolled_back["debian_enable_file_present"] is False
     assert (live / "bot" / "__main__.py").read_text(encoding="utf-8") == BASE_MAIN
     assert not (live / "bot" / "modules" / "atri_v150_shadow.py").exists()
+    assert not debian_enable_file.exists()
 
 
-def test_apply_refuses_ambiguous_anchor_without_mutation(tmp_path: Path):
+def test_apply_preserves_preexisting_debian_enable_file(
+    tmp_path: Path, debian_enable_file: Path
+):
+    source, live = make_trees(tmp_path)
+    backup = tmp_path / "backup"
+    debian_enable_file.parent.mkdir(parents=True)
+    debian_enable_file.write_text("preexisting\n", encoding="utf-8")
+
+    patcher.apply(source, live, backup)
+    patcher.rollback(live, backup)
+
+    assert debian_enable_file.read_text(encoding="utf-8") == "preexisting\n"
+
+
+def test_apply_refuses_ambiguous_anchor_without_mutation(
+    tmp_path: Path, debian_enable_file: Path
+):
     source, live = make_trees(tmp_path)
     main_path = live / "bot" / "__main__.py"
     original = BASE_MAIN.replace(
@@ -62,9 +91,12 @@ def test_apply_refuses_ambiguous_anchor_without_mutation(tmp_path: Path):
 
     assert main_path.read_text(encoding="utf-8") == original
     assert not (live / "bot" / "modules" / "atri_v150_shadow.py").exists()
+    assert not debian_enable_file.exists()
 
 
-def test_apply_self_restores_when_new_module_fails_compile(tmp_path: Path):
+def test_apply_self_restores_when_new_module_fails_compile(
+    tmp_path: Path, debian_enable_file: Path
+):
     source, live = make_trees(tmp_path, module="def broken(:\n")
     main_path = live / "bot" / "__main__.py"
 
@@ -73,14 +105,21 @@ def test_apply_self_restores_when_new_module_fails_compile(tmp_path: Path):
 
     assert main_path.read_text(encoding="utf-8") == BASE_MAIN
     assert not (live / "bot" / "modules" / "atri_v150_shadow.py").exists()
+    assert not debian_enable_file.exists()
 
 
-def test_rollback_refuses_to_overwrite_post_canary_live_change(tmp_path: Path):
+def test_rollback_refuses_to_overwrite_post_canary_live_change(
+    tmp_path: Path, debian_enable_file: Path
+):
     source, live = make_trees(tmp_path)
     backup = tmp_path / "backup"
     patcher.apply(source, live, backup)
     main_path = live / "bot" / "__main__.py"
-    main_path.write_text(main_path.read_text(encoding="utf-8") + "# later change\n", encoding="utf-8")
+    main_path.write_text(
+        main_path.read_text(encoding="utf-8") + "# later change\n", encoding="utf-8"
+    )
 
     with pytest.raises(RuntimeError, match="changed after V151 apply"):
         patcher.rollback(live, backup)
+
+    assert debian_enable_file.is_file()

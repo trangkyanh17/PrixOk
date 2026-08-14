@@ -21,6 +21,11 @@ IMPORT_LINE = "from .modules.atri_v150_shadow import add_v150_shadow_handlers"
 CALL_ANCHOR = "add_handlers()"
 CALL_LINE = "add_v150_shadow_handlers(TgClient.bot)"
 MANIFEST_NAME = "source-manifest.json"
+DEFAULT_DEBIAN_ENABLE_FILE = "/root/.local/state/atri-v151-shadow/enabled"
+
+
+def debian_enable_file() -> Path:
+    return Path(os.getenv("ATRI_V151_DEBIAN_ENABLE_FILE", DEFAULT_DEBIAN_ENABLE_FILE))
 
 
 def sha256(path: Path) -> str:
@@ -112,6 +117,9 @@ def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, obj
     if module_existed:
         shutil.copy2(live_module, module_backup)
 
+    enable_file = debian_enable_file()
+    enable_file_existed = enable_file.exists()
+
     text = live_main.read_text(encoding="utf-8")
     import_count, call_count = marker_state(text)
     if (import_count, call_count) not in {(0, 0), (1, 1)}:
@@ -127,6 +135,7 @@ def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, obj
         text = text.replace(CALL_ANCHOR, f"{CALL_ANCHOR}\n{CALL_LINE}", 1)
 
     mutation_started = False
+    enable_created = False
     try:
         if import_count == 0:
             mutation_started = True
@@ -134,6 +143,10 @@ def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, obj
         mutation_started = True
         atomic_copy(source_module, live_module)
         result = verify(source_root, live_root)
+        if not enable_file_existed:
+            enable_file.parent.mkdir(parents=True, exist_ok=True)
+            enable_file.touch()
+            enable_created = True
     except Exception:
         if mutation_started:
             restore_pre_apply(
@@ -143,6 +156,8 @@ def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, obj
                 module_backup,
                 module_existed,
             )
+        if enable_created:
+            enable_file.unlink(missing_ok=True)
         raise
 
     manifest = {
@@ -150,6 +165,8 @@ def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, obj
         "main_before_sha256": sha256(main_backup),
         "main_after_sha256": result["main_sha256"],
         "module_after_sha256": result["module_sha256"],
+        "debian_enable_file": str(enable_file),
+        "debian_enable_file_existed": enable_file_existed,
     }
     if module_existed:
         manifest["module_before_sha256"] = sha256(module_backup)
@@ -157,7 +174,12 @@ def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, obj
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return {**result, "backup": str(backup_dir), "already_hooked": import_count == 1}
+    return {
+        **result,
+        "backup": str(backup_dir),
+        "already_hooked": import_count == 1,
+        "debian_enable_file": str(enable_file),
+    }
 
 
 def rollback(live_root: Path, backup_dir: Path) -> dict[str, object]:
@@ -187,11 +209,16 @@ def rollback(live_root: Path, backup_dir: Path) -> dict[str, object]:
     else:
         live_module.unlink(missing_ok=True)
 
+    enable_file = Path(str(manifest.get("debian_enable_file") or debian_enable_file()))
+    if not bool(manifest.get("debian_enable_file_existed")):
+        enable_file.unlink(missing_ok=True)
+
     py_compile.compile(str(live_main), doraise=True)
     return {
         "rolled_back": True,
         "main_sha256": sha256(live_main),
         "module_present": live_module.exists(),
+        "debian_enable_file_present": enable_file.exists(),
     }
 
 
