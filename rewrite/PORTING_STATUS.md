@@ -49,6 +49,20 @@ This branch is experimental. Do not merge it into `main` or `dev`, and do not po
 - Unified Atri orchestration from free-pool worker through Vertex verifier/supervisor into final Vertex text/tool execution.
 - Worker retry policy, supervisor context assembly, response cleaning and Telegram-safe reply chunking.
 - Configured builtin-runtime factory wiring shared HTTP clients, Google credentials, Workspace auth and native Delta Force paths.
+- Optional MCP backend wiring into the builtin registry without exposing coding tools in chat mode.
+
+### Coding MCP policy/runtime layer
+
+- Plugin routing for Serena, Context7, GitHub, Semgrep, Sentry and Chrome DevTools.
+- Query-hint plugin selection plus explicit-plugin/direct fast-path detection.
+- Recursive MCP JSON-schema sanitization with local `$ref` resolution and `$schema`/`$defs` removal.
+- Read-only tool policy, Sentry deny-list and sensitive credential/config path blocking.
+- TTL tool-discovery cache, safe-tool scoring, deterministic filtering and sanitized tool/result envelopes.
+- `code_plugin_search` and `code_plugin_call` registry bridges restricted to coding mode.
+- Optional plugin availability probing and `code_plugin_status`.
+- Sequential `code_plugin_batch` validation, stop-on-error handling and policy checks.
+- Context7 fast path that resolves a library ID, caches it and queries docs through the MCP backend.
+- Builtin runtime can inject an MCP backend and register the complete five-tool coding MCP surface.
 
 ### Ported builtin tools
 
@@ -108,13 +122,15 @@ Google authentication/runtime helpers:
 
 ### Code-agent/MCP ecosystem
 
-- Serena semantic-code MCP integration.
-- Context7 documentation integration.
-- GitHub MCP discovery/call behavior including the forced GitHub path used by coding mode.
-- Semgrep warm worker/session lifecycle.
-- Sentry MCP integration.
-- Chrome DevTools MCP integration.
-- Equivalent schema sanitization, tool discovery cache and direct-plugin fast path.
+The policy, schema, discovery, registry and Context7 fast-path logic is now ported. The concrete MCP transport/process layer is still missing:
+
+- Real Serena stdio/session integration and semantic-code warm lifecycle.
+- Real Context7 transport/session integration behind the ported fast path.
+- Real GitHub MCP transport, authentication and live forced-GitHub coding path.
+- Semgrep warm worker/process lifecycle and reconnect behavior.
+- Sentry MCP transport/authentication with the existing read-only deny-list enforced end to end.
+- Chrome DevTools MCP process/session integration, including stateful multi-step browser batches.
+- Persistent MCP session pooling, process health/restart logic, transport timeouts and live tool-schema parity tests.
 
 ### Atri feature parity
 
