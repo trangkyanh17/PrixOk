@@ -1,19 +1,15 @@
 package runtimecfg
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +17,7 @@ const (
 	DefaultMCPRequestTimeout = 180 * time.Second
 	DefaultMCPIdleTTL        = time.Hour
 	defaultMCPProtocol       = "2025-06-18"
+	maxMCPToolPages          = 64
 )
 
 type MCPPluginSpec struct {
@@ -98,6 +95,7 @@ func (backend *MCPTransportBackend) setting(names ...string) string {
 			if value := strings.TrimSpace(backend.Values[name]); value != "" {
 				return value
 			}
+		}
 		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 			return value
 		}
@@ -122,7 +120,7 @@ func (backend *MCPTransportBackend) stat(path string) (os.FileInfo, error) {
 func (backend *MCPTransportBackend) browserPath() string {
 	if configured := backend.setting("ATRI_BROWSER_EXECUTABLE"); configured != "" {
 		if strings.HasPrefix(configured, "/") {
-			if _, err := backend.stat(configured); err == nil {
+			if info, err := backend.stat(configured); err == nil && !info.IsDir() {
 				return configured
 			}
 		} else if path, err := backend.lookPath(configured); err == nil {
@@ -316,10 +314,7 @@ func (backend *MCPTransportBackend) transportFactory(spec MCPPluginSpec) (MCPTra
 	}
 }
 
-func (backend *MCPTransportBackend) managedTransport(
-	ctx context.Context,
-	plugin string,
-) (MCPTransport, error) {
+func (backend *MCPTransportBackend) managedTransport(ctx context.Context, plugin string) (MCPTransport, error) {
 	if backend == nil {
 		return nil, errors.New("MCP transport backend is nil")
 	}
@@ -388,18 +383,23 @@ func (backend *MCPTransportBackend) invalidate(plugin string, transport MCPTrans
 }
 
 func (backend *MCPTransportBackend) ListTools(ctx context.Context, plugin string) ([]MCPTool, error) {
-	transport, err := backend.managedTransport(ctx, plugin)
-	if err != nil {
-		return nil, err
-	}
-	callCtx, cancel := context.WithTimeout(ctx, backend.timeout())
-	defer cancel()
-	tools, err := transport.ListTools(callCtx)
-	if err != nil {
+	for attempt := 0; attempt < 2; attempt++ {
+		transport, err := backend.managedTransport(ctx, plugin)
+		if err != nil {
+			return nil, err
+		}
+		callCtx, cancel := context.WithTimeout(ctx, backend.timeout())
+		tools, err := transport.ListTools(callCtx)
+		cancel()
+		if err == nil {
+			return tools, nil
+		}
 		backend.invalidate(plugin, transport)
-		return nil, err
+		if attempt == 1 {
+			return nil, err
+		}
 	}
-	return tools, nil
+	return nil, errors.New("MCP discovery retry exhausted")
 }
 
 func (backend *MCPTransportBackend) CallTool(
@@ -420,6 +420,76 @@ func (backend *MCPTransportBackend) CallTool(
 		return MCPCallResult{}, err
 	}
 	return result, nil
+}
+
+func (backend *MCPTransportBackend) PruneIdle() int {
+	if backend == nil {
+		return 0
+	}
+	now := backend.now()
+	backend.mu.Lock()
+	stale := make([]MCPTransport, 0)
+	for plugin, managed := range backend.sessions {
+		if now.Sub(managed.LastUsed) >= backend.idleTTL() {
+			stale = append(stale, managed.Transport)
+			delete(backend.sessions, plugin)
+		}
+	}
+	backend.mu.Unlock()
+	for _, transport := range stale {
+		_ = transport.Close()
+	}
+	return len(stale)
+}
+
+func (backend *MCPTransportBackend) Prewarm(
+	ctx context.Context,
+	plugins []string,
+	concurrency int,
+) map[string]string {
+	if len(plugins) == 0 {
+		plugins = append([]string(nil), MCPPluginNames...)
+	}
+	if concurrency <= 0 {
+		concurrency = 2
+	}
+	if concurrency > len(plugins) && len(plugins) > 0 {
+		concurrency = len(plugins)
+	}
+
+	results := map[string]string{}
+	var mu sync.Mutex
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for _, raw := range plugins {
+		plugin := normalizeMCPPlugin(raw)
+		if plugin == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				mu.Lock()
+				results[plugin] = ctx.Err().Error()
+				mu.Unlock()
+				return
+			}
+			tools, err := backend.ListTools(ctx, plugin)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				results[plugin] = err.Error()
+				return
+			}
+			results[plugin] = fmt.Sprintf("ready:%d", len(tools))
+		}()
+	}
+	wg.Wait()
+	return results
 }
 
 func (backend *MCPTransportBackend) Close() error {
@@ -445,9 +515,11 @@ type mcpRPCError struct {
 
 type mcpRPCResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id"`
-	Result  json.RawMessage `json:"result"`
-	Error   *mcpRPCError    `json:"error"`
+	ID      json.RawMessage `json:"id"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *mcpRPCError    `json:"error,omitempty"`
 }
 
 func rpcError(response mcpRPCResponse) error {
@@ -458,6 +530,14 @@ func rpcError(response mcpRPCResponse) error {
 		return fmt.Errorf("MCP RPC %d: %s (%v)", response.Error.Code, response.Error.Message, response.Error.Data)
 	}
 	return fmt.Errorf("MCP RPC %d: %s", response.Error.Code, response.Error.Message)
+}
+
+func rpcIDMatches(raw json.RawMessage, id int64) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var number int64
+	return json.Unmarshal(raw, &number) == nil && number == id
 }
 
 func mcpInitializePayload(id int64) map[string]any {
@@ -484,16 +564,37 @@ func mcpNotification(method string, params map[string]any) map[string]any {
 	}
 }
 
-func decodeMCPTools(raw json.RawMessage) ([]MCPTool, error) {
+func mcpUnsupportedRequest(id json.RawMessage, method string) map[string]any {
+	var decoded any
+	if err := json.Unmarshal(id, &decoded); err != nil {
+		decoded = nil
+	}
+	return map[string]any{
+		"jsonrpc": "2.0",
+		"id":      decoded,
+		"error": map[string]any{
+			"code":    -32601,
+			"message": "Client method not supported: " + method,
+		},
+	}
+}
+
+type mcpToolPage struct {
+	Tools      []MCPTool
+	NextCursor string
+}
+
+func decodeMCPToolPage(raw json.RawMessage) (mcpToolPage, error) {
 	var payload struct {
 		Tools []struct {
 			Name        string         `json:"name"`
 			Description string         `json:"description"`
 			InputSchema map[string]any `json:"inputSchema"`
 		} `json:"tools"`
+		NextCursor string `json:"nextCursor"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, err
+		return mcpToolPage{}, err
 	}
 	tools := make([]MCPTool, 0, len(payload.Tools))
 	for _, item := range payload.Tools {
@@ -503,7 +604,40 @@ func decodeMCPTools(raw json.RawMessage) ([]MCPTool, error) {
 			InputSchema: item.InputSchema,
 		})
 	}
-	return tools, nil
+	return mcpToolPage{Tools: tools, NextCursor: strings.TrimSpace(payload.NextCursor)}, nil
+}
+
+func decodeMCPTools(raw json.RawMessage) ([]MCPTool, error) {
+	page, err := decodeMCPToolPage(raw)
+	return page.Tools, err
+}
+
+func collectMCPTools(
+	request func(map[string]any) (json.RawMessage, error),
+) ([]MCPTool, error) {
+	params := map[string]any{}
+	seenCursors := map[string]struct{}{}
+	tools := []MCPTool{}
+	for pageIndex := 0; pageIndex < maxMCPToolPages; pageIndex++ {
+		raw, err := request(params)
+		if err != nil {
+			return nil, err
+		}
+		page, err := decodeMCPToolPage(raw)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, page.Tools...)
+		if page.NextCursor == "" {
+			return tools, nil
+		}
+		if _, seen := seenCursors[page.NextCursor]; seen {
+			return nil, fmt.Errorf("MCP tools/list repeated cursor %q", page.NextCursor)
+		}
+		seenCursors[page.NextCursor] = struct{}{}
+		params = map[string]any{"cursor": page.NextCursor}
+	}
+	return nil, fmt.Errorf("MCP tools/list exceeded %d pages", maxMCPToolPages)
 }
 
 func decodeMCPCallResult(raw json.RawMessage) (MCPCallResult, error) {
@@ -520,423 +654,4 @@ func decodeMCPCallResult(raw json.RawMessage) (MCPCallResult, error) {
 		Structured: payload.StructuredContent,
 		IsError:    payload.IsError,
 	}, nil
-}
-
-type stdioMCPTransport struct {
-	spec MCPPluginSpec
-
-	mu          sync.Mutex
-	cmd         *exec.Cmd
-	stdin       io.WriteCloser
-	stdout      *bufio.Reader
-	stderr      bytes.Buffer
-	initialized bool
-	nextID      int64
-}
-
-func newStdioMCPTransport(spec MCPPluginSpec) *stdioMCPTransport {
-	return &stdioMCPTransport{spec: spec}
-}
-
-func (transport *stdioMCPTransport) startLocked() error {
-	if transport.cmd != nil {
-		return nil
-	}
-	cmd := exec.Command(transport.spec.Command, transport.spec.Args...)
-	cmd.Env = os.Environ()
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return err
-	}
-	cmd.Stderr = &transport.stderr
-	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		return err
-	}
-	transport.cmd = cmd
-	transport.stdin = stdin
-	transport.stdout = bufio.NewReader(stdoutPipe)
-	return nil
-}
-
-func (transport *stdioMCPTransport) abortLocked() {
-	if transport.stdin != nil {
-		_ = transport.stdin.Close()
-	}
-	if transport.cmd != nil && transport.cmd.Process != nil {
-		_ = transport.cmd.Process.Kill()
-		_, _ = transport.cmd.Process.Wait()
-	}
-	transport.cmd = nil
-	transport.stdin = nil
-	transport.stdout = nil
-	transport.initialized = false
-}
-
-func (transport *stdioMCPTransport) writeLocked(payload any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	_, err = transport.stdin.Write(data)
-	return err
-}
-
-func (transport *stdioMCPTransport) requestLocked(
-	ctx context.Context,
-	method string,
-	params map[string]any,
-) (json.RawMessage, error) {
-	id := atomic.AddInt64(&transport.nextID, 1)
-	request := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
-	}
-	if err := transport.writeLocked(request); err != nil {
-		return nil, err
-	}
-
-	type readResult struct {
-		Response mcpRPCResponse
-		Err      error
-	}
-	resultCh := make(chan readResult, 1)
-	reader := transport.stdout
-	go func() {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			resultCh <- readResult{Err: err}
-			return
-		}
-		var response mcpRPCResponse
-		if err := json.Unmarshal(bytes.TrimSpace(line), &response); err != nil {
-			resultCh <- readResult{Err: err}
-			return
-		}
-		resultCh <- readResult{Response: response}
-	}()
-
-	select {
-	case <-ctx.Done():
-		transport.abortLocked()
-		return nil, ctx.Err()
-	case result := <-resultCh:
-		if result.Err != nil {
-			return nil, result.Err
-		}
-		if err := rpcError(result.Response); err != nil {
-			return nil, err
-		}
-		return result.Response.Result, nil
-	}
-}
-
-func (transport *stdioMCPTransport) Initialize(ctx context.Context) error {
-	transport.mu.Lock()
-	defer transport.mu.Unlock()
-	if transport.initialized {
-		return nil
-	}
-	if err := transport.startLocked(); err != nil {
-		return err
-	}
-	id := atomic.AddInt64(&transport.nextID, 1)
-	if err := transport.writeLocked(mcpInitializePayload(id)); err != nil {
-		transport.abortLocked()
-		return err
-	}
-
-	type readResult struct {
-		Response mcpRPCResponse
-		Err      error
-	}
-	resultCh := make(chan readResult, 1)
-	reader := transport.stdout
-	go func() {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			resultCh <- readResult{Err: err}
-			return
-		}
-		var response mcpRPCResponse
-		if err := json.Unmarshal(bytes.TrimSpace(line), &response); err != nil {
-			resultCh <- readResult{Err: err}
-			return
-		}
-		resultCh <- readResult{Response: response}
-	}()
-	select {
-	case <-ctx.Done():
-		transport.abortLocked()
-		return ctx.Err()
-	case result := <-resultCh:
-		if result.Err != nil {
-			transport.abortLocked()
-			return result.Err
-		}
-		if err := rpcError(result.Response); err != nil {
-			transport.abortLocked()
-			return err
-		}
-	}
-	if err := transport.writeLocked(mcpNotification("notifications/initialized", map[string]any{})); err != nil {
-		transport.abortLocked()
-		return err
-	}
-	transport.initialized = true
-	return nil
-}
-
-func (transport *stdioMCPTransport) ListTools(ctx context.Context) ([]MCPTool, error) {
-	transport.mu.Lock()
-	defer transport.mu.Unlock()
-	if !transport.initialized {
-		return nil, errors.New("MCP stdio transport is not initialized")
-	}
-	raw, err := transport.requestLocked(ctx, "tools/list", map[string]any{})
-	if err != nil {
-		return nil, err
-	}
-	return decodeMCPTools(raw)
-}
-
-func (transport *stdioMCPTransport) CallTool(
-	ctx context.Context,
-	tool string,
-	arguments map[string]any,
-) (MCPCallResult, error) {
-	transport.mu.Lock()
-	defer transport.mu.Unlock()
-	if !transport.initialized {
-		return MCPCallResult{}, errors.New("MCP stdio transport is not initialized")
-	}
-	raw, err := transport.requestLocked(ctx, "tools/call", map[string]any{
-		"name":      tool,
-		"arguments": arguments,
-	})
-	if err != nil {
-		return MCPCallResult{}, err
-	}
-	return decodeMCPCallResult(raw)
-}
-
-func (transport *stdioMCPTransport) Close() error {
-	transport.mu.Lock()
-	defer transport.mu.Unlock()
-	if transport.stdin != nil {
-		_ = transport.stdin.Close()
-	}
-	if transport.cmd == nil {
-		return nil
-	}
-	cmd := transport.cmd
-	transport.cmd = nil
-	transport.stdin = nil
-	transport.stdout = nil
-	transport.initialized = false
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
-	err := cmd.Wait()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return nil
-		}
-	}
-	return err
-}
-
-type httpMCPTransport struct {
-	spec   MCPPluginSpec
-	client *http.Client
-
-	mu              sync.Mutex
-	nextID          int64
-	sessionID       string
-	protocolVersion string
-	initialized     bool
-}
-
-func newHTTPMCPTransport(spec MCPPluginSpec, client *http.Client) *httpMCPTransport {
-	return &httpMCPTransport{spec: spec, client: client}
-}
-
-func (transport *httpMCPTransport) postLocked(
-	ctx context.Context,
-	payload any,
-	expectResponse bool,
-) (mcpRPCResponse, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return mcpRPCResponse{}, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, transport.spec.URL, bytes.NewReader(data))
-	if err != nil {
-		return mcpRPCResponse{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	for key, value := range transport.spec.Headers {
-		req.Header.Set(key, value)
-	}
-	if transport.sessionID != "" {
-		req.Header.Set("Mcp-Session-Id", transport.sessionID)
-	}
-	if transport.protocolVersion != "" {
-		req.Header.Set("MCP-Protocol-Version", transport.protocolVersion)
-	}
-
-	response, err := transport.client.Do(req)
-	if err != nil {
-		return mcpRPCResponse{}, err
-	}
-	defer response.Body.Close()
-	if sessionID := strings.TrimSpace(response.Header.Get("Mcp-Session-Id")); sessionID != "" {
-		transport.sessionID = sessionID
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 16<<10))
-		return mcpRPCResponse{}, fmt.Errorf("MCP HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
-	}
-	if !expectResponse || response.StatusCode == http.StatusAccepted || response.StatusCode == http.StatusNoContent {
-		return mcpRPCResponse{}, nil
-	}
-
-	contentType := strings.ToLower(response.Header.Get("Content-Type"))
-	if strings.Contains(contentType, "text/event-stream") {
-		scanner := bufio.NewScanner(response.Body)
-		scanner.Buffer(make([]byte, 64<<10), 4<<20)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if data == "" {
-				continue
-			}
-			var rpcResponse mcpRPCResponse
-			if err := json.Unmarshal([]byte(data), &rpcResponse); err != nil {
-				continue
-			}
-			return rpcResponse, nil
-		}
-		if err := scanner.Err(); err != nil {
-			return mcpRPCResponse{}, err
-		}
-		return mcpRPCResponse{}, errors.New("MCP SSE response contained no JSON-RPC data")
-	}
-
-	var rpcResponse mcpRPCResponse
-	if err := json.NewDecoder(response.Body).Decode(&rpcResponse); err != nil {
-		return mcpRPCResponse{}, err
-	}
-	return rpcResponse, nil
-}
-
-func (transport *httpMCPTransport) requestLocked(
-	ctx context.Context,
-	method string,
-	params map[string]any,
-) (json.RawMessage, error) {
-	id := atomic.AddInt64(&transport.nextID, 1)
-	response, err := transport.postLocked(ctx, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
-	}, true)
-	if err != nil {
-		return nil, err
-	}
-	if err := rpcError(response); err != nil {
-		return nil, err
-	}
-	return response.Result, nil
-}
-
-func (transport *httpMCPTransport) Initialize(ctx context.Context) error {
-	transport.mu.Lock()
-	defer transport.mu.Unlock()
-	if transport.initialized {
-		return nil
-	}
-	id := atomic.AddInt64(&transport.nextID, 1)
-	response, err := transport.postLocked(ctx, mcpInitializePayload(id), true)
-	if err != nil {
-		return err
-	}
-	if err := rpcError(response); err != nil {
-		return err
-	}
-	var initialized struct {
-		ProtocolVersion string `json:"protocolVersion"`
-	}
-	if len(response.Result) > 0 {
-		_ = json.Unmarshal(response.Result, &initialized)
-	}
-	transport.protocolVersion = strings.TrimSpace(initialized.ProtocolVersion)
-	if transport.protocolVersion == "" {
-		transport.protocolVersion = defaultMCPProtocol
-	}
-	if _, err := transport.postLocked(
-		ctx,
-		mcpNotification("notifications/initialized", map[string]any{}),
-		false,
-	); err != nil {
-		return err
-	}
-	transport.initialized = true
-	return nil
-}
-
-func (transport *httpMCPTransport) ListTools(ctx context.Context) ([]MCPTool, error) {
-	transport.mu.Lock()
-	defer transport.mu.Unlock()
-	if !transport.initialized {
-		return nil, errors.New("MCP HTTP transport is not initialized")
-	}
-	raw, err := transport.requestLocked(ctx, "tools/list", map[string]any{})
-	if err != nil {
-		return nil, err
-	}
-	return decodeMCPTools(raw)
-}
-
-func (transport *httpMCPTransport) CallTool(
-	ctx context.Context,
-	tool string,
-	arguments map[string]any,
-) (MCPCallResult, error) {
-	transport.mu.Lock()
-	defer transport.mu.Unlock()
-	if !transport.initialized {
-		return MCPCallResult{}, errors.New("MCP HTTP transport is not initialized")
-	}
-	raw, err := transport.requestLocked(ctx, "tools/call", map[string]any{
-		"name":      tool,
-		"arguments": arguments,
-	})
-	if err != nil {
-		return MCPCallResult{}, err
-	}
-	return decodeMCPCallResult(raw)
-}
-
-func (transport *httpMCPTransport) Close() error {
-	transport.mu.Lock()
-	defer transport.mu.Unlock()
-	transport.initialized = false
-	transport.sessionID = ""
-	transport.protocolVersion = ""
-	return nil
 }
