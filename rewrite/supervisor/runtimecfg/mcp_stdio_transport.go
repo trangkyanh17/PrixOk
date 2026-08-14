@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"syscall"
 )
 
 const defaultMCPStderrLimit = 64 << 10
@@ -76,6 +77,9 @@ func (transport *stdioMCPTransport) startLocked() error {
 	}
 	cmd := exec.Command(transport.spec.Command, transport.spec.Args...)
 	cmd.Env = os.Environ()
+	// uvx/npx frequently spawn a child runtime. Put every MCP launch in its
+	// own process group so timeout/close cannot leave descendants orphaned.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -97,18 +101,37 @@ func (transport *stdioMCPTransport) startLocked() error {
 	return nil
 }
 
+func stopMCPCommand(cmd *exec.Cmd) error {
+	if cmd == nil {
+		return nil
+	}
+	if cmd.Process != nil {
+		if pgid, err := syscall.Getpgid(cmd.Process.Pid); err == nil && pgid > 0 {
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		} else {
+			_ = cmd.Process.Kill()
+		}
+	}
+	err := cmd.Wait()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil
+		}
+	}
+	return err
+}
+
 func (transport *stdioMCPTransport) abortLocked() {
 	if transport.stdin != nil {
 		_ = transport.stdin.Close()
 	}
-	if transport.cmd != nil && transport.cmd.Process != nil {
-		_ = transport.cmd.Process.Kill()
-		_, _ = transport.cmd.Process.Wait()
-	}
+	cmd := transport.cmd
 	transport.cmd = nil
 	transport.stdin = nil
 	transport.stdout = nil
 	transport.initialized = false
+	_ = stopMCPCommand(cmd)
 }
 
 func (transport *stdioMCPTransport) writeLocked(payload any) error {
@@ -269,24 +292,10 @@ func (transport *stdioMCPTransport) Close() error {
 	if transport.stdin != nil {
 		_ = transport.stdin.Close()
 	}
-	if transport.cmd == nil {
-		transport.initialized = false
-		return nil
-	}
 	cmd := transport.cmd
 	transport.cmd = nil
 	transport.stdin = nil
 	transport.stdout = nil
 	transport.initialized = false
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
-	err := cmd.Wait()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return nil
-		}
-	}
-	return err
+	return stopMCPCommand(cmd)
 }
