@@ -258,7 +258,9 @@ func (runtime *TelegramAtriRuntime) Handle(
 		replyTo:  incoming.MessageID,
 		threadID: incoming.ThreadID,
 	}
-	request.ProgressCallback = responder.Callback
+	request.ProgressCallback = func(stage int, text string) error {
+		return responder.Callback(ctx, stage, text)
+	}
 
 	result, err := runtime.Runner.Run(ctx, request)
 	if err != nil {
