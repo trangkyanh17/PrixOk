@@ -104,7 +104,7 @@ func TestGenerateFreeChat429UsesOpenRouterGlobalCooldown(t *testing.T) {
 	control.ProviderMode = "openrouter"
 	router := NewSmartRouterState()
 	runtime := FreePoolRuntime{
-		Values: map[string]string{"OPENROUTER_API_KEY": "secret"},
+		Values:  map[string]string{"OPENROUTER_API_KEY": "secret"},
 		Control: control,
 		Router:  router,
 	}
