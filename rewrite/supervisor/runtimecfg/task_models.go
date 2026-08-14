@@ -24,7 +24,7 @@ var ModelMetadataRegistry = map[ProviderModel]ModelMetadata{
 	{Provider: "groq", Model: "qwen/qwen3.6-27b"}: {
 		Tier: "account", Stability: "preview", Privacy: "public_only", Context: 131072, MaxOutput: 16384,
 		Capabilities: []string{"chat", "reasoning", "tools", "json", "vision", "coding", "agent"},
-		Adapter: "groq_qwen36",
+		Adapter:      "groq_qwen36",
 	},
 	{Provider: "groq", Model: "openai/gpt-oss-120b"}: {
 		Tier: "free", Stability: "production", Privacy: "public_only",
