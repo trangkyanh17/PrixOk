@@ -14,6 +14,9 @@ This branch is experimental and must not be merged into `main` or `dev` until pa
 - Go free-pool runtime: plain-text message conversion, response parsing, actual HTTP request execution, provider-specific payloads/headers, task chains/fixed models, terminal-model self-healing, OpenRouter shared 429 cooldown semantics, dynamic token budgets, attempts/timeouts/error cooldowns, Cerebras multi-window quota recovery, Groq reset-aware quota ratios, latency EWMA and weighted smart-provider ordering/status telemetry.
 - Go provider control state: atomic 0600 persistence, normalization, capability-aware model/thinking healing and automatic fallback from dead manual providers to smart mode.
 - Go supervisor-worker policy: public-task privacy gate, chat/coding/agentic/research task classification, worker-only task eligibility, worker system prompts, untrusted supervisor context, public-only verification/retry prompts, verdict parsing, one-retry orchestration and final verification context assembly.
+- Go request/runtime policy: per-user cooldown, forced-reply bypass, global sliding-window quota, bounded runtime chat tracking, stale/oldest chat eviction and stale cooldown pruning.
+- Go Vertex lifecycle: POST retry/backoff with credential refresh on retry, HTTP/network error metadata, text/optional-text/function-call/grounding extraction, tool-result JSON-schema sanitization, finish-reason parsing, response cleanup/continuation merge, bounded empty-text retries, MAX_TOKENS continuation flow and an end-to-end text-only Vertex generation runtime.
+- Go Telegram reply policy: Unicode-aware 4000-character chunking with newline/space boundary preference.
 - Go supervisor: production repair-backoff policy and configurable runtime paths/intervals.
 - TypeScript web layer: typed torrent tree model, tree flattening, folder sizing, selection statistics, recursive selection helpers, request types, torrent tree fetch, selection submit and rename requests.
 - Dedicated GitHub Actions workflow: Rust format/check/test/release/smoke, Go format/vet/test/build, TypeScript typecheck.
@@ -21,7 +24,7 @@ This branch is experimental and must not be merged into `main` or `dev` until pa
 ## Source parity still required
 
 - `bot/__main__.py`: worker startup lifecycle, singleton ownership, startup fan-out and warm services.
-- `bot/modules/atri_ai.py`: actual Vertex request lifecycle, tool-call execution, Telegram/progressive response flow, skill/document/webapp bridges and integration of the ported worker privacy/classification/verify/retry policy. Core public-task worker-routing policy is now ported.
+- `bot/modules/atri_ai.py`: tool-call execution, Telegram/progressive response wiring, skill/document/webapp bridges, service-account credential integration and integration of the now-ported request quotas, worker routing, Vertex HTTP/text lifecycle and continuation policy. Text-only Vertex request flow is ported; tool-bearing generation is not yet complete.
 - `bot/modules/atri_memory.py`: async production API wiring remains; recent-history normalization, SQLite persistence, retention and bounded-row pruning are ported in Rust.
 - `bot/modules/atri_long_memory.py`: exact FTS5/LIKE ranking parity, NFKC/SequenceMatcher-equivalent similarity, legacy-memory migration and assistant-history cleanup, plus production AI-runtime integration. Core durable storage/retrieval/context behavior is now ported.
 - `bot/modules/atri_runtime.py`: production command/UI bridge remains; model aliases, thinking rules and durable config-file writes are ported.
