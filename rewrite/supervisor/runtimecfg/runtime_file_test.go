@@ -50,6 +50,9 @@ func TestSetRuntimeThinkingUsesModelRules(t *testing.T) {
 	if _, err := SetRuntimeThinking(path, "gemini-3.1-pro-preview", "minimal"); err == nil {
 		t.Fatal("expected unsupported thinking error")
 	}
+	if _, err := SetRuntimeThinking(path, "gemini-3.1-pro-preview", ""); err == nil {
+		t.Fatal("empty thinking must be rejected by setter")
+	}
 	state, err := SetRuntimeThinking(path, "gemini-3.1-pro-preview", "default")
 	if err != nil {
 		t.Fatal(err)
@@ -64,15 +67,22 @@ func TestWriteConfigValuesCollapsesDuplicatesAndPreservesMode(t *testing.T) {
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeConfigValues(path, map[string]string{"VERTEX_MODEL": "gemini-3-flash-preview"}); err != nil {
+	if err := writeConfigValues(path, map[string]string{
+		"VERTEX_THINKING_LEVEL": "high",
+		"VERTEX_MODEL":          "gemini-3-flash-preview",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	payload, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(payload), "VERTEX_MODEL =") != 1 {
+	text := string(payload)
+	if strings.Count(text, "VERTEX_MODEL =") != 1 {
 		t.Fatalf("duplicate model assignments remain: %s", payload)
+	}
+	if strings.Index(text, "VERTEX_MODEL =") > strings.Index(text, "VERTEX_THINKING_LEVEL =") {
+		t.Fatalf("runtime keys persisted out of Python order: %s", text)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
