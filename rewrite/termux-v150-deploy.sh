@@ -40,6 +40,16 @@ EOF
 
 positive_int() { [[ "${1:-}" =~ ^[0-9]+$ && "$1" -gt 0 ]]; }
 
+restore_deployed_sha_state() {
+  local meta_file="$1" previous_sha
+  previous_sha="$(awk -F$'\t' '$1=="repo_sha"{print $2}' "$meta_file" 2>/dev/null || true)"
+  if [[ "$previous_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s\n' "$previous_sha" >"$CURRENT_SHA_FILE"
+  else
+    rm -f "$CURRENT_SHA_FILE"
+  fi
+}
+
 if [[ "$ACTION" == "--self-test" ]]; then
   [[ "$EXPECTED_BRANCH" == "rewrite/rust-go-ts-v150" ]]
   [[ "$V150_BIN" == */.local/lib/atri-v150/atri-supervisor ]]
@@ -53,6 +63,17 @@ if [[ "$ACTION" == "--self-test" ]]; then
     echo "deploy self-test: FAIL (source mutation command found)" >&2
     exit 1
   fi
+  selftest_dir="$(mktemp -d)"
+  trap 'rm -rf "$selftest_dir"' EXIT
+  CURRENT_SHA_FILE="$selftest_dir/current-sha"
+  printf 'stale-sha\n' >"$CURRENT_SHA_FILE"
+  printf 'repo_sha\tunknown\n' >"$selftest_dir/meta.tsv"
+  restore_deployed_sha_state "$selftest_dir/meta.tsv"
+  [[ ! -e "$CURRENT_SHA_FILE" ]]
+  selftest_sha="0123456789abcdef0123456789abcdef01234567"
+  printf 'repo_sha\t%s\n' "$selftest_sha" >"$selftest_dir/meta.tsv"
+  restore_deployed_sha_state "$selftest_dir/meta.tsv"
+  [[ "$(cat "$CURRENT_SHA_FILE")" == "$selftest_sha" ]]
   echo "deploy self-test: PASS"
   exit 0
 fi
@@ -286,12 +307,11 @@ restore_runtime_files() {
 }
 
 rollback_from_backup() {
-  local backup="$1" previous_sha
+  local backup="$1"
   info "rollback from $backup"
   stop_v150 || true
   restore_runtime_files "$backup" || { echo "rollback file restore failed" >&2; return 1; }
-  previous_sha="$(awk -F$'\t' '$1=="repo_sha"{print $2}' "$backup/meta.tsv" 2>/dev/null || true)"
-  if [[ "$previous_sha" =~ ^[0-9a-f]{40}$ ]]; then printf '%s\n' "$previous_sha" >"$CURRENT_SHA_FILE"; fi
+  restore_deployed_sha_state "$backup/meta.tsv"
   if [[ -x "$V150_BIN" && -x "$BOOT_HOOK" ]]; then
     start_v150 || return 1
   fi
