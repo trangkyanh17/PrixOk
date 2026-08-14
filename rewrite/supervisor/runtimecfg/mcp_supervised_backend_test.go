@@ -10,7 +10,6 @@ import (
 
 type blockingMCPTransport struct {
 	started      chan struct{}
-	release      chan struct{}
 	closeEntered chan struct{}
 	startOnce    sync.Once
 	closeOnce    sync.Once
@@ -19,7 +18,6 @@ type blockingMCPTransport struct {
 func newBlockingMCPTransport() *blockingMCPTransport {
 	return &blockingMCPTransport{
 		started:      make(chan struct{}),
-		release:      make(chan struct{}),
 		closeEntered: make(chan struct{}),
 	}
 }
@@ -38,12 +36,8 @@ func (transport *blockingMCPTransport) CallTool(
 	_ map[string]any,
 ) (MCPCallResult, error) {
 	transport.startOnce.Do(func() { close(transport.started) })
-	select {
-	case <-transport.release:
-		return MCPCallResult{Content: []any{"ok"}}, nil
-	case <-ctx.Done():
-		return MCPCallResult{}, ctx.Err()
-	}
+	<-ctx.Done()
+	return MCPCallResult{}, ctx.Err()
 }
 
 func (transport *blockingMCPTransport) Close() error {
@@ -51,7 +45,7 @@ func (transport *blockingMCPTransport) Close() error {
 	return nil
 }
 
-func TestSupervisedMCPBackendCloseWaitsForActiveCall(t *testing.T) {
+func TestSupervisedMCPBackendCloseCancelsActiveCall(t *testing.T) {
 	transport := newBlockingMCPTransport()
 	raw := NewMCPTransportBackend(nil)
 	raw.Factory = func(MCPPluginSpec) (MCPTransport, error) {
@@ -74,30 +68,31 @@ func TestSupervisedMCPBackendCloseWaitsForActiveCall(t *testing.T) {
 		t.Fatal("tool call did not start")
 	}
 
-	closeAttempted := make(chan struct{})
 	closeDone := make(chan error, 1)
 	go func() {
-		close(closeAttempted)
 		closeDone <- backend.Close()
 	}()
-	<-closeAttempted
-	select {
-	case <-transport.closeEntered:
-		t.Fatal("transport close entered while tool call was active")
-	case <-time.After(50 * time.Millisecond):
-	}
 
-	close(transport.release)
-	if err := <-callDone; err != nil {
-		t.Fatal(err)
+	select {
+	case err := <-callDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("active call err=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("active tool call was not canceled by shutdown")
+	}
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervised backend close did not finish")
 	}
 	select {
 	case <-transport.closeEntered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("transport close did not run after active call completed")
-	}
-	if err := <-closeDone; err != nil {
-		t.Fatal(err)
+	default:
+		t.Fatal("transport close was not attempted")
 	}
 	if !backend.Closed() {
 		t.Fatal("backend should be closed")
@@ -129,5 +124,20 @@ func TestSupervisedMCPBackendClosedPrewarmIsBounded(t *testing.T) {
 	}
 	if pruned := backend.PruneIdle(); pruned != 0 {
 		t.Fatalf("pruned=%d", pruned)
+	}
+}
+
+func TestSupervisedMCPBackendNilAndUnconfigured(t *testing.T) {
+	var nilBackend *SupervisedMCPBackend
+	if _, err := nilBackend.ListTools(context.Background(), "context7"); err == nil {
+		t.Fatal("nil supervised backend should fail")
+	}
+
+	backend := NewSupervisedMCPBackend(nil)
+	if _, err := backend.ListTools(context.Background(), "context7"); err == nil {
+		t.Fatal("unconfigured transport backend should fail")
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

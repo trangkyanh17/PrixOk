@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 )
 
 var ErrMCPBackendClosed = errors.New("MCP transport backend is closed")
@@ -15,32 +16,60 @@ var ErrMCPBackendClosed = errors.New("MCP transport backend is closed")
 type SupervisedMCPBackend struct {
 	backend *MCPTransportBackend
 
-	gate   sync.RWMutex
-	closed bool
+	gate           sync.RWMutex
+	closed         atomic.Bool
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 var _ MCPBackend = (*SupervisedMCPBackend)(nil)
 
 func NewSupervisedMCPBackend(backend *MCPTransportBackend) *SupervisedMCPBackend {
-	return &SupervisedMCPBackend{backend: backend}
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	return &SupervisedMCPBackend{
+		backend:        backend,
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
+	}
+}
+
+func (backend *SupervisedMCPBackend) begin(
+	ctx context.Context,
+) (context.Context, func(), error) {
+	if backend == nil {
+		return nil, nil, errors.New("supervised MCP backend is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	backend.gate.RLock()
+	if backend.closed.Load() {
+		backend.gate.RUnlock()
+		return nil, nil, ErrMCPBackendClosed
+	}
+	operationCtx, cancel := context.WithCancel(ctx)
+	stopShutdownHook := context.AfterFunc(backend.shutdownCtx, cancel)
+	cleanup := func() {
+		stopShutdownHook()
+		cancel()
+		backend.gate.RUnlock()
+	}
+	return operationCtx, cleanup, nil
 }
 
 func (backend *SupervisedMCPBackend) ListTools(
 	ctx context.Context,
 	plugin string,
 ) ([]MCPTool, error) {
-	if backend == nil {
-		return nil, errors.New("supervised MCP backend is nil")
+	operationCtx, cleanup, err := backend.begin(ctx)
+	if err != nil {
+		return nil, err
 	}
-	backend.gate.RLock()
-	defer backend.gate.RUnlock()
-	if backend.closed {
-		return nil, ErrMCPBackendClosed
-	}
+	defer cleanup()
 	if backend.backend == nil {
 		return nil, errors.New("MCP transport backend is not configured")
 	}
-	return backend.backend.ListTools(ctx, plugin)
+	return backend.backend.ListTools(operationCtx, plugin)
 }
 
 func (backend *SupervisedMCPBackend) CallTool(
@@ -49,18 +78,15 @@ func (backend *SupervisedMCPBackend) CallTool(
 	tool string,
 	arguments map[string]any,
 ) (MCPCallResult, error) {
-	if backend == nil {
-		return MCPCallResult{}, errors.New("supervised MCP backend is nil")
+	operationCtx, cleanup, err := backend.begin(ctx)
+	if err != nil {
+		return MCPCallResult{}, err
 	}
-	backend.gate.RLock()
-	defer backend.gate.RUnlock()
-	if backend.closed {
-		return MCPCallResult{}, ErrMCPBackendClosed
-	}
+	defer cleanup()
 	if backend.backend == nil {
 		return MCPCallResult{}, errors.New("MCP transport backend is not configured")
 	}
-	return backend.backend.CallTool(ctx, plugin, tool, arguments)
+	return backend.backend.CallTool(operationCtx, plugin, tool, arguments)
 }
 
 func (backend *SupervisedMCPBackend) Prewarm(
@@ -68,18 +94,15 @@ func (backend *SupervisedMCPBackend) Prewarm(
 	plugins []string,
 	concurrency int,
 ) map[string]string {
-	if backend == nil {
-		return closedMCPPrewarmResults(plugins, "supervised MCP backend is nil")
+	operationCtx, cleanup, err := backend.begin(ctx)
+	if err != nil {
+		return closedMCPPrewarmResults(plugins, err.Error())
 	}
-	backend.gate.RLock()
-	defer backend.gate.RUnlock()
-	if backend.closed {
-		return closedMCPPrewarmResults(plugins, ErrMCPBackendClosed.Error())
-	}
+	defer cleanup()
 	if backend.backend == nil {
 		return closedMCPPrewarmResults(plugins, "MCP transport backend is not configured")
 	}
-	return backend.backend.Prewarm(ctx, plugins, concurrency)
+	return backend.backend.Prewarm(operationCtx, plugins, concurrency)
 }
 
 func closedMCPPrewarmResults(plugins []string, message string) map[string]string {
@@ -106,7 +129,7 @@ func (backend *SupervisedMCPBackend) PruneIdle() int {
 	}
 	backend.gate.RLock()
 	defer backend.gate.RUnlock()
-	if backend.closed || backend.backend == nil {
+	if backend.closed.Load() || backend.backend == nil {
 		return 0
 	}
 	return backend.backend.PruneIdle()
@@ -116,12 +139,15 @@ func (backend *SupervisedMCPBackend) Close() error {
 	if backend == nil {
 		return nil
 	}
-	backend.gate.Lock()
-	defer backend.gate.Unlock()
-	if backend.closed {
+	if !backend.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	backend.closed = true
+	if backend.shutdownCancel != nil {
+		backend.shutdownCancel()
+	}
+
+	backend.gate.Lock()
+	defer backend.gate.Unlock()
 	if backend.backend == nil {
 		return nil
 	}
@@ -129,10 +155,5 @@ func (backend *SupervisedMCPBackend) Close() error {
 }
 
 func (backend *SupervisedMCPBackend) Closed() bool {
-	if backend == nil {
-		return true
-	}
-	backend.gate.RLock()
-	defer backend.gate.RUnlock()
-	return backend.closed
+	return backend == nil || backend.closed.Load()
 }
