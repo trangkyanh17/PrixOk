@@ -26,6 +26,9 @@ func TestNewConfiguredBuiltinRuntimeWithoutCredentials(t *testing.T) {
 	if runtime.Audio.Credentials != nil {
 		t.Fatal("audio credentials should be nil")
 	}
+	if runtime.MCP != nil {
+		t.Fatalf("MCP=%T", runtime.MCP)
+	}
 	if declarations := runtime.Registry.Declarations("chat", false); len(declarations) != 15 {
 		t.Fatalf("public declarations=%v", declarations)
 	}
@@ -126,5 +129,35 @@ func TestNewConfiguredBuiltinRuntimeWiresDeltaForcePaths(t *testing.T) {
 	).(map[string]any)
 	if result["ok"] != true || !called {
 		t.Fatalf("result=%v called=%v", result, called)
+	}
+}
+
+func TestNewConfiguredBuiltinRuntimeWiresMCPBackend(t *testing.T) {
+	backend := testMCPBackend()
+	runtime, err := NewConfiguredBuiltinRuntime(BuiltinRuntimeConfig{
+		MCPBackend: backend,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.MCP == nil || runtime.MCP.Backend != backend {
+		t.Fatalf("MCP=%+v", runtime.MCP)
+	}
+	if !runtime.Registry.Has("code_plugin_search") || !runtime.Registry.Has("code_plugin_call") {
+		t.Fatal("MCP registry tools are missing")
+	}
+	if declarations := runtime.Registry.Declarations("chat", false); len(declarations) != 15 {
+		t.Fatalf("MCP tools leaked into chat declarations: %v", declarations)
+	}
+
+	result := runtime.Registry.Execute(
+		context.Background(),
+		ToolContext{Mode: "code"},
+		"code_plugin_search",
+		map[string]any{"query": "github repository file", "limit": 5},
+		false,
+	).(map[string]any)
+	if result["ok"] != true {
+		t.Fatalf("MCP search=%v", result)
 	}
 }
