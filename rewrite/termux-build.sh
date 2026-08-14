@@ -119,17 +119,18 @@ fi
 
 if ((SUPERVISOR_ONLY == 0)); then
   cd "$ROOT_DIR"
+  [[ -f Cargo.lock ]] || { echo "Missing Cargo.lock" >&2; exit 1; }
   if ((FULL_CHECK == 1)); then
     echo "[check] rust fmt"
     cargo fmt --all -- --check
     echo "[check] rust clippy"
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --locked --workspace --all-targets -- -D warnings
     echo "[check] rust tests"
-    cargo test --workspace
+    cargo test --locked --workspace
   fi
 
   echo "[build] rust release"
-  cargo build --workspace --release
+  cargo build --locked --workspace --release
 fi
 
 cd "$ROOT_DIR/supervisor"
@@ -155,8 +156,9 @@ go build -trimpath -ldflags='-s -w' -o "$ROOT_DIR/target/release/atri-supervisor
 
 if ((BUILD_WEB == 1)); then
   cd "$ROOT_DIR/web"
+  [[ -f package-lock.json ]] || { echo "Missing package-lock.json" >&2; exit 1; }
   echo "[check] web dependencies/typecheck"
-  npm install --ignore-scripts --no-audit --no-fund
+  npm ci --ignore-scripts --no-audit --no-fund
   npm run build
 fi
 
