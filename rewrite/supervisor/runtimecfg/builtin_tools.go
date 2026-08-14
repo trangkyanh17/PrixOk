@@ -9,6 +9,7 @@ type BuiltinToolOptions struct {
 	GoogleCloud        GoogleCloudToolRuntime
 	GoogleCapabilities GoogleCapabilitiesRuntime
 	GoogleWorkspace    GoogleWorkspaceToolRuntime
+	GoogleMedia        GoogleMediaToolRuntime
 }
 
 func RegisterBuiltinTools(registry *ToolRegistry, options BuiltinToolOptions) error {
@@ -31,6 +32,9 @@ func RegisterBuiltinTools(registry *ToolRegistry, options BuiltinToolOptions) er
 		return err
 	}
 	if err := RegisterGoogleWorkspaceTools(registry, options.GoogleWorkspace); err != nil {
+		return err
+	}
+	if err := RegisterGoogleMediaTools(registry, options.GoogleMedia); err != nil {
 		return err
 	}
 	return nil

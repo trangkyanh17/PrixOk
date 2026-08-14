@@ -23,15 +23,18 @@ func TestNewBuiltinToolRegistryRegistersPortedTools(t *testing.T) {
 		"google_gmail_search",
 		"google_gmail_read",
 		"google_sheets_read",
+		"google_tts_speak",
+		"google_vision_ocr",
+		"google_document_ai",
 	} {
 		if !registry.Has(name) {
 			t.Fatalf("missing builtin tool %s", name)
 		}
 	}
-	if declarations := registry.Declarations("chat", false); len(declarations) != 9 {
+	if declarations := registry.Declarations("chat", false); len(declarations) != 12 {
 		t.Fatalf("public declarations=%v", declarations)
 	}
-	if declarations := registry.Declarations("chat", true); len(declarations) != 15 {
+	if declarations := registry.Declarations("chat", true); len(declarations) != 18 {
 		t.Fatalf("owner declarations=%v", declarations)
 	}
 }
