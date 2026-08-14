@@ -20,6 +20,7 @@ type watchdog struct {
 	lastNetworkCheck time.Time
 	lastNetworkState string
 	lastBackoffLog   time.Time
+	observeLogged    bool
 }
 
 func newWatchdog(
@@ -103,6 +104,10 @@ func (watchdog *watchdog) ensureBotSession(ctx context.Context) {
 	}
 	if watchdog.botWorkerLockHeld(ctx) {
 		watchdog.log("BOT_SESSION_MISSING_WORKER_ACTIVE")
+		return
+	}
+	if watchdog.config.WatchdogObserveOnly {
+		watchdog.log("BOT_SESSION_MISSING_OBSERVE_ONLY")
 		return
 	}
 	if !watchdog.executable(watchdog.config.BotLauncher) {
@@ -208,6 +213,11 @@ func (watchdog *watchdog) checkNetwork(ctx context.Context, now time.Time) {
 
 func (watchdog *watchdog) tick(ctx context.Context) time.Duration {
 	delay := watchdog.normalizedLoopInterval()
+	if watchdog.config.WatchdogObserveOnly && !watchdog.observeLogged {
+		watchdog.log("WATCHDOG_OBSERVE_ONLY=ACTIVE")
+		watchdog.observeLogged = true
+	}
+
 	watchdog.ensureBotSession(ctx)
 	if ctx.Err() != nil {
 		return delay
@@ -220,14 +230,18 @@ func (watchdog *watchdog) tick(ctx context.Context) time.Duration {
 			return delay
 		}
 		watchdog.log("LOCAL_SHARED_COMPONENT_HEALTH=UNHEALTHY")
-		now := watchdog.currentTime()
-		if !watchdog.repair.ready(now) {
-			if watchdog.shouldLogRepairBackoff(now) {
-				watchdog.log("LOCAL_SHARED_COMPONENT_REPAIR=BACKOFF until=%d", watchdog.repair.nextAt.Unix())
+		if watchdog.config.WatchdogObserveOnly {
+			watchdog.log("LOCAL_SHARED_COMPONENT_REPAIR=OBSERVE_ONLY")
+		} else {
+			now := watchdog.currentTime()
+			if !watchdog.repair.ready(now) {
+				if watchdog.shouldLogRepairBackoff(now) {
+					watchdog.log("LOCAL_SHARED_COMPONENT_REPAIR=BACKOFF until=%d", watchdog.repair.nextAt.Unix())
+				}
+				return watchdogBackoffPollInterval
 			}
-			return watchdogBackoffPollInterval
+			watchdog.repairSharedComponents(ctx)
 		}
-		watchdog.repairSharedComponents(ctx)
 	}
 
 	if ctx.Err() == nil {

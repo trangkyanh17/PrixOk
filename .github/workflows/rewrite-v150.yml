@@ -45,10 +45,11 @@ jobs:
         working-directory: rewrite/supervisor
     steps:
       - uses: actions/checkout@v4
-      - name: Termux helper syntax and process tree self-test
+      - name: Termux helper syntax and self-tests
         run: |
-          bash -n ../termux-build.sh ../termux-all-in-one.sh
+          bash -n ../termux-build.sh ../termux-all-in-one.sh ../termux-production-canary.sh
           ../termux-all-in-one.sh --self-test
+          ../termux-production-canary.sh --self-test
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
@@ -60,6 +61,8 @@ jobs:
         run: go test -race -count=1 ./...
       - name: Stripped supervisor build
         run: go build -trimpath -ldflags='-s -w' -o /tmp/atri-supervisor .
+      - name: Android arm64 host watchdog cross-build
+        run: CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o /tmp/atri-supervisor-android-arm64 .
 
   web:
     runs-on: ubuntu-latest

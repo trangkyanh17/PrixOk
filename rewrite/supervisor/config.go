@@ -9,6 +9,7 @@ import (
 
 type config struct {
 	WatchdogEnabled      bool
+	WatchdogObserveOnly  bool
 	BotSession           string
 	BotLauncher          string
 	LocalHealth          string
@@ -36,6 +37,7 @@ type config struct {
 func loadConfig() config {
 	return config{
 		WatchdogEnabled:      envBool("ATRI_REWRITE_WATCHDOG", false),
+		WatchdogObserveOnly:  envBool("ATRI_REWRITE_WATCHDOG_OBSERVE_ONLY", false),
 		BotSession:           envString("ATRI_BOT_SESSION", "prixok-bot"),
 		BotLauncher:          envString("ATRI_BOT_LAUNCHER", os.ExpandEnv("$HOME/prixok-bot.sh")),
 		LocalHealth:          envString("ATRI_LOCAL_HEALTH", os.ExpandEnv("$HOME/atri-production-local-health.sh")),
