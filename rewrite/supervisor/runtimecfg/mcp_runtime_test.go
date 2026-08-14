@@ -9,15 +9,15 @@ import (
 )
 
 type fakeMCPBackend struct {
-	tools       map[string][]MCPTool
-	listCalls   map[string]int
-	callCount   int
-	lastPlugin  string
-	lastTool    string
-	lastArgs    map[string]any
-	listError   error
-	callError   error
-	callResult  MCPCallResult
+	tools      map[string][]MCPTool
+	listCalls  map[string]int
+	callCount  int
+	lastPlugin string
+	lastTool   string
+	lastArgs   map[string]any
+	listError  error
+	callError  error
+	callResult MCPCallResult
 }
 
 func (backend *fakeMCPBackend) ListTools(_ context.Context, plugin string) ([]MCPTool, error) {
