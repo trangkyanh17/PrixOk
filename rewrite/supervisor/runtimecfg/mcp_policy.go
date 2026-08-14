@@ -72,7 +72,7 @@ var mcpSensitivePathMarkers = []string{
 
 var mcpBlockedTools = map[string]map[string]bool{
 	"sentry": {
-		"update_issue":             true,
+		"update_issue":            true,
 		"analyze_issue_with_seer": true,
 		"search_sentry_tools":     true,
 		"execute_sentry_tool":     true,
