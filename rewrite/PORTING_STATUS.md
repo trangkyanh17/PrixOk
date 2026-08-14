@@ -63,6 +63,15 @@ This branch is experimental. Do not merge it into `main` or `dev`, and do not po
 - Sequential `code_plugin_batch` validation, stop-on-error handling and policy checks.
 - Context7 fast path that resolves a library ID, caches it and queries docs through the MCP backend.
 - Builtin runtime can inject an MCP backend and register the complete five-tool coding MCP surface.
+- Concrete stdio transports for Serena, Semgrep, Sentry and Chrome DevTools with persistent subprocess sessions.
+- Concrete Streamable HTTP-style transports for Context7 and GitHub MCP with session ID and negotiated protocol headers.
+- MCP initialization, initialized notifications, JSON-RPC request-ID matching, server-notification skipping and bounded unsupported client-request responses on stdio.
+- Tool-list cursor pagination with repeated-cursor and page-count guards.
+- Persistent per-plugin backend sessions with timeout invalidation, one safe discovery reconnect, idle pruning and bounded-concurrency prewarm helpers.
+- HTTP SSE response selection ignores notification/nonmatching events and waits for the matching JSON-RPC response.
+- HTTP session shutdown uses best-effort MCP session DELETE; stdio shutdown terminates the entire uvx/npx process group to avoid orphan descendants.
+- Stdio stderr capture is bounded to prevent long-lived MCP processes from growing memory indefinitely.
+- Automated transport tests cover reconnect/reuse, prewarm, header/session propagation, SSE notifications, pagination, HTTP session close, stdio server requests and real subprocess round-trips.
 
 ### Ported builtin tools
 
@@ -122,15 +131,16 @@ Google authentication/runtime helpers:
 
 ### Code-agent/MCP ecosystem
 
-The policy, schema, discovery, registry and Context7 fast-path logic is now ported. The concrete MCP transport/process layer is still missing:
+The policy, schema, discovery, registry and concrete stdio/HTTP transport layer are now ported. Remaining MCP work is production integration and live parity:
 
-- Real Serena stdio/session integration and semantic-code warm lifecycle.
-- Real Context7 transport/session integration behind the ported fast path.
-- Real GitHub MCP transport, authentication and live forced-GitHub coding path.
-- Semgrep warm worker/process lifecycle and reconnect behavior.
-- Sentry MCP transport/authentication with the existing read-only deny-list enforced end to end.
-- Chrome DevTools MCP process/session integration, including stateful multi-step browser batches.
-- Persistent MCP session pooling, process health/restart logic, transport timeouts and live tool-schema parity tests.
+- Wire prewarm/idle-prune/close lifecycle into the concrete Termux/Debian supervisor entrypoint.
+- Live-test Serena semantic-code behavior against the production `/app` project and verify warm-session memory/CPU characteristics.
+- Live-test Context7 and GitHub MCP authentication/session behavior against their real endpoints, including the forced-GitHub coding path.
+- Validate Semgrep long-lived process behavior and reconnect under real scan failures.
+- Live-test Sentry authentication and verify the read-only deny-list end to end.
+- Validate Chrome DevTools stateful multi-step batches against the production Chrome/Xvfb/proxy stack.
+- Add support for an independent server-initiated Streamable HTTP channel only if a production MCP server actually requires it; the current client advertises no client capabilities and handles response-stream notifications.
+- Differential live tool-schema fixtures against the Python MCP SDK path.
 
 ### Atri feature parity
 
