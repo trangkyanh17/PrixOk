@@ -45,8 +45,10 @@ jobs:
         working-directory: rewrite/supervisor
     steps:
       - uses: actions/checkout@v4
-      - name: Termux helper syntax
-        run: bash -n ../termux-build.sh ../termux-all-in-one.sh
+      - name: Termux helper syntax and process tree self-test
+        run: |
+          bash -n ../termux-build.sh ../termux-all-in-one.sh
+          ../termux-all-in-one.sh --self-test
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
