@@ -157,7 +157,7 @@ func NewConfiguredBuiltinRuntime(config BuiltinRuntimeConfig) (*BuiltinRuntime, 
 			Policy:   MCPPolicy{AllowWrite: config.MCPAllowWrite},
 			CacheTTL: config.MCPCacheTTL,
 		}
-		if err := RegisterMCPTools(registry, mcpRuntime); err != nil {
+		if err := RegisterAllMCPTools(registry, mcpRuntime); err != nil {
 			return nil, err
 		}
 	}
