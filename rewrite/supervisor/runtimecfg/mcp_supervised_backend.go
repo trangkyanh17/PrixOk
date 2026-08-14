@@ -8,8 +8,12 @@ import (
 
 var ErrMCPBackendClosed = errors.New("MCP transport backend is closed")
 
+// SupervisedMCPBackend gates the shared transport backend so shutdown cannot
+// close sessions underneath active tool calls and no new calls can start after
+// close begins. The same instance should be shared by the MCP runtime and the
+// supervisor lifecycle.
 type SupervisedMCPBackend struct {
-	Backend *MCPTransportBackend
+	backend *MCPTransportBackend
 
 	gate   sync.RWMutex
 	closed bool
@@ -18,7 +22,7 @@ type SupervisedMCPBackend struct {
 var _ MCPBackend = (*SupervisedMCPBackend)(nil)
 
 func NewSupervisedMCPBackend(backend *MCPTransportBackend) *SupervisedMCPBackend {
-	return &SupervisedMCPBackend{Backend: backend}
+	return &SupervisedMCPBackend{backend: backend}
 }
 
 func (backend *SupervisedMCPBackend) ListTools(
@@ -33,10 +37,10 @@ func (backend *SupervisedMCPBackend) ListTools(
 	if backend.closed {
 		return nil, ErrMCPBackendClosed
 	}
-	if backend.Backend == nil {
+	if backend.backend == nil {
 		return nil, errors.New("MCP transport backend is not configured")
 	}
-	return backend.Backend.ListTools(ctx, plugin)
+	return backend.backend.ListTools(ctx, plugin)
 }
 
 func (backend *SupervisedMCPBackend) CallTool(
@@ -53,10 +57,10 @@ func (backend *SupervisedMCPBackend) CallTool(
 	if backend.closed {
 		return MCPCallResult{}, ErrMCPBackendClosed
 	}
-	if backend.Backend == nil {
+	if backend.backend == nil {
 		return MCPCallResult{}, errors.New("MCP transport backend is not configured")
 	}
-	return backend.Backend.CallTool(ctx, plugin, tool, arguments)
+	return backend.backend.CallTool(ctx, plugin, tool, arguments)
 }
 
 func (backend *SupervisedMCPBackend) Prewarm(
@@ -72,10 +76,10 @@ func (backend *SupervisedMCPBackend) Prewarm(
 	if backend.closed {
 		return closedMCPPrewarmResults(plugins, ErrMCPBackendClosed.Error())
 	}
-	if backend.Backend == nil {
+	if backend.backend == nil {
 		return closedMCPPrewarmResults(plugins, "MCP transport backend is not configured")
 	}
-	return backend.Backend.Prewarm(ctx, plugins, concurrency)
+	return backend.backend.Prewarm(ctx, plugins, concurrency)
 }
 
 func closedMCPPrewarmResults(plugins []string, message string) map[string]string {
@@ -102,10 +106,10 @@ func (backend *SupervisedMCPBackend) PruneIdle() int {
 	}
 	backend.gate.RLock()
 	defer backend.gate.RUnlock()
-	if backend.closed || backend.Backend == nil {
+	if backend.closed || backend.backend == nil {
 		return 0
 	}
-	return backend.Backend.PruneIdle()
+	return backend.backend.PruneIdle()
 }
 
 func (backend *SupervisedMCPBackend) Close() error {
@@ -118,10 +122,10 @@ func (backend *SupervisedMCPBackend) Close() error {
 		return nil
 	}
 	backend.closed = true
-	if backend.Backend == nil {
+	if backend.backend == nil {
 		return nil
 	}
-	return backend.Backend.Close()
+	return backend.backend.Close()
 }
 
 func (backend *SupervisedMCPBackend) Closed() bool {
