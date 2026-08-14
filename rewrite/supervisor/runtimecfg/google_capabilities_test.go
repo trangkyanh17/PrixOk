@@ -8,16 +8,16 @@ import (
 func TestGoogleCapabilitiesParity(t *testing.T) {
 	runtime := GoogleCapabilitiesRuntime{
 		Values: map[string]string{
-			"VERTEX_PROJECT_ID":                  "project-x",
-			"GOOGLE_APPLICATION_CREDENTIALS":     "/tmp/service-account.json",
-			"YOUTUBE_API_KEY":                    "youtube-key",
-			"SAFE_BROWSING_API_KEY":              "safe-key",
-			"GOOGLE_MAPS_API_KEY":                "maps-key",
-			"GOOGLE_DOCUMENT_AI_PROCESSOR_ID":     "processor",
-			"GOOGLE_OAUTH_CLIENT_ID":              "client",
-			"GOOGLE_OAUTH_CLIENT_SECRET":          "secret",
-			"GOOGLE_OAUTH_REFRESH_TOKEN":          "refresh",
-			"GOOGLE_WORKSPACE_SERVICE_ACCOUNT":    "0",
+			"VERTEX_PROJECT_ID":                "project-x",
+			"GOOGLE_APPLICATION_CREDENTIALS":   "/tmp/service-account.json",
+			"YOUTUBE_API_KEY":                  "youtube-key",
+			"SAFE_BROWSING_API_KEY":            "safe-key",
+			"GOOGLE_MAPS_API_KEY":              "maps-key",
+			"GOOGLE_DOCUMENT_AI_PROCESSOR_ID":  "processor",
+			"GOOGLE_OAUTH_CLIENT_ID":           "client",
+			"GOOGLE_OAUTH_CLIENT_SECRET":       "secret",
+			"GOOGLE_OAUTH_REFRESH_TOKEN":       "refresh",
+			"GOOGLE_WORKSPACE_SERVICE_ACCOUNT": "0",
 		},
 	}
 	result := runtime.Capabilities()
