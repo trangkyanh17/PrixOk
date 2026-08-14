@@ -1,6 +1,8 @@
-# PrixOk rewrite v150
+# PrixOk rewrite V150
 
-Experimental Rust/Go/TypeScript rewrite. This branch remains isolated from `main`; production validation and deployment work must stay on `rewrite/rust-go-ts-v150` until an explicit merge decision is made.
+V150 is the Rust/Go/TypeScript runtime and Termux supervisor track for PrixOk. Its `main` integration is **additive**: the existing Python/Pyrogram bot remains the production Telegram worker, while V150 provides the validated supervisor/watchdog, MCP lifecycle, native helpers, runtime libraries and managed deployment tooling.
+
+Merging V150 code does not authorize replacing Telegram message handling. Full replacement has a separate parity/canary gate documented in [`PORTING_STATUS.md`](PORTING_STATUS.md).
 
 ## Termux/Debian build helper
 
@@ -10,7 +12,7 @@ From the `rewrite` directory:
 ./termux-build.sh
 ```
 
-The helper builds the optimized Rust native binaries and a stripped Go supervisor while capping parallel jobs at 2 by default to reduce RAM/heat spikes on Termux. Override with `ATRI_BUILD_JOBS=N` when appropriate.
+The helper builds optimized Rust native binaries and a stripped Go supervisor while capping parallel jobs at 2 by default to reduce RAM/heat spikes on Termux. Override with `ATRI_BUILD_JOBS=N` when appropriate.
 
 Useful modes:
 
@@ -23,6 +25,18 @@ ATRI_RUN_RACE=1 ./termux-build.sh --full-check
 ```
 
 `--host-watchdog-only` cross-builds the Android/arm64 supervisor used by the Termux-host production watchdog. `--full-check` runs Rust fmt/Clippy/tests plus Go fmt/vet/tests before release builds. The race detector is intentionally opt-in on the phone because it is resource-heavy.
+
+Rust builds require the committed `Cargo.lock` and use Cargo locked mode. Web builds require the committed `package-lock.json` and use `npm ci`, so a repository SHA resolves the same dependency graph in CI and on the managed build path.
+
+## Production worker invariant
+
+Production Telegram handling remains Python-backed:
+
+```text
+start.sh -> exec python3 -m bot
+```
+
+The canonical Termux launcher enters Debian `/app` with `RUN_SOURCE_UPDATE=0`. V150 supervises lifecycle/health but does not update or replace the customized live `/app` source tree during managed watchdog deployment.
 
 ## Termux/PROot MCP uv runtime
 
@@ -47,7 +61,7 @@ The supervisor defaults for `ATRI_MCP_PREWARM_TIMEOUT` and `ATRI_MCP_REQUEST_TIM
 
 ## Validation history and production stages
 
-The branch contains dedicated harnesses for isolated validation, production topology discovery, recovery/handoff, persistence, and reboot proof:
+Dedicated harnesses cover isolated validation, production topology discovery, recovery/handoff, persistence and reboot proof:
 
 - `termux-all-in-one.sh`
 - `termux-production-canary.sh`
@@ -56,7 +70,7 @@ The branch contains dedicated harnesses for isolated validation, production topo
 - `termux-v150-persistence-host.sh`
 - `termux-v150-pre-reboot-check.sh`
 
-These are validation/migration tools. They are not the normal ongoing upgrade path after V150 has taken production ownership.
+These are validation/migration tools. They are not the normal ongoing upgrade path after V150 has taken production watchdog ownership.
 
 ## Managed production deploy / upgrade
 
@@ -70,9 +84,19 @@ bash "$HOME/termux-v150-deploy.sh" rollback
 bash "$HOME/termux-v150-deploy.sh" cleanup-legacy
 ```
 
-The source-controlled manager is `termux-v150-deploy.sh`. Full operational semantics, automatic rollback behavior, backup locations, and legacy restoration are documented in [`PRODUCTION_DEPLOY.md`](PRODUCTION_DEPLOY.md).
+The source-controlled manager is `termux-v150-deploy.sh`. Full operational semantics, automatic rollback behavior, backup locations and legacy restoration are documented in [`PRODUCTION_DEPLOY.md`](PRODUCTION_DEPLOY.md).
 
 The deploy manager builds from the isolated `/opt/prixok-v150` clone and verifies the live `/app` source fingerprint before/after deployment. It never performs source update/reset/checkout/clean operations against `/app`.
+
+## CI
+
+`Rewrite V150` CI runs for the rewrite branch, for relevant pull requests into `main`, and for relevant pushes on `main`. It verifies:
+
+- Cargo lock presence, fmt/check/Clippy/tests/release build in locked mode;
+- Go fmt/vet/tests/race/build and Android/arm64 cross-build;
+- shell syntax and production helper self-tests;
+- the Python production-worker invariant;
+- npm lock presence, `npm ci`, and TypeScript build.
 
 ## Reporting
 
