@@ -36,17 +36,6 @@ type BuiltinRuntime struct {
 	Audio       GoogleAudioRuntime
 }
 
-func cloneStringMap(input map[string]string) map[string]string {
-	if input == nil {
-		return map[string]string{}
-	}
-	result := make(map[string]string, len(input))
-	for key, value := range input {
-		result[key] = value
-	}
-	return result
-}
-
 func configuredCloudCredentials(
 	values map[string]string,
 	authClient HTTPDoer,
