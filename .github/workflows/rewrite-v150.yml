@@ -24,6 +24,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy,rustfmt
+      - name: Generate Cargo lockfile
+        run: cargo generate-lockfile
+      - name: Upload Cargo lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: rewrite-cargo-lock
+          path: rewrite/Cargo.lock
+          if-no-files-found: error
       - name: Format
         run: cargo fmt --all -- --check
       - name: Check
@@ -97,5 +105,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Generate npm lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Upload npm lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: rewrite-web-package-lock
+          path: rewrite/web/package-lock.json
+          if-no-files-found: error
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build
