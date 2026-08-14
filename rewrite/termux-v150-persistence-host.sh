@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -Eeuo pipefail
 
-EXPECTED_BRANCH="rewrite/rust-go-ts-v150"
+EXPECTED_BRANCH="main"
 DEBIAN_CLONE="${ATRI_V150_DEBIAN_CLONE:-/opt/prixok-v150}"
 HOST_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 HOST_HOME="${HOME:-/data/data/com.termux/files/home}"
@@ -28,7 +28,7 @@ esac
 positive_int() { [[ "$1" =~ ^[0-9]+$ ]]; }
 
 if ((SELF_TEST == 1)); then
-  [[ "$EXPECTED_BRANCH" == "rewrite/rust-go-ts-v150" ]]
+  [[ "$EXPECTED_BRANCH" == "main" ]]
   [[ "$BOOT_HOOK" == */.termux/boot/20-atri-v150-production.sh ]]
   for f in "$0" "$(dirname "$0")/termux-v150-boot-hook.sh" "$(dirname "$0")/termux-v150-bot-launcher.sh"; do
     bash -n "$f"
