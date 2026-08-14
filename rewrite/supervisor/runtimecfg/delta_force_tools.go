@@ -29,7 +29,7 @@ type DeltaForceToolRuntime struct {
 
 func SearchDeltaForceCNDeclaration() map[string]any {
 	return map[string]any{
-		"name": "search_delta_force_cn",
+		"name":        "search_delta_force_cn",
 		"description": "Tra cứu knowledge base Delta Force bản Trung Quốc từ S1 đến S10. Bắt buộc dùng trước khi trả lời về vũ khí, đạn, giáp, bản đồ, operator, phương tiện, vật phẩm, mùa hoặc thay đổi cân bằng.",
 		"parameters": map[string]any{
 			"type": "object",
@@ -67,7 +67,7 @@ func SearchDeltaForceCNDeclaration() map[string]any {
 
 func GetDeltaForceCNHistoryDeclaration() map[string]any {
 	return map[string]any{
-		"name": "get_delta_force_cn_history",
+		"name":        "get_delta_force_cn_history",
 		"description": "Tìm lịch sử một thực thể hoặc chủ đề trong tài liệu Delta Force China S1-S10. Dùng khi hỏi xuất hiện từ mùa nào, từng bị chỉnh ra sao hoặc lịch sử qua các mùa.",
 		"parameters": map[string]any{
 			"type": "object",
@@ -96,7 +96,7 @@ func GetDeltaForceCNHistoryDeclaration() map[string]any {
 
 func CompareDeltaForceCNSeasonsDeclaration() map[string]any {
 	return map[string]any{
-		"name": "compare_delta_force_cn_seasons",
+		"name":        "compare_delta_force_cn_seasons",
 		"description": "Lấy bằng chứng cùng một chủ đề ở hai mùa Delta Force China. Không tự suy ra thay đổi nếu nguồn không ghi rõ.",
 		"parameters": map[string]any{
 			"type": "object",
