@@ -164,18 +164,14 @@ func (ingress *telegramShadowIngress) handler() http.Handler {
 		if event.Media != nil {
 			mediaType = event.Media.Type
 		}
-		// Never log message text or callback payload. Shadow ingress is intended
-		// for local parity observation and must not duplicate conversation content
-		// into supervisor logs.
+		// Never log message text, callback payload, or Telegram identifiers.
+		// Shadow ingress is local parity observation, not a second transcript.
 		log.Printf(
-			"TELEGRAM_SHADOW_ACCEPT kind=%s chat_type=%s command=%s media=%s chat=%d user=%d message=%d",
+			"TELEGRAM_SHADOW_ACCEPT kind=%s chat_type=%s command=%s media=%s",
 			event.Kind,
 			event.ChatType,
 			event.Command,
 			mediaType,
-			event.ChatID,
-			event.UserID,
-			event.MessageID,
 		)
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusAccepted)
