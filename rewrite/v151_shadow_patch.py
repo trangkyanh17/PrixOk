@@ -83,6 +83,20 @@ def verify(source_root: Path, live_root: Path) -> dict[str, object]:
     }
 
 
+def restore_pre_apply(
+    live_main: Path,
+    live_module: Path,
+    main_backup: Path,
+    module_backup: Path,
+    module_existed: bool,
+) -> None:
+    atomic_copy(main_backup, live_main)
+    if module_existed:
+        atomic_copy(module_backup, live_module)
+    else:
+        live_module.unlink(missing_ok=True)
+
+
 def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, object]:
     source_module, live_main, live_module = paths(source_root, live_root)
     if not source_module.is_file():
@@ -104,7 +118,6 @@ def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, obj
         raise RuntimeError(
             f"partial V151 hook already present import_count={import_count} call_count={call_count}"
         )
-
     if import_count == 0:
         if text.count(IMPORT_ANCHOR) != 1:
             raise RuntimeError("expected exactly one core handler import anchor")
@@ -112,10 +125,26 @@ def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, obj
             raise RuntimeError("expected exactly one add_handlers() call anchor")
         text = text.replace(IMPORT_ANCHOR, f"{IMPORT_ANCHOR}\n{IMPORT_LINE}", 1)
         text = text.replace(CALL_ANCHOR, f"{CALL_ANCHOR}\n{CALL_LINE}", 1)
-        atomic_text_replace(live_main, text)
 
-    atomic_copy(source_module, live_module)
-    result = verify(source_root, live_root)
+    mutation_started = False
+    try:
+        if import_count == 0:
+            mutation_started = True
+            atomic_text_replace(live_main, text)
+        mutation_started = True
+        atomic_copy(source_module, live_module)
+        result = verify(source_root, live_root)
+    except Exception:
+        if mutation_started:
+            restore_pre_apply(
+                live_main,
+                live_module,
+                main_backup,
+                module_backup,
+                module_existed,
+            )
+        raise
+
     manifest = {
         "module_existed": module_existed,
         "main_before_sha256": sha256(main_backup),
