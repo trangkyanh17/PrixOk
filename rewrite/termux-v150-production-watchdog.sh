@@ -4,6 +4,16 @@ set -Eeuo pipefail
 BIN="$HOME/.local/lib/atri-v150/atri-supervisor"
 BOT_LAUNCHER="$HOME/.local/lib/atri-v150/prixok-bot-v150.sh"
 LOG_TIMEZONE="${ATRI_LOG_TIMEZONE:-Asia/Ho_Chi_Minh}"
+SHADOW_CONFIG="$HOME/.local/state/atri-v151-shadow/runtime.env"
+
+if [[ -r "$SHADOW_CONFIG" ]]; then
+  # Managed by termux-v151-shadow-canary.sh. Keep this file key=value only and
+  # private to the Termux app UID; it is intentionally outside the repository.
+  set -a
+  # shellcheck disable=SC1090
+  . "$SHADOW_CONFIG"
+  set +a
+fi
 
 if [[ ! -x "$BIN" ]]; then
   echo "missing executable: $BIN" >&2
