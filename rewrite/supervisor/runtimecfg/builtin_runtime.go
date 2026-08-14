@@ -25,6 +25,9 @@ type BuiltinRuntimeConfig struct {
 	DocumentAIBaseURL   string
 	SpeechBaseURL       string
 	OAuthTokenURL       string
+	DeltaForceBinary    string
+	DeltaForceDB        string
+	DeltaForceInvoker   DeltaForceNativeInvoker
 
 	VoiceSender GoogleVoiceSender
 }
@@ -128,6 +131,11 @@ func NewConfiguredBuiltinRuntime(config BuiltinRuntimeConfig) (*BuiltinRuntime, 
 			VisionURL:         config.VisionURL,
 			DocumentAIBaseURL: config.DocumentAIBaseURL,
 			VoiceSender:       config.VoiceSender,
+		},
+		DeltaForce: DeltaForceToolRuntime{
+			BinaryPath: config.DeltaForceBinary,
+			DBPath:     config.DeltaForceDB,
+			Invoker:    config.DeltaForceInvoker,
 		},
 	})
 	if err != nil {

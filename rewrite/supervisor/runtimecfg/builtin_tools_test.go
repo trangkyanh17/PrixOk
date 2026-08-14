@@ -26,15 +26,18 @@ func TestNewBuiltinToolRegistryRegistersPortedTools(t *testing.T) {
 		"google_tts_speak",
 		"google_vision_ocr",
 		"google_document_ai",
+		"search_delta_force_cn",
+		"get_delta_force_cn_history",
+		"compare_delta_force_cn_seasons",
 	} {
 		if !registry.Has(name) {
 			t.Fatalf("missing builtin tool %s", name)
 		}
 	}
-	if declarations := registry.Declarations("chat", false); len(declarations) != 12 {
+	if declarations := registry.Declarations("chat", false); len(declarations) != 15 {
 		t.Fatalf("public declarations=%v", declarations)
 	}
-	if declarations := registry.Declarations("chat", true); len(declarations) != 18 {
+	if declarations := registry.Declarations("chat", true); len(declarations) != 21 {
 		t.Fatalf("owner declarations=%v", declarations)
 	}
 }

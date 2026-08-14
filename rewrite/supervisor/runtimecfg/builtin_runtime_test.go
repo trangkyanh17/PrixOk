@@ -26,7 +26,7 @@ func TestNewConfiguredBuiltinRuntimeWithoutCredentials(t *testing.T) {
 	if runtime.Audio.Credentials != nil {
 		t.Fatal("audio credentials should be nil")
 	}
-	if declarations := runtime.Registry.Declarations("chat", false); len(declarations) != 12 {
+	if declarations := runtime.Registry.Declarations("chat", false); len(declarations) != 15 {
 		t.Fatalf("public declarations=%v", declarations)
 	}
 
@@ -64,7 +64,7 @@ func TestNewConfiguredBuiltinRuntimeWiresOAuthWorkspace(t *testing.T) {
 	if provider.TokenURL != "https://oauth.example/token" {
 		t.Fatalf("token URL=%q", provider.TokenURL)
 	}
-	if declarations := runtime.Registry.Declarations("chat", true); len(declarations) != 18 {
+	if declarations := runtime.Registry.Declarations("chat", true); len(declarations) != 21 {
 		t.Fatalf("owner declarations=%v", declarations)
 	}
 }
@@ -92,5 +92,39 @@ func TestNewConfiguredBuiltinRuntimeWiresServiceAccountReferences(t *testing.T) 
 	}
 	if runtime.Audio.Credentials != runtime.Credentials {
 		t.Fatal("audio does not share cloud credentials")
+	}
+}
+
+func TestNewConfiguredBuiltinRuntimeWiresDeltaForcePaths(t *testing.T) {
+	called := false
+	runtime, err := NewConfiguredBuiltinRuntime(BuiltinRuntimeConfig{
+		DeltaForceBinary: "/tmp/atri-native",
+		DeltaForceDB:     "/tmp/delta.sqlite3",
+		DeltaForceInvoker: func(
+			_ context.Context,
+			binaryPath string,
+			command string,
+			dbPath string,
+			_ []byte,
+		) ([]byte, error) {
+			called = true
+			if binaryPath != "/tmp/atri-native" || dbPath != "/tmp/delta.sqlite3" || command != "delta-search" {
+				t.Fatalf("binary=%q db=%q command=%q", binaryPath, dbPath, command)
+			}
+			return []byte(`{"ok":true,"region":"cn"}`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := runtime.Registry.Execute(
+		context.Background(),
+		ToolContext{Mode: "chat"},
+		"search_delta_force_cn",
+		map[string]any{"query": "M4"},
+		false,
+	).(map[string]any)
+	if result["ok"] != true || !called {
+		t.Fatalf("result=%v called=%v", result, called)
 	}
 }

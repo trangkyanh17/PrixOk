@@ -10,6 +10,7 @@ type BuiltinToolOptions struct {
 	GoogleCapabilities GoogleCapabilitiesRuntime
 	GoogleWorkspace    GoogleWorkspaceToolRuntime
 	GoogleMedia        GoogleMediaToolRuntime
+	DeltaForce         DeltaForceToolRuntime
 }
 
 func RegisterBuiltinTools(registry *ToolRegistry, options BuiltinToolOptions) error {
@@ -35,6 +36,9 @@ func RegisterBuiltinTools(registry *ToolRegistry, options BuiltinToolOptions) er
 		return err
 	}
 	if err := RegisterGoogleMediaTools(registry, options.GoogleMedia); err != nil {
+		return err
+	}
+	if err := RegisterDeltaForceTools(registry, options.DeltaForce); err != nil {
 		return err
 	}
 	return nil
