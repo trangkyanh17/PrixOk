@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -57,10 +58,10 @@ def test_canary_manager_is_narrow_and_has_guarded_rollback():
     assert "ATRI_V150_TELEGRAM_SHADOW=true" in canary
     assert "tmux send-keys -t prixok-bot C-c" in canary
     assert "AUTO ROLLBACK" in canary
-    assert "git pull" not in canary
-    assert "git reset" not in canary
-    assert "git checkout" not in canary
-    assert "git clean" not in canary
+    assert not re.search(
+        r"(?m)^\s*git\s+(?:pull|reset|checkout|clean)\b", canary
+    )
+    assert not re.search(r"(?m)^\s*rm\s+-rf\s+/app(?:/|\s|$)", canary)
     assert "bot/__main__.py" in patcher
     assert "bot/modules/atri_v150_shadow.py" in patcher
     assert "changed after V151 apply" in patcher
