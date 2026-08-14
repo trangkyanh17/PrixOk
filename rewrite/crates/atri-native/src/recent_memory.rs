@@ -1,7 +1,11 @@
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{Map, Value};
-use std::{fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Debug, Clone)]
 pub struct RecentMemoryConfig {
@@ -115,7 +119,10 @@ impl RecentMemoryStore {
 
     pub fn clear(&self, key: &Value) -> Result<()> {
         let conn = self.connect()?;
-        conn.execute("DELETE FROM chat_memory WHERE chat_key=?1", [key_to_text(key)])?;
+        conn.execute(
+            "DELETE FROM chat_memory WHERE chat_key=?1",
+            [key_to_text(key)],
+        )?;
         Ok(())
     }
 
