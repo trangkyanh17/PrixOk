@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+var freePoolMonotonicOrigin = time.Now()
 
 type FreeReply struct {
 	Text     string
@@ -128,7 +129,7 @@ func CallFreeProvider(
 }
 
 func monotonicSeconds() float64 {
-	return float64(time.Now().UnixNano()) / 1e9
+	return time.Since(freePoolMonotonicOrigin).Seconds()
 }
 
 func (runtime *FreePoolRuntime) runtimeClient() HTTPDoer {
@@ -303,5 +304,3 @@ func (runtime *FreePoolRuntime) GenerateFreeChat(
 	}
 	return nil, nil
 }
-
-var _ io.Reader
