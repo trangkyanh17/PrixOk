@@ -4,9 +4,19 @@ on:
   push:
     branches:
       - rewrite/rust-go-ts-v150
+      - main
     paths:
       - 'rewrite/**'
       - 'termux/**'
+      - 'start.sh'
+      - '.github/workflows/rewrite-v150.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'rewrite/**'
+      - 'termux/**'
+      - 'start.sh'
       - '.github/workflows/rewrite-v150.yml'
   workflow_dispatch:
 
@@ -24,24 +34,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy,rustfmt
-      - name: Generate Cargo lockfile
-        run: cargo generate-lockfile
-      - name: Upload Cargo lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: rewrite-cargo-lock
-          path: rewrite/Cargo.lock
-          if-no-files-found: error
+      - name: Verify lockfile
+        run: test -f Cargo.lock
       - name: Format
         run: cargo fmt --all -- --check
       - name: Check
-        run: cargo check --workspace --all-targets
+        run: cargo check --locked --workspace --all-targets
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
       - name: Release build
-        run: cargo build --workspace --release
+        run: cargo build --locked --workspace --release
       - name: Native hash smoke
         run: |
           printf 'abc' > /tmp/atri-hash.txt
@@ -69,6 +73,7 @@ jobs:
           grep -q 'prixok-bot-v150.sh' ../termux-v150-production-watchdog.sh
           ! grep -q 'atri-production-ensure.sh' ../../termux/prixok-bot.sh
           grep -q 'RUN_SOURCE_UPDATE=0' ../../termux/prixok-bot.sh
+          grep -q 'exec python3 -m bot' ../../start.sh
           ! grep -En 'local[^#]*timeout_seconds=.*deadline=.*timeout_seconds' ../termux-production-recovery-common.sh ../termux-v150-persistence-host.sh ../termux-v150-deploy.sh
           ! grep -En 'kill[[:space:]]+-|tmux[[:space:]]+kill|git[[:space:]]+(pull|reset|checkout|clean)|update\.py|install[[:space:]]+-m|mv[[:space:]]+-f' ../termux-v150-pre-reboot-check.sh
           ! grep -En 'git[[:space:]]+(pull|reset|checkout|clean)|update\.py' ../termux-v150-deploy.sh
@@ -105,13 +110,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Generate npm lockfile
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Upload npm lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: rewrite-web-package-lock
-          path: rewrite/web/package-lock.json
-          if-no-files-found: error
+      - name: Verify lockfile
+        run: test -f package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build
