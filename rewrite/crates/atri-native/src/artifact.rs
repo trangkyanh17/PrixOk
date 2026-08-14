@@ -133,7 +133,10 @@ impl ArtifactIndex {
         for row in rows {
             let (artifact_ref, filename, path, content) = row?;
             let lower = content.to_lowercase();
-            let matched = words.iter().filter(|word| lower.contains(word.as_str())).count();
+            let matched = words
+                .iter()
+                .filter(|word| lower.contains(word.as_str()))
+                .count();
             if matched == 0 {
                 continue;
             }

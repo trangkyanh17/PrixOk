@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -42,6 +41,49 @@ func (transport *blockingMCPTransport) CallTool(
 }
 
 func (transport *blockingMCPTransport) Close() error {
+	transport.closeOnce.Do(func() { close(transport.closeEntered) })
+	return nil
+}
+
+type releasableMCPTransport struct {
+	started      chan struct{}
+	release      chan struct{}
+	closeEntered chan struct{}
+	startOnce    sync.Once
+	closeOnce    sync.Once
+}
+
+func newReleasableMCPTransport() *releasableMCPTransport {
+	return &releasableMCPTransport{
+		started:      make(chan struct{}),
+		release:      make(chan struct{}),
+		closeEntered: make(chan struct{}),
+	}
+}
+
+func (transport *releasableMCPTransport) Initialize(context.Context) error {
+	return nil
+}
+
+func (transport *releasableMCPTransport) ListTools(context.Context) ([]MCPTool, error) {
+	return []MCPTool{{Name: "releasable_tool"}}, nil
+}
+
+func (transport *releasableMCPTransport) CallTool(
+	ctx context.Context,
+	_ string,
+	_ map[string]any,
+) (MCPCallResult, error) {
+	transport.startOnce.Do(func() { close(transport.started) })
+	select {
+	case <-transport.release:
+		return MCPCallResult{}, nil
+	case <-ctx.Done():
+		return MCPCallResult{}, ctx.Err()
+	}
+}
+
+func (transport *releasableMCPTransport) Close() error {
 	transport.closeOnce.Do(func() { close(transport.closeEntered) })
 	return nil
 }
@@ -110,22 +152,20 @@ func TestSupervisedMCPBackendCloseCancelsActiveCall(t *testing.T) {
 }
 
 func TestSupervisedMCPBackendPruneWaitsForActiveCall(t *testing.T) {
-	transport := newBlockingMCPTransport()
-	var clock atomic.Int64
-	clock.Store(100)
+	transport := newReleasableMCPTransport()
+	clock := time.Unix(100, 0)
 	raw := NewMCPTransportBackend(nil)
 	raw.IdleTTL = 50 * time.Second
-	raw.Now = func() time.Time { return time.Unix(clock.Load(), 0) }
+	raw.Now = func() time.Time { return clock }
 	raw.Factory = func(MCPPluginSpec) (MCPTransport, error) { return transport, nil }
 	backend := NewSupervisedMCPBackend(raw)
 
 	if _, err := backend.ListTools(context.Background(), "context7"); err != nil {
 		t.Fatal(err)
 	}
-	callCtx, cancelCall := context.WithCancel(context.Background())
 	callDone := make(chan error, 1)
 	go func() {
-		_, err := backend.CallTool(callCtx, "context7", "blocking_tool", nil)
+		_, err := backend.CallTool(context.Background(), "context7", "releasable_tool", nil)
 		callDone <- err
 	}()
 	select {
@@ -134,7 +174,7 @@ func TestSupervisedMCPBackendPruneWaitsForActiveCall(t *testing.T) {
 		t.Fatal("tool call did not start")
 	}
 
-	clock.Store(200)
+	clock = time.Unix(200, 0)
 	pruneDone := make(chan int, 1)
 	go func() { pruneDone <- backend.PruneIdle() }()
 	select {
@@ -143,14 +183,14 @@ func TestSupervisedMCPBackendPruneWaitsForActiveCall(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	cancelCall()
+	close(transport.release)
 	select {
 	case err := <-callDone:
-		if !errors.Is(err, context.Canceled) {
+		if err != nil {
 			t.Fatalf("call err=%v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("call did not stop")
+		t.Fatal("call did not finish")
 	}
 	select {
 	case count := <-pruneDone:
