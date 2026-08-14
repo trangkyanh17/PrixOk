@@ -53,6 +53,16 @@ jobs:
           bash ../termux-production-topology.sh --self-test
           bash ../termux-production-recovery-host.sh --self-test
           bash -n ../termux-v150-production-watchdog.sh
+          ! grep -En 'local[^#]*timeout_seconds=.*deadline=.*timeout_seconds' ../termux-production-recovery-common.sh
+          bash -u -c '
+            MCP_PID=""
+            source ../termux-production-recovery-common.sh
+            wait_pid_gone 999999 1
+            tmp="$(mktemp)"
+            trap "rm -f \"$tmp\"" EXIT
+            printf "READY\n" >"$tmp"
+            wait_for_log_pattern "$tmp" READY 1
+          '
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
