@@ -17,16 +17,34 @@ The production worker still runs from the canonical `$HOME/prixok-bot.sh` launch
 
 `termux/prixok-bot.sh` no longer calls the legacy `atri-production-ensure.sh` path. V150 is the only watchdog/repair owner.
 
-## Deploy manager
+## Canonical deployment source
 
-Run `rewrite/termux-v150-deploy.sh` from the Termux host. It expects the isolated clone at `/opt/prixok-v150` inside Debian and requires branch `rewrite/rust-go-ts-v150` with a clean tracked tree.
+After the V150 integration landed in the repository default branch, `main` is the only supported source branch for managed V150 deployment. The historical `rewrite/rust-go-ts-v150` branch is no longer an operational deployment source.
 
-Copy the manager from the isolated clone to Termux home after pulling the desired branch revision:
+The isolated build clone remains `/opt/prixok-v150` inside Debian. It must be on a clean `main` branch before `install`, `upgrade`, persistence verification, or pre-reboot verification is run.
+
+One-time migration of an older clone that is still on the rewrite branch:
 
 ```bash
 # Inside Debian
 cd /opt/prixok-v150
-git pull --ff-only
+git fetch origin
+git switch main
+git pull --ff-only origin main
+```
+
+Do not perform these Git operations in the live `/app` tree.
+
+## Deploy manager
+
+Run `rewrite/termux-v150-deploy.sh` from the Termux host. It expects the isolated clone at `/opt/prixok-v150` inside Debian and requires branch `main` with a clean tracked tree.
+
+Copy the manager from the isolated clone after pulling the desired `main` revision:
+
+```bash
+# Inside Debian
+cd /opt/prixok-v150
+git pull --ff-only origin main
 cp rewrite/termux-v150-deploy.sh /data/data/com.termux/files/home/
 chmod 700 /data/data/com.termux/files/home/termux-v150-deploy.sh
 exit
@@ -102,6 +120,12 @@ bash "$HOME/termux-v150-deploy.sh" restore-legacy
 
 Keeping restoration separate from process startup prevents accidental dual-watchdog ownership.
 
+## Boot-hook lock lifecycle
+
+The Termux:Boot hook owns its singleton lock on file descriptor 9 only while the hook itself is running. Before spawning the long-lived watchdog process it explicitly closes FD 9. Lock contention is reported as `LOCK_BUSY`/exit code `77` rather than being treated as a successful start.
+
+This prevents a watchdog process from inheriting and permanently holding `$HOME/.cache/atri-v150-persistence/boot-hook.lock`.
+
 ## Reports
 
 Every manager invocation writes a report to Android Download when writable:
@@ -112,6 +136,7 @@ Every manager invocation writes a report to Android Download when writable:
 
 ## Production rules
 
+- `main` is the canonical source branch for the isolated V150 build/deploy clone.
 - Never run a legacy watchdog and V150 watchdog concurrently.
 - Never point deploy operations at the live customized `/app` Git tree.
 - Do not use broad `pkill`; the manager signals only the exact V150 watchdog PID set it resolves.

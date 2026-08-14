@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -Eeuo pipefail
 
-EXPECTED_BRANCH="rewrite/rust-go-ts-v150"
+EXPECTED_BRANCH="main"
 DEBIAN_CLONE="${ATRI_V150_DEBIAN_CLONE:-/opt/prixok-v150}"
 HOST_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 HOST_HOME="${HOME:-/data/data/com.termux/files/home}"
@@ -16,6 +16,7 @@ SOURCE_BASELINE="$STATE_DIR/source-baseline.txt"
 BOOT_BASELINE="$STATE_DIR/baseline-boot-id"
 
 if [[ "${1:-}" == "--self-test" ]]; then
+  [[ "$EXPECTED_BRANCH" == "main" ]]
   bash -n "$0"
   if grep -Eq 'kill[[:space:]]+-|tmux[[:space:]]+kill|git[[:space:]]+(pull|reset|checkout|clean)|update\.py|install[[:space:]]+-m|mv[[:space:]]+-f' "$0"; then
     echo "pre-reboot self-test: FAIL (mutation pattern found)" >&2
