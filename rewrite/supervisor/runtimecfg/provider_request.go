@@ -13,6 +13,17 @@ func thinkingEffort(level string) string {
 	}
 }
 
+func BuildProviderHeaders(provider, apiKey string) map[string]string {
+	headers := map[string]string{
+		"Authorization": "Bearer " + apiKey,
+		"Content-Type":  "application/json",
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "openrouter") {
+		headers["X-Title"] = "Atri AI"
+	}
+	return headers
+}
+
 func BuildChatPayload(
 	provider string,
 	model string,
@@ -23,6 +34,9 @@ func BuildChatPayload(
 ) map[string]any {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	level := strings.ToLower(strings.TrimSpace(thinkingLevel))
+	if level == "" {
+		level = "medium"
+	}
 	payload := map[string]any{
 		"model":       model,
 		"messages":    messages,
