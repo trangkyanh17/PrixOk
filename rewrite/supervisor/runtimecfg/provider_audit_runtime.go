@@ -7,13 +7,13 @@ import (
 )
 
 type ProviderAuditOptions struct {
-	Providers        []string
-	Keys             map[string]string
-	OpenAIEndpoints  map[string]OpenAIProviderEndpoints
-	VertexBaseURL    string
+	Providers         []string
+	Keys              map[string]string
+	OpenAIEndpoints   map[string]OpenAIProviderEndpoints
+	VertexBaseURL     string
 	VertexCredentials VertexAuditCredentials
-	StatePath        string
-	Now              int64
+	StatePath         string
+	Now               int64
 }
 
 func requestedAuditProviders(providers []string) []string {
