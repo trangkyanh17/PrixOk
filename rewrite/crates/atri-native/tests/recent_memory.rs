@@ -31,21 +31,27 @@ fn drops_invalid_roles_parts_and_non_object_parts() {
         {"role":"user","parts":[1,"x",{"text":"kept"}]}
     ]);
     let normalized = normalize_history(&history, 12);
-    assert_eq!(normalized, vec![json!({"role":"user","parts":[{"text":"kept"}]})]);
+    assert_eq!(
+        normalized,
+        vec![json!({"role":"user","parts":[{"text":"kept"}]})]
+    );
 }
 
 #[test]
 fn save_load_and_clear_round_trip() {
     let dir = tempdir().unwrap();
-    let store = RecentMemoryStore::new(dir.path().join("memory.sqlite3"), RecentMemoryConfig::default());
+    let store = RecentMemoryStore::new(
+        dir.path().join("memory.sqlite3"),
+        RecentMemoryConfig::default(),
+    );
     let key = json!([123, 0]);
-    let history = json!([
-        message("user", "hello"),
-        message("model", "world")
-    ]);
+    let history = json!([message("user", "hello"), message("model", "world")]);
 
     store.save_at(&key, &history, 100).unwrap();
-    assert_eq!(store.load(&key).unwrap(), history.as_array().unwrap().clone());
+    assert_eq!(
+        store.load(&key).unwrap(),
+        history.as_array().unwrap().clone()
+    );
     assert_eq!(store.count_rows().unwrap(), 1);
 
     store.clear(&key).unwrap();
@@ -106,7 +112,9 @@ fn max_chat_rows_prunes_oldest_rows() {
     );
     let history = json!([message("user", "x")]);
     for index in 0..12 {
-        store.save_at(&json!(index), &history, 10_000 + index).unwrap();
+        store
+            .save_at(&json!(index), &history, 10_000 + index)
+            .unwrap();
     }
     assert_eq!(store.count_rows().unwrap(), 10);
     assert!(store.load(&json!(0)).unwrap().is_empty());
