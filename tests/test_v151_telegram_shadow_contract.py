@@ -14,7 +14,8 @@ def test_shadow_bridge_defaults_off_and_runs_before_production_groups():
     source = SHADOW.read_text(encoding="utf-8")
     assert "_HANDLER_GROUP = -1000" in source
     assert '_env_bool("ATRI_V150_TELEGRAM_SHADOW", False)' in source
-    assert "/.local/state/atri-v151-shadow/enabled" in source
+    assert "/data/data/com.termux/files/home/.local/state/atri-v151-shadow/enabled" in source
+    assert "/root/.local/state/atri-v151-shadow/enabled" in source
     assert "MessageHandler(_observe_message" in source
     assert "EditedMessageHandler(_observe_edited_message" in source
     assert "CallbackQueryHandler(_observe_callback)" in source
@@ -64,4 +65,6 @@ def test_canary_manager_is_narrow_and_has_guarded_rollback():
     assert not re.search(r"(?m)^\s*rm\s+-rf\s+/app(?:/|\s|$)", canary)
     assert "bot/__main__.py" in patcher
     assert "bot/modules/atri_v150_shadow.py" in patcher
+    assert 'DEFAULT_DEBIAN_ENABLE_FILE = "/root/.local/state/atri-v151-shadow/enabled"' in patcher
+    assert "debian_enable_file_existed" in patcher
     assert "changed after V151 apply" in patcher
