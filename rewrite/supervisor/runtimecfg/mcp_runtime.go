@@ -124,6 +124,17 @@ func mcpToolMap(tool MCPTool) map[string]any {
 	}
 }
 
+func mcpArgumentString(value any) string {
+	if value == nil {
+		return ""
+	}
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "<nil>" {
+		return ""
+	}
+	return text
+}
+
 func (runtime *MCPRuntime) safeTools(tools []MCPTool) []MCPTool {
 	result := []MCPTool{}
 	for _, tool := range tools {
@@ -370,8 +381,8 @@ func (runtime *MCPRuntime) RegisteredTools() []RegisteredTool {
 			Executor: func(ctx context.Context, _ ToolContext, arguments map[string]any) (any, error) {
 				return runtime.Search(
 					ctx,
-					fmt.Sprint(arguments["query"]),
-					fmt.Sprint(arguments["plugin"]),
+					mcpArgumentString(arguments["query"]),
+					mcpArgumentString(arguments["plugin"]),
 					googleClampInt(arguments["limit"], 1, 30, 12),
 				), nil
 			},
@@ -385,8 +396,8 @@ func (runtime *MCPRuntime) RegisteredTools() []RegisteredTool {
 				callArguments, _ := arguments["arguments"].(map[string]any)
 				return runtime.Call(
 					ctx,
-					fmt.Sprint(arguments["plugin"]),
-					fmt.Sprint(arguments["tool"]),
+					mcpArgumentString(arguments["plugin"]),
+					mcpArgumentString(arguments["tool"]),
 					callArguments,
 				), nil
 			},
