@@ -16,7 +16,7 @@ func RegisterBuiltinTools(registry *ToolRegistry, options BuiltinToolOptions) er
 	if err := RegisterWeatherTool(registry, options.Weather); err != nil {
 		return err
 	}
-	if err := RegisterGooglePublicTools(registry, options.GooglePublic); err != nil {
+	if err := RegisterNormalizedGooglePublicTools(registry, options.GooglePublic); err != nil {
 		return err
 	}
 	if err := RegisterGoogleMapsTools(registry, options.GoogleMaps); err != nil {
