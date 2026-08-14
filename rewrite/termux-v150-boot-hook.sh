@@ -20,7 +20,9 @@ START_TIMEOUT="${ATRI_V150_BOOT_START_TIMEOUT:-60}"
 mkdir -p "$STATE_DIR"
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
-  exit 0
+  printf '%s\n' "LOCK_BUSY" >"$STATE_DIR/last_result"
+  printf '%s boot_hook_lock_busy\n' "$(date '+%F %T')" >>"$LOG"
+  exit 77
 fi
 
 positive_int() { [[ "$1" =~ ^[0-9]+$ ]]; }
@@ -86,8 +88,11 @@ elif ((${#current[@]} > 1)); then
   exit 76
 fi
 
+# FD 9 owns the boot-hook flock. It must not survive into the long-lived
+# watchdog/supervisor process, otherwise future boot/deploy invocations see a
+# permanently busy lock even though this hook has already exited.
 nohup "$HOST_PREFIX/bin/bash" "$LAUNCHER" \
-  >>"$HOST_HOME/.atri-v150-production-watchdog.log" 2>&1 < /dev/null &
+  9>&- >>"$HOST_HOME/.atri-v150-production-watchdog.log" 2>&1 < /dev/null &
 started_pid=$!
 
 for ((i=0; i<START_TIMEOUT; i++)); do
