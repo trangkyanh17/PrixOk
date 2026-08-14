@@ -21,6 +21,7 @@ type OrchestratorRequest struct {
 	CodingSkillHint        bool
 	ToolContext            ToolContext
 	AllowPrivateTools      bool
+	ProgressCallback       VertexProgressCallback
 	CodeToolConcurrency    int
 	CodeToolTimeoutSeconds int
 	MaxContinuationRounds  int
@@ -199,6 +200,10 @@ func (orchestrator *AtriOrchestrator) Run(
 		}
 		text, err = runtime.Generate(ctx, payload)
 	} else {
+		progress := request.ProgressCallback
+		if progress == nil {
+			progress = orchestrator.Progress
+		}
 		runtime, runtimeErr := orchestrator.VertexService.RegistryToolRuntime(
 			orchestrator.Registry,
 			VertexRegistryRuntimeOptions{
@@ -207,7 +212,7 @@ func (orchestrator *AtriOrchestrator) Run(
 				Mode:                  mode,
 				ToolContext:           request.ToolContext,
 				AllowPrivateTools:     request.AllowPrivateTools,
-				ProgressCallback:      orchestrator.Progress,
+				ProgressCallback:      progress,
 				CodeToolConcurrency:   request.CodeToolConcurrency,
 				CodeToolTimeout:       request.CodeToolTimeoutSeconds,
 				MaxContinuationRounds: request.MaxContinuationRounds,
