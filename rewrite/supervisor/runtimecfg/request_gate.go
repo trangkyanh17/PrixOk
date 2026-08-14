@@ -141,10 +141,10 @@ func (state *RuntimeStateTracker) ClearUserCooldown(userID int64) {
 }
 
 type SlidingWindowQuota struct {
-	mu           sync.Mutex
-	Limit        int
+	mu            sync.Mutex
+	Limit         int
 	WindowSeconds float64
-	requestTimes []float64
+	requestTimes  []float64
 }
 
 func NewSlidingWindowQuota(limit int, windowSeconds float64) *SlidingWindowQuota {
