@@ -15,12 +15,13 @@ func TestNewBuiltinToolRegistryRegistersPortedTools(t *testing.T) {
 		"google_places_search",
 		"google_route",
 		"google_geocode",
+		"google_translate",
 	} {
 		if !registry.Has(name) {
 			t.Fatalf("missing builtin tool %s", name)
 		}
 	}
-	if declarations := registry.Declarations("chat", false); len(declarations) != 7 {
+	if declarations := registry.Declarations("chat", false); len(declarations) != 8 {
 		t.Fatalf("declarations=%v", declarations)
 	}
 }
