@@ -53,15 +53,15 @@ func TestWeatherToolRuntimeReturnsOpenMeteoShape(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"timezone": "Asia/Bangkok",
 				"current": map[string]any{
-					"time":                   "2026-08-14T10:00",
-					"weather_code":           63,
-					"temperature_2m":         31.2,
-					"apparent_temperature":   36.1,
-					"relative_humidity_2m":   72,
-					"precipitation":          1.2,
-					"rain":                   1.2,
-					"cloud_cover":            88,
-					"wind_speed_10m":         8.4,
+					"time":                 "2026-08-14T10:00",
+					"weather_code":         63,
+					"temperature_2m":       31.2,
+					"apparent_temperature": 36.1,
+					"relative_humidity_2m": 72,
+					"precipitation":        1.2,
+					"rain":                 1.2,
+					"cloud_cover":          88,
+					"wind_speed_10m":       8.4,
 				},
 				"daily": map[string]any{
 					"time":                          []any{"2026-08-14", "2026-08-15"},
@@ -80,7 +80,7 @@ func TestWeatherToolRuntimeReturnsOpenMeteoShape(t *testing.T) {
 	defer server.Close()
 
 	runtime := WeatherToolRuntime{
-		Client:        server.Client(),
+		Client:       server.Client(),
 		GeocodingURL: server.URL + "/geo",
 		ForecastURL:  server.URL + "/forecast",
 	}
@@ -118,7 +118,7 @@ func TestWeatherToolErrorsAndRegistryBridge(t *testing.T) {
 
 	registry := NewToolRegistry()
 	runtime := WeatherToolRuntime{
-		Client:        server.Client(),
+		Client:       server.Client(),
 		GeocodingURL: server.URL + "/geo",
 		ForecastURL:  server.URL + "/forecast",
 	}

@@ -17,14 +17,14 @@ const (
 )
 
 type WeatherToolRuntime struct {
-	Client        HTTPDoer
+	Client       HTTPDoer
 	GeocodingURL string
 	ForecastURL  string
 }
 
 func WeatherToolDeclaration() map[string]any {
 	return map[string]any{
-		"name": "get_weather",
+		"name":        "get_weather",
 		"description": "Lấy thời tiết hiện tại và dự báo tại một địa điểm. Dùng khi người dùng hỏi nhiệt độ, mưa, độ ẩm hoặc gió.",
 		"parameters": map[string]any{
 			"type": "object",
@@ -245,13 +245,13 @@ func (runtime WeatherToolRuntime) GetWeather(
 	forecast := make([]any, 0, len(dates))
 	for index, date := range dates {
 		forecast = append(forecast, map[string]any{
-			"date":                         date,
-			"condition":                    WeatherDescription(weatherAt(daily, "weather_code", index)),
-			"temperature_max_c":            weatherAt(daily, "temperature_2m_max", index),
-			"temperature_min_c":            weatherAt(daily, "temperature_2m_min", index),
-			"rain_probability_percent":     weatherAt(daily, "precipitation_probability_max", index),
-			"precipitation_mm":             weatherAt(daily, "precipitation_sum", index),
-			"wind_speed_max_kmh":           weatherAt(daily, "wind_speed_10m_max", index),
+			"date":                     date,
+			"condition":                WeatherDescription(weatherAt(daily, "weather_code", index)),
+			"temperature_max_c":        weatherAt(daily, "temperature_2m_max", index),
+			"temperature_min_c":        weatherAt(daily, "temperature_2m_min", index),
+			"rain_probability_percent": weatherAt(daily, "precipitation_probability_max", index),
+			"precipitation_mm":         weatherAt(daily, "precipitation_sum", index),
+			"wind_speed_max_kmh":       weatherAt(daily, "wind_speed_10m_max", index),
 		})
 	}
 
