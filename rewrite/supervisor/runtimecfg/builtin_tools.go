@@ -3,10 +3,11 @@ package runtimecfg
 import "fmt"
 
 type BuiltinToolOptions struct {
-	Weather      WeatherToolRuntime
-	GooglePublic GooglePublicToolRuntime
-	GoogleMaps   GoogleMapsToolRuntime
-	GoogleCloud  GoogleCloudToolRuntime
+	Weather            WeatherToolRuntime
+	GooglePublic       GooglePublicToolRuntime
+	GoogleMaps         GoogleMapsToolRuntime
+	GoogleCloud        GoogleCloudToolRuntime
+	GoogleCapabilities GoogleCapabilitiesRuntime
 }
 
 func RegisterBuiltinTools(registry *ToolRegistry, options BuiltinToolOptions) error {
@@ -23,6 +24,9 @@ func RegisterBuiltinTools(registry *ToolRegistry, options BuiltinToolOptions) er
 		return err
 	}
 	if err := RegisterGoogleCloudTools(registry, options.GoogleCloud); err != nil {
+		return err
+	}
+	if err := RegisterGoogleCapabilitiesTool(registry, options.GoogleCapabilities); err != nil {
 		return err
 	}
 	return nil
