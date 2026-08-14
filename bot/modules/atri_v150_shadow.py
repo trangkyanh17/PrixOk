@@ -19,6 +19,7 @@ _HANDLER_GROUP = -1000
 _QUEUE_MAX = 256
 _HTTP_TIMEOUT_SECONDS = 0.75
 _DEFAULT_ENABLE_FILE = "/data/data/com.termux/files/home/.local/state/atri-v151-shadow/enabled"
+_DEBIAN_ENABLE_FILE = "/root/.local/state/atri-v151-shadow/enabled"
 _MEDIA_FIELDS = (
     "photo",
     "sticker",
@@ -43,12 +44,17 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _shadow_enable_file() -> Path:
-    return Path(os.getenv("ATRI_V151_SHADOW_ENABLE_FILE", _DEFAULT_ENABLE_FILE))
+def _shadow_enable_files() -> tuple[Path, ...]:
+    explicit = os.getenv("ATRI_V151_SHADOW_ENABLE_FILE", "").strip()
+    if explicit:
+        return (Path(explicit),)
+    return (Path(_DEFAULT_ENABLE_FILE), Path(_DEBIAN_ENABLE_FILE))
 
 
 def _shadow_enabled() -> bool:
-    return _env_bool("ATRI_V150_TELEGRAM_SHADOW", False) or _shadow_enable_file().is_file()
+    return _env_bool("ATRI_V150_TELEGRAM_SHADOW", False) or any(
+        path.is_file() for path in _shadow_enable_files()
+    )
 
 
 def _shadow_url() -> str:
