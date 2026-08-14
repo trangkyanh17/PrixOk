@@ -14,6 +14,7 @@ type watchdog struct {
 	runner     watchdogCommandRunner
 	executable func(string) bool
 	logf       func(string, ...any)
+	now        func() time.Time
 
 	repair           repairBackoff
 	lastNetworkCheck time.Time
@@ -35,7 +36,15 @@ func newWatchdog(
 		runner:     runner,
 		executable: executable,
 		logf:       logf,
+		now:        time.Now,
 	}
+}
+
+func (watchdog *watchdog) currentTime() time.Time {
+	if watchdog == nil || watchdog.now == nil {
+		return time.Now()
+	}
+	return watchdog.now()
 }
 
 func (watchdog *watchdog) normalizedLoopInterval() time.Duration {
@@ -128,7 +137,7 @@ func (watchdog *watchdog) localHealthOK(ctx context.Context) bool {
 	return watchdog.runCommand(ctx, watchdog.config.CommandTimeout, command) == nil
 }
 
-func (watchdog *watchdog) repairSharedComponents(ctx context.Context, now time.Time) {
+func (watchdog *watchdog) repairSharedComponents(ctx context.Context) {
 	command := watchdogCommand{
 		Path: watchdog.config.BrowserEnsure,
 		Args: []string{"--from-watchdog"},
@@ -144,7 +153,7 @@ func (watchdog *watchdog) repairSharedComponents(ctx context.Context, now time.T
 	}
 
 	watchdog.log("LOCAL_SHARED_COMPONENT_REPAIR=FAIL rc=%d", commandExitCode(err))
-	delay := watchdog.repair.fail(now)
+	delay := watchdog.repair.fail(watchdog.currentTime())
 	watchdog.log("LOCAL_SHARED_COMPONENT_REPAIR_BACKOFF=%s", delay)
 }
 
@@ -197,7 +206,7 @@ func (watchdog *watchdog) checkNetwork(ctx context.Context, now time.Time) {
 	watchdog.lastNetworkState = state
 }
 
-func (watchdog *watchdog) tick(ctx context.Context, now time.Time) time.Duration {
+func (watchdog *watchdog) tick(ctx context.Context) time.Duration {
 	delay := watchdog.normalizedLoopInterval()
 	watchdog.ensureBotSession(ctx)
 	if ctx.Err() != nil {
@@ -211,17 +220,18 @@ func (watchdog *watchdog) tick(ctx context.Context, now time.Time) time.Duration
 			return delay
 		}
 		watchdog.log("LOCAL_SHARED_COMPONENT_HEALTH=UNHEALTHY")
+		now := watchdog.currentTime()
 		if !watchdog.repair.ready(now) {
 			if watchdog.shouldLogRepairBackoff(now) {
 				watchdog.log("LOCAL_SHARED_COMPONENT_REPAIR=BACKOFF until=%d", watchdog.repair.nextAt.Unix())
 			}
 			return watchdogBackoffPollInterval
 		}
-		watchdog.repairSharedComponents(ctx, now)
+		watchdog.repairSharedComponents(ctx)
 	}
 
 	if ctx.Err() == nil {
-		watchdog.checkNetwork(ctx, now)
+		watchdog.checkNetwork(ctx, watchdog.currentTime())
 	}
 	return delay
 }
@@ -246,7 +256,7 @@ func (watchdog *watchdog) Run(ctx context.Context) error {
 			}
 		}
 
-		delay = watchdog.tick(ctx, time.Now())
+		delay = watchdog.tick(ctx)
 		if ctx.Err() != nil {
 			return nil
 		}

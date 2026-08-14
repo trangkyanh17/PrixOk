@@ -14,6 +14,12 @@ func fakeWatchdogCommandKey(command watchdogCommand) string {
 	return strings.TrimSpace(fmt.Sprintf("%s %s", command.Path, strings.Join(command.Args, " ")))
 }
 
+type watchdogRunnerFunc func(context.Context, watchdogCommand) error
+
+func (run watchdogRunnerFunc) Run(ctx context.Context, command watchdogCommand) error {
+	return run(ctx, command)
+}
+
 type fakeWatchdogRunner struct {
 	mu        sync.Mutex
 	calls     []watchdogCommand
@@ -132,8 +138,9 @@ func TestWatchdogRepairBackoffMatchesProductionLoop(t *testing.T) {
 		return path == config.LocalHealth
 	}, nil)
 	now := time.Unix(10_000, 0)
+	watchdog.now = func() time.Time { return now }
 
-	if delay := watchdog.tick(context.Background(), now); delay != 30*time.Second {
+	if delay := watchdog.tick(context.Background()); delay != 30*time.Second {
 		t.Fatalf("first delay=%s", delay)
 	}
 	if watchdog.repair.failures != 1 || watchdog.repair.nextAt != now.Add(30*time.Second) {
@@ -143,18 +150,49 @@ func TestWatchdogRepairBackoffMatchesProductionLoop(t *testing.T) {
 		t.Fatalf("repair calls=%d", repairCalls)
 	}
 
-	if delay := watchdog.tick(context.Background(), now.Add(10*time.Second)); delay != watchdogBackoffPollInterval {
+	now = now.Add(10 * time.Second)
+	if delay := watchdog.tick(context.Background()); delay != watchdogBackoffPollInterval {
 		t.Fatalf("backoff poll delay=%s", delay)
 	}
 	if repairCalls := runner.countPrefix(repairKey); repairCalls != 1 {
 		t.Fatalf("repair retried during backoff: %d", repairCalls)
 	}
 
-	if delay := watchdog.tick(context.Background(), now.Add(30*time.Second)); delay != 30*time.Second {
+	now = now.Add(20 * time.Second)
+	if delay := watchdog.tick(context.Background()); delay != 30*time.Second {
 		t.Fatalf("deadline delay=%s", delay)
 	}
-	if watchdog.repair.failures != 2 || watchdog.repair.nextAt != now.Add(90*time.Second) {
+	if watchdog.repair.failures != 2 || watchdog.repair.nextAt != now.Add(60*time.Second) {
 		t.Fatalf("second backoff=%+v", watchdog.repair)
+	}
+}
+
+func TestWatchdogRepairBackoffStartsAfterRepairCompletes(t *testing.T) {
+	config := testWatchdogConfig()
+	started := time.Unix(30_000, 0)
+	now := started
+	runner := watchdogRunnerFunc(func(_ context.Context, command watchdogCommand) error {
+		switch fakeWatchdogCommandKey(command) {
+		case "tmux has-session -t prixok-bot":
+			return nil
+		case config.LocalHealth + " --quiet":
+			return errors.New("unhealthy")
+		case config.BrowserEnsure + " --from-watchdog":
+			now = now.Add(4 * time.Minute)
+			return errors.New("repair timed out")
+		default:
+			return nil
+		}
+	})
+	watchdog := newWatchdog(config, runner, func(path string) bool {
+		return path == config.LocalHealth
+	}, nil)
+	watchdog.now = func() time.Time { return now }
+
+	watchdog.tick(context.Background())
+	want := started.Add(4*time.Minute + 30*time.Second)
+	if watchdog.repair.nextAt != want {
+		t.Fatalf("next repair=%s want=%s", watchdog.repair.nextAt, want)
 	}
 }
 
