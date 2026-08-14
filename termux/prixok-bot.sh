@@ -1,14 +1,9 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Canonical Termux launcher. Machine-specific credentials stay outside Git.
-if [ "${ATRI_PRODUCTION_LAUNCHER_GUARD:-0}" != "1" ] && \
-   [ -x "$HOME/atri-production-ensure.sh" ]; then
-  ATRI_PRODUCTION_LAUNCHER_GUARD=1 \
-    "$HOME/atri-production-ensure.sh" \
-    --from-launcher \
-    >>"$HOME/.atri-production-launcher.log" 2>&1 || true
-fi
-
+# Canonical Termux production launcher for the V150-owned runtime.
+# Watchdog/repair ownership belongs to V150; this launcher only enters Debian
+# and starts the production worker. Machine-specific credentials stay outside Git.
 set -Eeuo pipefail
+
 exec proot-distro login debian -- bash -lc '
 set -Eeuo pipefail
 cd /app

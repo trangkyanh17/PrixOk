@@ -1,6 +1,6 @@
 # PrixOk rewrite v150
 
-Experimental Rust/Go/TypeScript rewrite. This branch is isolated from main and dev and must not be merged until parity and integration tests pass.
+Experimental Rust/Go/TypeScript rewrite. This branch remains isolated from `main`; production validation and deployment work must stay on `rewrite/rust-go-ts-v150` until an explicit merge decision is made.
 
 ## Termux/Debian build helper
 
@@ -16,20 +16,21 @@ Useful modes:
 
 ```bash
 ./termux-build.sh --supervisor-only
+./termux-build.sh --host-watchdog-only
 ./termux-build.sh --full-check
 ATRI_RUN_RACE=1 ./termux-build.sh --full-check
 ./termux-build.sh --web
 ```
 
-`--full-check` runs Rust fmt/Clippy/tests plus Go fmt/vet/tests before the release build. The race detector is intentionally opt-in because it is resource-heavy on a phone.
+`--host-watchdog-only` cross-builds the Android/arm64 supervisor used by the Termux-host production watchdog. `--full-check` runs Rust fmt/Clippy/tests plus Go fmt/vet/tests before release builds. The race detector is intentionally opt-in on the phone because it is resource-heavy.
 
 ## Termux/PROot MCP uv runtime
 
-When the MCP lifecycle prewarms an uv-based plugin (`serena` or `semgrep`), the supervisor now prepares the uv environment automatically before any MCP child starts:
+When the MCP lifecycle prewarms an uv-based plugin (`serena` or `semgrep`), the supervisor prepares the uv environment automatically before any MCP child starts:
 
-- the directory containing `ATRI_UVX` (default `/app/mltbenv/bin/uvx`) is prepended to the supervisor child `PATH`, allowing Serena language-server subprocesses to find `uvx`/`uv`;
-- `UV_LINK_MODE` defaults to `copy`, avoiding hardlink failures seen under Termux/PROot filesystems;
-- `UV_CACHE_DIR` defaults to an isolated rewrite cache under `${XDG_CACHE_HOME:-$HOME/.cache}/atri-rewrite-v150/uv`, avoiding reuse of unrelated or damaged production uv caches;
+- the directory containing `ATRI_UVX` (default `/app/mltbenv/bin/uvx`) is prepended to the supervisor child `PATH`;
+- `UV_LINK_MODE` defaults to `copy`, avoiding hardlink failures under Termux/PROot filesystems;
+- `UV_CACHE_DIR` defaults to an isolated rewrite cache under `${XDG_CACHE_HOME:-$HOME/.cache}/atri-rewrite-v150/uv`;
 - the cache directory is created before prewarm starts.
 
 Explicit overrides remain available:
@@ -40,34 +41,39 @@ ATRI_MCP_UV_CACHE_DIR=/path/to/cache
 ATRI_UVX=/path/to/uvx
 ```
 
-Existing `UV_LINK_MODE` / `UV_CACHE_DIR` are also respected when no `ATRI_MCP_*` override is supplied. HTTP-only MCP lifecycle runs (for example Context7/GitHub only) do not mutate the uv environment.
+Existing `UV_LINK_MODE` / `UV_CACHE_DIR` are respected when no `ATRI_MCP_*` override is supplied. HTTP-only MCP lifecycle runs do not mutate the uv environment.
 
-The supervisor defaults for `ATRI_MCP_PREWARM_TIMEOUT` and `ATRI_MCP_REQUEST_TIMEOUT` are 240 seconds. This leaves headroom for a cold Serena/Pyright startup on ARM64 Termux while the coordinated supervisor shutdown timeout remains separately bounded.
+The supervisor defaults for `ATRI_MCP_PREWARM_TIMEOUT` and `ATRI_MCP_REQUEST_TIMEOUT` are 240 seconds. This leaves headroom for cold Serena/Pyright startup on ARM64 Termux while coordinated supervisor shutdown remains separately bounded.
 
-## One-command Termux validation
+## Validation history and production stages
 
-After CI is green, the live phone validation can be run from the `rewrite` directory with one command:
+The branch contains dedicated harnesses for isolated validation, production topology discovery, recovery/handoff, persistence, and reboot proof:
 
-```bash
-./termux-all-in-one.sh
-```
+- `termux-all-in-one.sh`
+- `termux-production-canary.sh`
+- `termux-production-topology.sh`
+- `termux-production-recovery-host.sh`
+- `termux-v150-persistence-host.sh`
+- `termux-v150-pre-reboot-check.sh`
 
-The script is intentionally scoped to the rewrite clone. It validates the expected branch and clean tracked tree, stops only an existing `atri-supervisor` whose `/proc/<pid>/cwd` matches the same rewrite directory, rebuilds the supervisor (or performs a full build if native binaries are missing), runs Go tests and the native SHA-256 smoke test, then exercises Context7 + Serena + Semgrep together.
+These are validation/migration tools. They are not the normal ongoing upgrade path after V150 has taken production ownership.
 
-The MCP phase checks combined startup/health, samples RSS, injects a failure into only the Semgrep child and verifies automatic reconnect, sends SIGTERM and checks bounded shutdown/orphan cleanup, then starts the combined stack a second time to verify restart behavior.
+## Managed production deploy / upgrade
 
-The watchdog phase is an isolated canary: it creates a unique temporary tmux session and temporary health/network/repair/launcher helpers. It checks the healthy/network path and the unhealthy/repair path without using the production bot session or production helper paths. The canary session is removed on exit.
-
-The supervisor accepts `ATRI_LOG_TIMEZONE` (and falls back to `TZ`) for log timestamps. The all-in-one script defaults this to `Asia/Ho_Chi_Minh` so the Termux report matches the phone's local Vietnam time.
-
-The final report contains a PASS/FAIL table plus full MCP/watchdog logs and is written to `/storage/emulated/0/Download` or `/sdcard/Download` when writable, otherwise `rewrite/target`.
-
-Useful tuning variables:
+After V150 production handoff and reboot persistence are proven, use:
 
 ```bash
-ATRI_BUILD_JOBS=2
-ATRI_ALL_IN_ONE_STARTUP_TIMEOUT=300
-ATRI_ALL_IN_ONE_HEALTH_INTERVAL=15
-ATRI_ALL_IN_ONE_SOAK_SECONDS=35
-ATRI_LOG_TIMEZONE=Asia/Ho_Chi_Minh
+bash "$HOME/termux-v150-deploy.sh" status
+bash "$HOME/termux-v150-deploy.sh" install
+bash "$HOME/termux-v150-deploy.sh" upgrade
+bash "$HOME/termux-v150-deploy.sh" rollback
+bash "$HOME/termux-v150-deploy.sh" cleanup-legacy
 ```
+
+The source-controlled manager is `termux-v150-deploy.sh`. Full operational semantics, automatic rollback behavior, backup locations, and legacy restoration are documented in [`PRODUCTION_DEPLOY.md`](PRODUCTION_DEPLOY.md).
+
+The deploy manager builds from the isolated `/opt/prixok-v150` clone and verifies the live `/app` source fingerprint before/after deployment. It never performs source update/reset/checkout/clean operations against `/app`.
+
+## Reporting
+
+Phone validation and production management scripts write reports to `/storage/emulated/0/Download` or `/sdcard/Download` when writable, with a state-directory fallback when external storage is unavailable.
