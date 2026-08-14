@@ -16,6 +16,16 @@ CANARY_SESSION="atri-v150-canary-${TEST_ID}"
 TEST_SUPERVISOR_PID=""
 CANARY_ACTIVE=0
 OVERALL_FAIL=0
+SELF_TEST=0
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  SELF_TEST=1
+  shift
+fi
+if (($#)); then
+  echo "Unknown option: $1" >&2
+  exit 2
+fi
 
 declare -A RESULTS=()
 declare -A DETAILS=()
@@ -164,9 +174,9 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-descendant_pids() {
+descendant_pids_from_snapshot() {
   local root="$1"
-  ps -eo pid=,ppid= | awk -v root="$root" '
+  awk -v root="$root" '
     { parent[$1] = $2 }
     END {
       seen[root] = 1
@@ -174,20 +184,41 @@ descendant_pids() {
       while (changed) {
         changed = 0
         for (pid in parent) {
-          if (seen[parent[pid]] && !seen[pid]) {
+          if ((parent[pid] in seen) && !(pid in seen)) {
             seen[pid] = 1
             changed = 1
           }
         }
       }
       for (pid in seen) {
-        if (pid != root) {
+        if (pid != root && seen[pid]) {
           print pid
         }
       }
     }
-  ' | sort -n
+  '
 }
+
+descendant_pids() {
+  local root="$1"
+  ps -eo pid=,ppid= | descendant_pids_from_snapshot "$root" | sort -n
+}
+
+run_process_tree_self_test() {
+  local fixture got
+  fixture=$'1 0\n10 1\n20 10\n30 20\n31 20\n40 10\n50 40\n'
+  got="$(printf '%s' "$fixture" | descendant_pids_from_snapshot 20 | sort -n | paste -sd, -)"
+  if [[ "$got" != "30,31" ]]; then
+    echo "process-tree self-test failed: got=${got:-empty} want=30,31" >&2
+    return 1
+  fi
+  echo "process-tree self-test PASS: descendants=30,31; ancestors/siblings excluded"
+}
+
+if ((SELF_TEST == 1)); then
+  run_process_tree_self_test
+  exit 0
+fi
 
 all_tree_pids() {
   local root="$1"
