@@ -21,6 +21,17 @@ func ModelStatus(provider, model string, status map[ProviderModel]string) string
 	}
 }
 
+func StatusIcon(provider, model string, status map[ProviderModel]string) string {
+	switch ModelStatus(provider, model, status) {
+	case "ok":
+		return "✅"
+	case "dead":
+		return "⛔"
+	default:
+		return "❔"
+	}
+}
+
 func FilterDeadModelChoices(provider string, choices []ModelChoice, status map[ProviderModel]string) []ModelChoice {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	out := make([]ModelChoice, 0, len(choices))
@@ -33,6 +44,10 @@ func FilterDeadModelChoices(provider string, choices []ModelChoice, status map[P
 		return []ModelChoice{{Model: "auto", Label: "AUTO"}}
 	}
 	return out
+}
+
+func ProviderHasLiveModel(provider string, choices []ModelChoice, status map[ProviderModel]string) bool {
+	return len(FilterDeadModelChoices(provider, choices, status)) > 0
 }
 
 func HealSelectedModel(provider, selected, fallback string, choices []ModelChoice, status map[ProviderModel]string) string {
