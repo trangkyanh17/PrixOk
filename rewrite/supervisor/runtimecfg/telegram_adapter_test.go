@@ -103,10 +103,10 @@ func TestTelegramAtriRuntimeProgressAttachmentVoiceAndFinalChunks(t *testing.T) 
 		if request.ProgressCallback == nil {
 			t.Fatal("progress callback is nil")
 		}
-		if err := request.ProgressCallback(ctx, 1, "Đang xử lý"); err != nil {
+		if err := request.ProgressCallback(1, "Đang xử lý"); err != nil {
 			t.Fatal(err)
 		}
-		if err := request.ProgressCallback(ctx, 2, ""); err != nil {
+		if err := request.ProgressCallback(2, ""); err != nil {
 			t.Fatal(err)
 		}
 		return OrchestratorResult{
