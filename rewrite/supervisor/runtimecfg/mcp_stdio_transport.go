@@ -134,8 +134,8 @@ func (transport *stdioMCPTransport) abortLocked() {
 	_ = stopMCPCommand(cmd)
 }
 
-func (transport *stdioMCPTransport) writeLocked(payload any) error {
-	if transport.stdin == nil {
+func writeMCPPayload(writer io.Writer, payload any) error {
+	if writer == nil {
 		return errors.New("MCP stdio stdin is closed")
 	}
 	data, err := json.Marshal(payload)
@@ -143,8 +143,12 @@ func (transport *stdioMCPTransport) writeLocked(payload any) error {
 		return err
 	}
 	data = append(data, '\n')
-	_, err = transport.stdin.Write(data)
+	_, err = writer.Write(data)
 	return err
+}
+
+func (transport *stdioMCPTransport) writeLocked(payload any) error {
+	return writeMCPPayload(transport.stdin, payload)
 }
 
 func (transport *stdioMCPTransport) readMatchingResponseLocked(
@@ -157,6 +161,7 @@ func (transport *stdioMCPTransport) readMatchingResponseLocked(
 	}
 	resultCh := make(chan readResult, 1)
 	reader := transport.stdout
+	writer := transport.stdin
 	go func() {
 		for {
 			line, err := reader.ReadBytes('\n')
@@ -175,7 +180,7 @@ func (transport *stdioMCPTransport) readMatchingResponseLocked(
 			}
 			if response.Method != "" {
 				if len(response.ID) > 0 && string(response.ID) != "null" {
-					if err := transport.writeLocked(mcpUnsupportedRequest(response.ID, response.Method)); err != nil {
+					if err := writeMCPPayload(writer, mcpUnsupportedRequest(response.ID, response.Method)); err != nil {
 						resultCh <- readResult{Err: err}
 						return
 					}

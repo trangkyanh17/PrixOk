@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,15 @@ type config struct {
 	LoopInterval         time.Duration
 	NetworkCheckInterval time.Duration
 	NetworkProbeTimeout  time.Duration
+
+	MCPLifecycleEnabled   bool
+	MCPPrewarmPlugins     []string
+	MCPPrewarmConcurrency int
+	MCPPrewarmTimeout     time.Duration
+	MCPHealthInterval     time.Duration
+	MCPPruneInterval      time.Duration
+	MCPRequestTimeout     time.Duration
+	MCPIdleTTL            time.Duration
 }
 
 func loadConfig() config {
@@ -27,6 +37,22 @@ func loadConfig() config {
 		LoopInterval:         envDurationSeconds("ATRI_WATCHDOG_INTERVAL", 30),
 		NetworkCheckInterval: envDurationSeconds("ATRI_NETWORK_INTERVAL", 180),
 		NetworkProbeTimeout:  envDurationSeconds("ATRI_NETWORK_TIMEOUT", 8),
+
+		MCPLifecycleEnabled: envBool("ATRI_REWRITE_MCP_LIFECYCLE", false),
+		MCPPrewarmPlugins: envCSV("ATRI_MCP_PREWARM_PLUGINS", []string{
+			"serena",
+			"context7",
+			"github",
+			"semgrep",
+			"sentry",
+			"chrome-devtools",
+		}),
+		MCPPrewarmConcurrency: envIntRange("ATRI_MCP_PREWARM_CONCURRENCY", 2, 1, 16),
+		MCPPrewarmTimeout:     envDurationSeconds("ATRI_MCP_PREWARM_TIMEOUT", 90),
+		MCPHealthInterval:     envDurationSeconds("ATRI_MCP_HEALTH_INTERVAL", 1800),
+		MCPPruneInterval:      envDurationSeconds("ATRI_MCP_PRUNE_INTERVAL", 300),
+		MCPRequestTimeout:     envDurationSeconds("ATRI_MCP_REQUEST_TIMEOUT", 180),
+		MCPIdleTTL:            envDurationSeconds("ATRI_MCP_IDLE_TTL", 3600),
 	}
 }
 
@@ -43,4 +69,48 @@ func envDurationSeconds(name string, fallback int) time.Duration {
 		value = fallback
 	}
 	return time.Duration(value) * time.Second
+}
+
+func envBool(name string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envIntRange(name string, fallback, minimum, maximum int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
+	if err != nil || value < minimum || value > maximum {
+		return fallback
+	}
+	return value
+}
+
+func envCSV(name string, fallback []string) []string {
+	raw, ok := os.LookupEnv(name)
+	if !ok {
+		return append([]string(nil), fallback...)
+	}
+	seen := map[string]struct{}{}
+	values := make([]string, 0)
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.ToLower(strings.TrimSpace(item))
+		if item == "" {
+			continue
+		}
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		values = append(values, item)
+	}
+	if len(values) == 0 {
+		return append([]string(nil), fallback...)
+	}
+	return values
 }

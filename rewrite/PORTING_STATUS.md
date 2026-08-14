@@ -71,7 +71,12 @@ This branch is experimental. Do not merge it into `main` or `dev`, and do not po
 - HTTP SSE response selection ignores notification/nonmatching events and waits for the matching JSON-RPC response.
 - HTTP session shutdown uses best-effort MCP session DELETE; stdio shutdown terminates the entire uvx/npx process group to avoid orphan descendants.
 - Stdio stderr capture is bounded to prevent long-lived MCP processes from growing memory indefinitely.
+- Stdio server-request replies use a captured writer so timeout/abort cannot race on the transport's mutable stdin field.
 - Automated transport tests cover reconnect/reuse, prewarm, header/session propagation, SSE notifications, pagination, HTTP session close, stdio server requests and real subprocess round-trips.
+- Experimental Go supervisor lifecycle wiring supports startup MCP prewarm, periodic health refresh/reconnect, idle-session pruning and graceful close on SIGINT/SIGTERM.
+- MCP supervisor lifecycle is disabled by default behind `ATRI_REWRITE_MCP_LIFECYCLE`; timeout, intervals, idle TTL, request timeout, plugin set and prewarm concurrency are configurable through environment variables.
+- Lifecycle status logging is deterministic, single-line and bounded so remote/plugin errors cannot inject unbounded multiline log output.
+- Rewrite CI runs the Go race detector in addition to formatting, vet, normal tests and build.
 
 ### Ported builtin tools
 
@@ -131,9 +136,9 @@ Google authentication/runtime helpers:
 
 ### Code-agent/MCP ecosystem
 
-The policy, schema, discovery, registry and concrete stdio/HTTP transport layer are now ported. Remaining MCP work is production integration and live parity:
+The policy, schema, discovery, registry, concrete stdio/HTTP transport and opt-in Go supervisor lifecycle are now ported. Remaining MCP work is live production parity:
 
-- Wire prewarm/idle-prune/close lifecycle into the concrete Termux/Debian supervisor entrypoint.
+- Live-test the opt-in MCP supervisor lifecycle under Termux/Debian, including startup prewarm, periodic health refresh, idle pruning, SIGTERM shutdown and CPU/RAM/temperature behavior.
 - Live-test Serena semantic-code behavior against the production `/app` project and verify warm-session memory/CPU characteristics.
 - Live-test Context7 and GitHub MCP authentication/session behavior against their real endpoints, including the forced-GitHub coding path.
 - Validate Semgrep long-lived process behavior and reconnect under real scan failures.
@@ -153,16 +158,16 @@ The policy, schema, discovery, registry and concrete stdio/HTTP transport layer 
 
 ### Production/runtime parity
 
-- Concrete Termux/Debian process entrypoint replacing the current placeholder supervisor `main.go`.
+- Complete Termux/Debian bot/process supervisor entrypoint; the current Go `main.go` only exposes the opt-in MCP lifecycle and remains inert by default.
 - Existing singleton lock/watchdog/autostart semantics.
 - Browser/Xvfb/proxy/aria2/qBittorrent/SAB/Serena warm-worker lifecycle.
 - Production configuration loading and secret handling without exposing credentials to logs or tools.
-- Graceful shutdown, process supervision and restart behavior under real Android/proot conditions.
+- Extend graceful shutdown, process supervision and restart behavior from the MCP lifecycle to the complete Android/proot process tree.
 
 ## Required validation gates before merge
 
 1. `cargo fmt --check`, `cargo test --workspace` and release build all pass.
-2. `gofmt`, `go test ./...`, `go vet ./...` and Go build all pass.
+2. `gofmt`, `go test ./...`, `go test -race ./...`, `go vet ./...` and Go build all pass.
 3. TypeScript typecheck/build passes.
 4. Differential fixtures compare the rewrite against the current Python behavior for memory, provider routing, Vertex payloads, tools and Telegram-facing responses.
 5. Live tests verify Vertex, Google public APIs, Workspace OAuth/service-account routes and the real Delta Force CN database.
