@@ -30,7 +30,7 @@ func TestAuditReportTextUsesCandidateLabelsAndHTTPStatus(t *testing.T) {
 			Key: AuditResult{Status: "ok", Reason: "key_valid"},
 			Models: map[string]AuditResult{
 				"gpt-oss-120b": {Status: "ok", Reason: "live_probe"},
-				"zai-glm-4.7": {Status: "dead", Reason: "model_not_available", HTTPStatus: &status},
+				"zai-glm-4.7":  {Status: "dead", Reason: "model_not_available", HTTPStatus: &status},
 			},
 		},
 	}
