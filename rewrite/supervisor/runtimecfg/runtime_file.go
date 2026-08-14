@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -58,8 +59,18 @@ func SetRuntimeModel(configPath, value string) (RuntimeState, error) {
 func SetRuntimeThinking(configPath, currentModel, value string) (RuntimeState, error) {
 	state := RuntimeStateFor(currentModel, "")
 	spec, _ := ResolveModel(state.Model)
-	level, ok := ResolveThinking(spec, value)
-	if !ok {
+	level := strings.ToLower(strings.TrimSpace(value))
+	if level == "default" {
+		level = spec.DefaultThinking
+	}
+	allowed := false
+	for _, candidate := range spec.AllowedThinking {
+		if level == candidate {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
 		return RuntimeState{}, fmt.Errorf(
 			"%s supports thinking: %s",
 			spec.Model,
@@ -91,7 +102,8 @@ func writeConfigValues(configPath string, values map[string]string) error {
 		lines = lines[:len(lines)-1]
 	}
 
-	for key, value := range values {
+	for _, key := range orderedConfigKeys(values) {
+		value := values[key]
 		pattern := regexp.MustCompile(`^\s*` + regexp.QuoteMeta(key) + `\s*=`)
 		replacement := key + " = '" + value + "'"
 		updated := make([]string, 0, len(lines)+1)
@@ -152,4 +164,21 @@ func writeConfigValues(configPath string, values map[string]string) error {
 	}
 	defer dirHandle.Close()
 	return dirHandle.Sync()
+}
+
+func orderedConfigKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for _, key := range []string{"VERTEX_MODEL", "VERTEX_THINKING_LEVEL"} {
+		if _, ok := values[key]; ok {
+			keys = append(keys, key)
+		}
+	}
+	extra := make([]string, 0, len(values))
+	for key := range values {
+		if key != "VERTEX_MODEL" && key != "VERTEX_THINKING_LEVEL" {
+			extra = append(extra, key)
+		}
+	}
+	sort.Strings(extra)
+	return append(keys, extra...)
 }
