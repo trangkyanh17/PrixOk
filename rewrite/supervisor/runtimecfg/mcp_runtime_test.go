@@ -219,4 +219,15 @@ func TestMCPRuntimeErrorsAndRegistryBridge(t *testing.T) {
 	if searchResult["ok"] != true {
 		t.Fatalf("registry search=%v", searchResult)
 	}
+
+	autoSearch := registry.Execute(
+		context.Background(),
+		ToolContext{Mode: "code"},
+		"code_plugin_search",
+		map[string]any{"query": "github repository file", "limit": 5},
+		false,
+	).(map[string]any)
+	if autoSearch["ok"] != true {
+		t.Fatalf("registry auto search=%v", autoSearch)
+	}
 }
