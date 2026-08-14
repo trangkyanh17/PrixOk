@@ -119,7 +119,9 @@ v150_watchdog_pids() {
 }
 
 wait_pid_gone() {
-  local pid="$1" timeout_seconds="$2" deadline=$((SECONDS + timeout_seconds))
+  local pid="$1"
+  local timeout_seconds="$2"
+  local deadline=$((SECONDS + timeout_seconds))
   while kill -0 "$pid" 2>/dev/null; do
     ((SECONDS < deadline)) || return 1
     sleep 1
@@ -169,7 +171,8 @@ sum_tree_rss_kb() {
 }
 
 wait_for_worker_ready() {
-  local timeout_seconds="$1" deadline=$((SECONDS + timeout_seconds))
+  local timeout_seconds="$1"
+  local deadline=$((SECONDS + timeout_seconds))
   while ((SECONDS < deadline)); do
     session="$(bot_session_state)"
     lock="$(bot_lock_state || echo UNKNOWN)"
@@ -182,7 +185,8 @@ wait_for_worker_ready() {
 }
 
 wait_for_runtime_healthy() {
-  local timeout_seconds="$1" deadline=$((SECONDS + timeout_seconds))
+  local timeout_seconds="$1"
+  local deadline=$((SECONDS + timeout_seconds))
   while ((SECONDS < deadline)); do
     session="$(bot_session_state)"
     lock="$(bot_lock_state || echo UNKNOWN)"
@@ -203,7 +207,10 @@ ready_line_ok() {
 }
 
 wait_for_log_pattern() {
-  local logfile="$1" pattern="$2" timeout_seconds="$3" deadline=$((SECONDS + timeout_seconds))
+  local logfile="$1"
+  local pattern="$2"
+  local timeout_seconds="$3"
+  local deadline=$((SECONDS + timeout_seconds))
   while ((SECONDS < deadline)); do
     grep -Eq "$pattern" "$logfile" 2>/dev/null && return 0
     [[ -z "$MCP_PID" || -e "/proc/$MCP_PID" ]] || return 1
