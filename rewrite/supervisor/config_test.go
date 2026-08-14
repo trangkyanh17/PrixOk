@@ -78,6 +78,7 @@ func TestMCPConfigRejectsInvalidValues(t *testing.T) {
 	t.Setenv("ATRI_REWRITE_MCP_LIFECYCLE", "not-a-bool")
 	t.Setenv("ATRI_MCP_PREWARM_CONCURRENCY", "99")
 	t.Setenv("ATRI_MCP_PREWARM_TIMEOUT", "0")
+	t.Setenv("ATRI_MCP_REQUEST_TIMEOUT", "0")
 	t.Setenv("ATRI_REWRITE_SHUTDOWN_TIMEOUT", "0")
 	config := loadConfig()
 	if config.MCPLifecycleEnabled {
@@ -86,8 +87,11 @@ func TestMCPConfigRejectsInvalidValues(t *testing.T) {
 	if config.MCPPrewarmConcurrency != 2 {
 		t.Fatalf("concurrency=%d", config.MCPPrewarmConcurrency)
 	}
-	if config.MCPPrewarmTimeout != 90*time.Second {
-		t.Fatalf("timeout=%s", config.MCPPrewarmTimeout)
+	if config.MCPPrewarmTimeout != 240*time.Second {
+		t.Fatalf("prewarm timeout=%s", config.MCPPrewarmTimeout)
+	}
+	if config.MCPRequestTimeout != 240*time.Second {
+		t.Fatalf("request timeout=%s", config.MCPRequestTimeout)
 	}
 	if config.ShutdownTimeout != 15*time.Second {
 		t.Fatalf("shutdown timeout=%s", config.ShutdownTimeout)

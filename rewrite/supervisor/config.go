@@ -60,10 +60,10 @@ func loadConfig() config {
 			"chrome-devtools",
 		}),
 		MCPPrewarmConcurrency: envIntRange("ATRI_MCP_PREWARM_CONCURRENCY", 2, 1, 16),
-		MCPPrewarmTimeout:     envDurationSeconds("ATRI_MCP_PREWARM_TIMEOUT", 90),
+		MCPPrewarmTimeout:     envDurationSeconds("ATRI_MCP_PREWARM_TIMEOUT", 240),
 		MCPHealthInterval:     envDurationSeconds("ATRI_MCP_HEALTH_INTERVAL", 1800),
 		MCPPruneInterval:      envDurationSeconds("ATRI_MCP_PRUNE_INTERVAL", 300),
-		MCPRequestTimeout:     envDurationSeconds("ATRI_MCP_REQUEST_TIMEOUT", 180),
+		MCPRequestTimeout:     envDurationSeconds("ATRI_MCP_REQUEST_TIMEOUT", 240),
 		MCPIdleTTL:            envDurationSeconds("ATRI_MCP_IDLE_TTL", 3600),
 	}
 }

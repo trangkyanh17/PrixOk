@@ -35,6 +35,9 @@ func runRewriteSupervisor() error {
 	}
 
 	if config.MCPLifecycleEnabled {
+		if err := prepareMCPEnvironment(config.MCPPrewarmPlugins); err != nil {
+			return err
+		}
 		transportBackend := runtimecfg.NewMCPTransportBackend(nil)
 		transportBackend.RequestTimeout = config.MCPRequestTimeout
 		transportBackend.IdleTTL = config.MCPIdleTTL
