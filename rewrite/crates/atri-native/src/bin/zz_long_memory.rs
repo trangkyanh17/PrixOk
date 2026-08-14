@@ -1,6 +1,6 @@
 #[path = "../long_memory.rs"]
 mod long_memory;
-#[path = "../long_memory_context.rs"]
-mod long_memory_context;
+#[path = "../memory_context.rs"]
+mod memory_context;
 
 fn main() {}
