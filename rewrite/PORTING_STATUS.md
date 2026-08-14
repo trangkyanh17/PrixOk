@@ -1,53 +1,150 @@
 # PrixOk rewrite V150 porting status
 
-This branch is experimental and must not be merged into `main` or `dev` until parity and production validation are complete.
+This branch is experimental. Do not merge it into `main` or `dev`, and do not point production at it, until the parity, live-integration, migration and Termux validation gates below are complete.
 
-## Implemented and CI-tested
+## Implemented with automated tests
 
-- Rust `atri-core`: environment configuration, provider configuration types, chat message types, basic bot command parsing.
-- Rust `atri-native`: SHA-256 file hashing, bounded directory listing, ZIP/TAR/TAR.GZ archive inspection, traversal rejection, archive size/ratio limits, SQLite artifact storage/search and content redaction.
-- Rust recent-memory core: Python-compatible user/model history normalization, last-window retention semantics, WAL SQLite load/save/clear, immediate transactions, 30-day retention and bounded chat-row pruning.
-- Rust long-memory core: WAL-backed `chat_archive` and `memory_cards`, user-only durable archive, explicit memory auto-pin markers, automatic-card dedupe, bounded relevance retrieval, recent-history suppression, manual-card priority, stats/forget operations, long-memory prompt context formatting and the V148 repetition guard.
-- Go runtime control: Gemini model specs and aliases, model/thinking validation, atomic persisted `config.py` updates, duplicate-assignment collapse, file-mode preservation and deterministic model-before-thinking writes.
-- Go provider runtime: provider/model choices, provider-specific thinking levels and healing, request payloads and headers, model availability filtering, status icons, task/model metadata, task-specific model ordering, provider env-file parsing/cache/overlay and API-key extraction.
-- Go provider audit runtime: Cerebras/Groq/OpenRouter key checks, model discovery and live model probes, Vertex model probe core with injectable credentials, persisted capability state, audit alert snapshots/events and human/compact report formatting.
-- Go free-pool runtime: plain-text message conversion, response parsing, actual HTTP request execution, provider-specific payloads/headers, task chains/fixed models, terminal-model self-healing, OpenRouter shared 429 cooldown semantics, dynamic token budgets, attempts/timeouts/error cooldowns, Cerebras multi-window quota recovery, Groq reset-aware quota ratios, latency EWMA and weighted smart-provider ordering/status telemetry.
-- Go provider control state: atomic 0600 persistence, normalization, capability-aware model/thinking healing and automatic fallback from dead manual providers to smart mode.
-- Go supervisor-worker policy: public-task privacy gate, chat/coding/agentic/research task classification, worker-only task eligibility, worker system prompts, untrusted supervisor context, public-only verification/retry prompts, verdict parsing, one-retry orchestration and final verification context assembly.
-- Go request/runtime policy: per-user cooldown, forced-reply bypass, global sliding-window quota, bounded runtime chat tracking, stale/oldest chat eviction and stale cooldown pruning.
-- Go Vertex lifecycle: POST retry/backoff with credential refresh on retry, HTTP/network error metadata, text/optional-text/function-call/grounding extraction, tool-result JSON-schema sanitization, finish-reason parsing, response cleanup/continuation merge, bounded empty-text retries, MAX_TOKENS continuation flow and an end-to-end text-only Vertex generation runtime.
-- Go Telegram reply policy: Unicode-aware 4000-character chunking with newline/space boundary preference.
-- Go supervisor: production repair-backoff policy and configurable runtime paths/intervals.
-- TypeScript web layer: typed torrent tree model, tree flattening, folder sizing, selection statistics, recursive selection helpers, request types, torrent tree fetch, selection submit and rename requests.
-- Dedicated GitHub Actions workflow: Rust format/check/test/release/smoke, Go format/vet/test/build, TypeScript typecheck.
+### Rust `atri-core` / `atri-native`
 
-## Source parity still required
+- Environment/runtime configuration primitives, provider configuration types, chat message types and bot command parsing.
+- SHA-256 hashing, bounded directory listing and archive inspection for ZIP/TAR/TAR.GZ.
+- Archive traversal rejection, size limits and compression-ratio limits.
+- SQLite artifact storage/search with content redaction.
+- Python-compatible recent-history normalization, bounded retention and WAL SQLite persistence.
+- Long-memory SQLite storage for chat archive and memory cards, user-only durable archive, explicit auto-pin markers, dedupe, relevance retrieval, recent-history suppression, manual-card priority, stats/forget operations and repetition guard.
+- Delta Force China native knowledge-base search for S1-S10:
+  - NFKC-normalized entity/document lookup.
+  - category/mode/platform filters.
+  - SQLite FTS when available with deterministic LIKE fallback.
+  - current entity lookup separated from historical evidence so current values are never backfilled into S1-S9.
+  - season history grouping and two-season evidence comparison.
+  - JSON CLI bridge through `atri-native delta-search`, `delta-history` and `delta-compare`.
 
-- `bot/__main__.py`: worker startup lifecycle, singleton ownership, startup fan-out and warm services.
-- `bot/modules/atri_ai.py`: tool-call execution, Telegram/progressive response wiring, skill/document/webapp bridges, service-account credential integration and integration of the now-ported request quotas, worker routing, Vertex HTTP/text lifecycle and continuation policy. Text-only Vertex request flow is ported; tool-bearing generation is not yet complete.
-- `bot/modules/atri_memory.py`: async production API wiring remains; recent-history normalization, SQLite persistence, retention and bounded-row pruning are ported in Rust.
-- `bot/modules/atri_long_memory.py`: exact FTS5/LIKE ranking parity, NFKC/SequenceMatcher-equivalent similarity, legacy-memory migration and assistant-history cleanup, plus production AI-runtime integration. Core durable storage/retrieval/context behavior is now ported.
-- `bot/modules/atri_runtime.py`: production command/UI bridge remains; model aliases, thinking rules and durable config-file writes are ported.
-- `bot/modules/atri_provider_config.py`: core env-file loading/cache, environment overlay and provider API-key extraction are ported; production process/environment integration remains.
-- `bot/modules/atri_provider_capabilities.py`: production audit scheduling/concurrency, Vertex service-account token acquisition and Telegram alert delivery remain; OpenAI-compatible key/model discovery/probes, Vertex probe core, persisted audit state, alert snapshots/events, reporting, classification helpers, static model/task metadata and availability filtering are ported.
-- `bot/modules/atri_provider_control.py`: Telegram command/callback UI and live audit presentation remain; persisted control-state file, normalization, thinking/model healing and dead-provider fallback are ported.
-- `bot/modules/atri_provider_request.py`: request payload and header construction are ported.
-- `bot/modules/atri_free_pool.py`: production logger/client lifecycle and direct integration with `atri_ai.py` remain; HTTP execution, plain-text request conversion, response parsing, task routing, cooldown/self-heal policy, dynamic token policy and smart-router telemetry are ported.
-- `bot/modules/atri_attachment_runtime.py`: complete attachment extraction and media/text parity beyond native archive primitives.
-- `bot/modules/atri_document_runtime.py`: document generation bridge and progressive finalization.
-- `bot/modules/atri_command_ui.py`: command and callback UI parity.
-- `bot/modules/atri_tools/**`: tool registry and MCP/plugin integration.
-- mirror/leech stack: aria2, qBittorrent, SABnzbd, rclone, Google Drive, yt-dlp/gallery-dl and direct-link orchestration.
-- web selector: full DOM/UI replacement and browser integration tests.
-- Termux supervisor: tmux/session probes, active-worker ownership check, local-health repair, network-state probing, log rotation and production soak tests.
+### Go runtime control and provider layer
 
-## Merge gates
+- Gemini model specs/aliases and model/thinking validation.
+- Atomic persisted runtime configuration updates with duplicate-assignment collapse and file-mode preservation.
+- Provider/model choices, provider-specific thinking levels, healing and availability filtering.
+- Provider request payload/header generation and task/model metadata.
+- Provider env-file parsing/cache/overlay and API-key extraction.
+- Provider capability state, audit snapshots/events and human/compact reporting.
+- Free-provider HTTP execution for Cerebras/Groq/OpenRouter with provider-specific payloads/headers.
+- Smart-provider ordering using quota, cooldown and latency signals.
+- OpenRouter shared 429 cooldown handling, Cerebras multi-window quota recovery and Groq reset-aware quota ratios.
+- Persisted provider control state and automatic fallback from dead manual providers to smart mode.
 
-1. Rewrite CI fully green.
-2. Behavioral parity tests against current Python implementation.
-3. Termux/Android arm64 build and soak test.
-4. No duplicate bot worker under session loss/recovery.
-5. Attachment/archive fixtures pass safety and correctness checks.
-6. AI/provider parity tests pass for configured providers.
-7. Torrent selector browser flow passes get/select/rename cases.
-8. Production rollback path remains available.
+### Vertex AI runtime
+
+- Service-account JSON parsing, RS256 JWT assertion, access-token acquisition, expiry-aware cache and forced refresh.
+- Vertex generation URL construction from service-account project, location and resolved model.
+- Vertex request/retry/error protocol with request-ID propagation.
+- Text generation runtime with empty-text retry and continuation handling.
+- Function/tool generation runtime with ordered tool responses, bounded parallel execution, tool timeout and Vertex-safe tool-result sanitization.
+- Function declarations, tool configuration and payload assembly with privacy/mode filtering.
+- Registry-backed tool runtime plus per-request progressive callback override.
+
+### Tool registry and orchestration
+
+- Registered tool declarations, execution bridge, mode filtering and public/private privacy gates.
+- Unified Atri orchestration from free-pool worker through Vertex verifier/supervisor into final Vertex text/tool execution.
+- Worker retry policy, supervisor context assembly, response cleaning and Telegram-safe reply chunking.
+- Configured builtin-runtime factory wiring shared HTTP clients, Google credentials, Workspace auth and native Delta Force paths.
+
+### Ported builtin tools
+
+Public tools:
+
+- Open-Meteo weather.
+- YouTube Data API search.
+- Google Safe Browsing.
+- Google Books.
+- Google Places API (New).
+- Google Routes.
+- Google Geocoding.
+- Google Cloud Translation v3.
+- Google capability reporting.
+- Google Cloud Text-to-Speech synthesis with an injected Telegram voice sender.
+- Google Cloud Vision OCR for attached images.
+- Google Document AI for attached PDF/image data.
+- Delta Force CN current search, history and two-season evidence comparison through the Rust native runtime.
+
+Owner/private tools:
+
+- Google Drive search and text read/export.
+- Google Calendar event read.
+- Gmail search and full-message read.
+- Google Sheets range read.
+- Private tools remain hidden unless the caller explicitly enables the private-tool route.
+
+Google authentication/runtime helpers:
+
+- OAuth refresh-token cache for Workspace APIs.
+- Optional delegated Workspace service-account JWT flow with Drive/Calendar/Gmail/Sheets readonly scopes.
+- Cloud service-account sharing for Vertex, Translation, Speech, TTS, Vision and Document AI.
+- Google Speech-to-Text v2 helper and Gemini inline-audio part builder.
+
+### Telegram-facing bridge
+
+- Telegram-agnostic gateway interface for reply/edit/voice operations.
+- Per-request progressive response callback without mutating global orchestrator state.
+- Final progressive edit with fallback reply when edit fails.
+- Multi-chunk final replies.
+- Tool-context propagation for user/chat/thread IDs.
+- Attachment bytes/MIME propagation for Vision/Document AI.
+- Injected voice sender for Google TTS.
+
+### TypeScript web helper
+
+- Typed API/client helpers for the rewrite web surface and corresponding TypeScript checks.
+
+## Still missing before production parity
+
+### Concrete Telegram runtime
+
+- Real Telegram/Pyrogram-equivalent transport implementation behind the new gateway interface.
+- Command/callback dispatch parity with the current Python bot.
+- Sticker learning/reply behavior, moderation/admin flows and all Telegram media edge cases.
+- Production progressive-message timing/rate-limit behavior and flood-wait handling.
+
+### Code-agent/MCP ecosystem
+
+- Serena semantic-code MCP integration.
+- Context7 documentation integration.
+- GitHub MCP discovery/call behavior including the forced GitHub path used by coding mode.
+- Semgrep warm worker/session lifecycle.
+- Sentry MCP integration.
+- Chrome DevTools MCP integration.
+- Equivalent schema sanitization, tool discovery cache and direct-plugin fast path.
+
+### Atri feature parity
+
+- `atri_skills` activation/context behavior.
+- Attachment/document runtime finalizers and generated artifact delivery parity.
+- Web/browser research path and production browser/proxy integration.
+- Sticker subsystem parity.
+- Admin/moderation and natural-control command parity.
+- Remaining provider/model audit edge cases that only occur against live services.
+
+### Production/runtime parity
+
+- Concrete Termux/Debian process entrypoint replacing the current placeholder supervisor `main.go`.
+- Existing singleton lock/watchdog/autostart semantics.
+- Browser/Xvfb/proxy/aria2/qBittorrent/SAB/Serena warm-worker lifecycle.
+- Production configuration loading and secret handling without exposing credentials to logs or tools.
+- Graceful shutdown, process supervision and restart behavior under real Android/proot conditions.
+
+## Required validation gates before merge
+
+1. `cargo fmt --check`, `cargo test --workspace` and release build all pass.
+2. `gofmt`, `go test ./...`, `go vet ./...` and Go build all pass.
+3. TypeScript typecheck/build passes.
+4. Differential fixtures compare the rewrite against the current Python behavior for memory, provider routing, Vertex payloads, tools and Telegram-facing responses.
+5. Live tests verify Vertex, Google public APIs, Workspace OAuth/service-account routes and the real Delta Force CN database.
+6. Telegram end-to-end tests cover text, replies, topics, attachments, voice/TTS, long responses, tool calls and failure recovery.
+7. Security review verifies owner/private tool isolation, attachment limits, command execution boundaries and secret redaction.
+8. Termux/Debian soak test verifies CPU/RAM/heat, no duplicate workers, clean restart and screen-off operation.
+9. Controlled side-by-side/canary deployment passes before any production replacement.
+
+## Merge policy
+
+Until every required gate is complete, keep `rewrite/rust-go-ts-v150` isolated. `main` and `dev` remain the Python production source of truth.
