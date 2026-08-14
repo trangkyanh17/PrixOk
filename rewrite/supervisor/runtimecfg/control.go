@@ -72,7 +72,11 @@ func NormalizeControlState(input ControlState) ControlState {
 		if allowedProviderModels[provider][model] {
 			current.Model = model
 		}
-		current.Thinking = HealProviderThinking(provider, current.Model, item.Thinking)
+		thinking := strings.ToLower(strings.TrimSpace(item.Thinking))
+		if thinking == "" {
+			thinking = "auto"
+		}
+		current.Thinking = thinking
 		state.Providers[provider] = current
 	}
 	return state
