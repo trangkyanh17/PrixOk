@@ -72,7 +72,7 @@ func TestExtractGroundingDataDedupesAndBounds(t *testing.T) {
 		"candidates": []any{
 			map[string]any{
 				"groundingMetadata": map[string]any{
-					"groundingChunks":   chunks,
+					"groundingChunks":  chunks,
 					"webSearchQueries": queries,
 				},
 			},
