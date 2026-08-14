@@ -1,14 +1,20 @@
 # Termux production helpers
 
-These files are source-controlled reference copies of the core host-side Atri runtime helpers used with PRoot-Distro Debian 13.
+These files are source-controlled reference copies of host-side production helpers used with PRoot-Distro Debian.
 
-## Files
+## Current ownership
 
-- `prixok-bot.sh`: canonical host launcher. It enters the Debian proot, switches to `/app`, disables source self-updates for the patched deployment, and executes `start.sh`.
-- `atri-production-watchdog.sh`: supervises the bot tmux session, shared browser components, and network state. Before recreating a missing `prixok-bot` tmux session it probes `/app/.atri-prixok-bot-v133.lock` inside Debian. A held lock means the real worker is still alive, so the watchdog logs `BOT_SESSION_MISSING_WORKER_ACTIVE` instead of spawning a duplicate.
+V150 owns watchdog and repair lifecycle. The managed deployment path is documented in `rewrite/PRODUCTION_DEPLOY.md` and implemented by `rewrite/termux-v150-deploy.sh`.
 
-## Deployment notes
+- `prixok-bot.sh`: canonical worker launcher. It enters Debian `/app`, disables source self-updates with `RUN_SOURCE_UPDATE=0`, and executes `start.sh`. It does not invoke the legacy ensure/watchdog path.
+- `atri-production-watchdog.sh`: **deprecated rollback/audit reference only**. Do not run it concurrently with the V150 watchdog.
 
-These files intentionally contain no credentials. Device-specific helpers, browser/Xvfb supervisors, private sessions, and runtime state are provisioned separately on the Termux device.
+Device-specific helpers such as local health, browser ensure, network state, credentials, and runtime sessions remain provisioned separately in Termux `$HOME` and are not overwritten by the V150 deploy manager.
 
-Compare these reference helpers with the live `$HOME` copies before installing them. Preserve device-specific settings, validate with `bash -n`, and restart only the affected tmux session. Do not blindly overwrite all production helpers or run `git pull` against the live customized `/app` tree.
+## Production rules
+
+- V150 and the legacy watchdog must never be active at the same time.
+- Do not `git pull`, reset, checkout, or clean the live customized `/app` tree as part of V150 deployment.
+- Use the isolated `/opt/prixok-v150` clone to build V150 artifacts.
+- Use `termux-v150-deploy.sh cleanup-legacy` to archive obsolete live legacy helpers rather than deleting them. The archive can be restored with `restore-legacy` without starting a second watchdog.
+- Use `termux-v150-deploy.sh upgrade` for later supervisor revisions so the current runtime is snapshotted and automatically rolled back if invariants fail.
