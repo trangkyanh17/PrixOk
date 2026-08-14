@@ -230,12 +230,12 @@ func TestVertexToolRuntimeForceGitHubMCPSequence(t *testing.T) {
 
 	seenPlugin := []string{}
 	runtime := VertexToolRuntime{
-		Client:           server.Client(),
-		URL:              server.URL,
-		TokenProvider:    vertexRuntimeToken,
-		Sleep:            noVertexSleep,
-		Mode:             "code",
-		ForceGitHubMCP:   true,
+		Client:         server.Client(),
+		URL:            server.URL,
+		TokenProvider:  vertexRuntimeToken,
+		Sleep:          noVertexSleep,
+		Mode:           "code",
+		ForceGitHubMCP: true,
 		ToolExecutor: func(ctx context.Context, name string, arguments map[string]any) (any, error) {
 			seenPlugin = append(seenPlugin, stringField(arguments["plugin"]))
 			return map[string]any{"ok": true}, nil
