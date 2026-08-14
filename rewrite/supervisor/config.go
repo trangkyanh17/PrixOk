@@ -32,6 +32,11 @@ type config struct {
 	MCPPruneInterval      time.Duration
 	MCPRequestTimeout     time.Duration
 	MCPIdleTTL            time.Duration
+
+	TelegramShadowEnabled bool
+	TelegramShadowAddr    string
+	TelegramShadowSecret  string
+	TelegramShadowRetry   time.Duration
 }
 
 func loadConfig() config {
@@ -67,6 +72,11 @@ func loadConfig() config {
 		MCPPruneInterval:      envDurationSeconds("ATRI_MCP_PRUNE_INTERVAL", 300),
 		MCPRequestTimeout:     envDurationSeconds("ATRI_MCP_REQUEST_TIMEOUT", 240),
 		MCPIdleTTL:            envDurationSeconds("ATRI_MCP_IDLE_TTL", 3600),
+
+		TelegramShadowEnabled: envBool("ATRI_V150_TELEGRAM_SHADOW", false),
+		TelegramShadowAddr:    envString("ATRI_TELEGRAM_SHADOW_ADDR", "127.0.0.1:18750"),
+		TelegramShadowSecret:  envString("ATRI_TELEGRAM_SHADOW_SECRET", ""),
+		TelegramShadowRetry:   envDurationSeconds("ATRI_TELEGRAM_SHADOW_RETRY", 15),
 	}
 }
 

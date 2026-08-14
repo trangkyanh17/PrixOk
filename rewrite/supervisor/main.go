@@ -24,7 +24,7 @@ func nextBackoff(current, minimum, maximum time.Duration) time.Duration {
 
 func runRewriteSupervisor() error {
 	config := loadConfig()
-	components := make([]supervisorComponent, 0, 2)
+	components := make([]supervisorComponent, 0, 3)
 
 	if config.WatchdogEnabled {
 		productionWatchdog := newWatchdog(config, execWatchdogRunner{}, isExecutableFile, log.Printf)
@@ -51,6 +51,15 @@ func runRewriteSupervisor() error {
 			PruneEvery:  config.MCPPruneInterval,
 		}, log.Printf)
 		components = append(components, supervisorComponent{Name: "mcp", Run: lifecycle.Run})
+	}
+
+	if config.TelegramShadowEnabled {
+		components = append(components, supervisorComponent{
+			Name: "telegram-shadow",
+			Run: func(ctx context.Context) error {
+				return runTelegramShadowIngress(ctx, config)
+			},
+		})
 	}
 
 	if len(components) == 0 {

@@ -2,7 +2,7 @@
 
 V150 is the Rust/Go/TypeScript runtime and Termux supervisor track for PrixOk. Its `main` integration is **additive**: the existing Python/Pyrogram bot remains the production Telegram worker, while V150 provides the validated supervisor/watchdog, MCP lifecycle, native helpers, runtime libraries and managed deployment tooling.
 
-Merging V150 code does not authorize replacing Telegram message handling. Full replacement has a separate parity/canary gate documented in [`PORTING_STATUS.md`](PORTING_STATUS.md).
+Merging V150 code does not authorize replacing Telegram message handling. Full replacement has a separate parity/canary gate documented in [`PORTING_STATUS.md`](PORTING_STATUS.md). The V151 Telegram migration/shadow plan is documented in [`TELEGRAM_PARITY.md`](TELEGRAM_PARITY.md).
 
 ## Termux/Debian build helper
 
@@ -37,6 +37,21 @@ start.sh -> exec python3 -m bot
 ```
 
 The canonical Termux launcher enters Debian `/app` with `RUN_SOURCE_UPDATE=0`. V150 supervises lifecycle/health but does not update or replace the customized live `/app` source tree during managed watchdog deployment.
+
+## V151 Telegram shadow bridge
+
+V151 adds an **observe-only** bridge for the next migration phase. It is disabled by default with `ATRI_V150_TELEGRAM_SHADOW=false`.
+
+When explicitly enabled, the Python worker mirrors normalized message, edited-message and callback metadata to a Go ingress bound to loopback only. Python remains the sole Telegram owner and continues producing all replies. The shadow path uses a bounded queue and transport failures are fail-open for production dispatch.
+
+Default local endpoints:
+
+```text
+http://127.0.0.1:18750/v1/telegram/shadow
+http://127.0.0.1:18750/healthz
+```
+
+No V151 phase-1 code creates a second Telegram polling client or exposes Telegram send/edit methods from the Python shadow observer. See [`TELEGRAM_PARITY.md`](TELEGRAM_PARITY.md) for the route inventory and ownership gates.
 
 ## Termux/PROot MCP uv runtime
 
@@ -100,6 +115,7 @@ The deploy manager builds from the isolated `/opt/prixok-v150` clone and verifie
 - `main` as the operational V150 source branch;
 - boot-hook lock lifecycle invariants, including closing FD 9 before the long-lived watchdog starts;
 - the Python production-worker invariant;
+- V151 shadow bridge observe-only/default-off contracts through tests;
 - npm lock presence, `npm ci`, and TypeScript build.
 
 ## Reporting
