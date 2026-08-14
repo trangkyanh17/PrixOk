@@ -47,6 +47,30 @@ func (transport *httpMCPTransport) addHeaders(req *http.Request) {
 	}
 }
 
+func (transport *httpMCPTransport) redactErrorBody(value string) string {
+	result := value
+	for key, raw := range transport.spec.Headers {
+		secret := strings.TrimSpace(raw)
+		if secret == "" {
+			continue
+		}
+		foldedKey := strings.ToLower(strings.TrimSpace(key))
+		if foldedKey == "authorization" ||
+			strings.Contains(foldedKey, "token") ||
+			strings.Contains(foldedKey, "secret") ||
+			strings.Contains(foldedKey, "key") {
+			result = strings.ReplaceAll(result, secret, "[redacted]")
+			if strings.HasPrefix(strings.ToLower(secret), "bearer ") {
+				token := strings.TrimSpace(secret[len("Bearer "):])
+				if token != "" {
+					result = strings.ReplaceAll(result, token, "[redacted]")
+				}
+			}
+		}
+	}
+	return result
+}
+
 func decodeSSEMatchingResponse(body io.Reader, expectedID int64) (mcpRPCResponse, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64<<10), 4<<20)
@@ -117,7 +141,8 @@ func (transport *httpMCPTransport) postLocked(
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 16<<10))
-		return mcpRPCResponse{}, fmt.Errorf("MCP HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+		message := transport.redactErrorBody(strings.TrimSpace(string(body)))
+		return mcpRPCResponse{}, fmt.Errorf("MCP HTTP %d: %s", response.StatusCode, message)
 	}
 	if expectedID == nil {
 		return mcpRPCResponse{}, nil
@@ -253,7 +278,8 @@ func (transport *httpMCPTransport) closeSessionLocked() error {
 		return nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-	return fmt.Errorf("MCP HTTP DELETE %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	message := transport.redactErrorBody(strings.TrimSpace(string(body)))
+	return fmt.Errorf("MCP HTTP DELETE %d: %s", response.StatusCode, message)
 }
 
 func (transport *httpMCPTransport) Close() error {
