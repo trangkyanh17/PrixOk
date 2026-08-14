@@ -84,6 +84,10 @@ fn enforce(
     Ok(())
 }
 
+fn ratio_exceeds(size: u64, compressed: u64, max_ratio: u64) -> bool {
+    size > compressed.max(1).saturating_mul(max_ratio)
+}
+
 fn inspect_zip<R: Read + Seek>(
     reader: R,
     limits: ArchiveLimits,
@@ -96,8 +100,7 @@ fn inspect_zip<R: Read + Seek>(
         let size = file.size();
         total = total.saturating_add(size);
         enforce(limits, index + 1, total, size)?;
-        let compressed = file.compressed_size().max(1);
-        if size / compressed > limits.max_ratio {
+        if ratio_exceeds(size, file.compressed_size(), limits.max_ratio) {
             return Err(ArchiveError::Limit);
         }
         entries.push(ArchiveEntry {
@@ -169,5 +172,11 @@ mod tests {
     #[test]
     fn rejects_traversal() {
         assert!(safe_path("../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn ratio_check_does_not_lose_fractional_overflow() {
+        assert!(!ratio_exceeds(500, 2, 250));
+        assert!(ratio_exceeds(501, 2, 250));
     }
 }

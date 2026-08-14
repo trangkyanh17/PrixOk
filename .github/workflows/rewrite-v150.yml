@@ -27,6 +27,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check
         run: cargo check --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
       - name: Release build
@@ -50,8 +52,9 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - name: Race detector
-        run: go test -race ./...
-      - run: go build .
+        run: go test -race -count=1 ./...
+      - name: Stripped supervisor build
+        run: go build -trimpath -ldflags='-s -w' -o /tmp/atri-supervisor .
 
   web:
     runs-on: ubuntu-latest
@@ -63,5 +66,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --no-audit --no-fund
+      - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm run build

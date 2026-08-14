@@ -221,6 +221,34 @@ func TestPostVertexRejectsInvalidSuccessJSON(t *testing.T) {
 	}
 }
 
+func TestPostVertexRejectsOversizedResponse(t *testing.T) {
+	doer := &scriptedHTTPDoer{
+		responses: []*http.Response{
+			vertexResponse(200, strings.Repeat("x", maxVertexResponseBytes+1), map[string]string{
+				"x-goog-request-id": "oversize-id",
+			}),
+		},
+	}
+	_, err := PostVertex(
+		context.Background(),
+		doer,
+		"https://example.test",
+		map[string]any{},
+		func(context.Context, bool) (string, error) { return "token", nil },
+		nil,
+	)
+	vertexErr, ok := err.(*VertexHTTPError)
+	if !ok {
+		t.Fatalf("err=%T %v", err, err)
+	}
+	if vertexErr.Reason != "RESPONSE_TOO_LARGE" || vertexErr.RequestID != "oversize-id" {
+		t.Fatalf("err=%+v", vertexErr)
+	}
+	if doer.calls != 1 {
+		t.Fatalf("oversized response should not retry, calls=%d", doer.calls)
+	}
+}
+
 func TestPostVertexCredentialFailureIsNotRetried(t *testing.T) {
 	calls := 0
 	_, err := PostVertex(

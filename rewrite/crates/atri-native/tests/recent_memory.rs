@@ -7,7 +7,7 @@ fn message(role: &str, text: &str) -> serde_json::Value {
 }
 
 #[test]
-fn normalizes_only_last_window_before_filtering() {
+fn keeps_last_valid_messages_instead_of_last_raw_items() {
     let history = json!([
         message("user", "old-user"),
         message("model", "old-model"),
@@ -17,9 +17,11 @@ fn normalizes_only_last_window_before_filtering() {
         message("model", "new-model")
     ]);
     let normalized = normalize_history(&history, 4);
-    assert_eq!(normalized.len(), 2);
-    assert_eq!(normalized[0]["parts"][0]["text"], "new-user");
-    assert_eq!(normalized[1]["parts"][0]["text"], "new-model");
+    assert_eq!(normalized.len(), 4);
+    assert_eq!(normalized[0]["parts"][0]["text"], "old-user");
+    assert_eq!(normalized[1]["parts"][0]["text"], "old-model");
+    assert_eq!(normalized[2]["parts"][0]["text"], "new-user");
+    assert_eq!(normalized[3]["parts"][0]["text"], "new-model");
 }
 
 #[test]

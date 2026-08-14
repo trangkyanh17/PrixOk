@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type RouterWindow struct {
@@ -14,6 +15,8 @@ type RouterWindow struct {
 }
 
 type SmartRouterState struct {
+	mu sync.Mutex
+
 	LatencyMS      map[string]float64
 	RequestRatio   map[string]float64
 	TokenRatio     map[string]float64
@@ -70,7 +73,8 @@ func NewSmartRouterState() *SmartRouterState {
 	}
 }
 
-func (state *SmartRouterState) ensure() {
+// ensureLocked initializes maps. Callers must hold state.mu, except construction.
+func (state *SmartRouterState) ensureLocked() {
 	if state.LatencyMS == nil {
 		state.LatencyMS = map[string]float64{}
 	}
@@ -141,7 +145,6 @@ func RouterResetSeconds(value string) (float64, bool) {
 	total := 0.0
 	number := strings.Builder{}
 	parsedAny := false
-
 	flush := func(unit byte) bool {
 		if number.Len() == 0 {
 			return false
@@ -182,7 +185,6 @@ func RouterResetSeconds(value string) (float64, bool) {
 		}
 		return 0, false
 	}
-
 	if number.Len() > 0 {
 		amount, err := strconv.ParseFloat(number.String(), 64)
 		if err != nil {
@@ -263,8 +265,8 @@ func minRatioKey(values map[string]float64, order []string) string {
 	return selected
 }
 
-func (state *SmartRouterState) storeWindow(name, window string, ratio, windowSeconds, now float64) {
-	state.ensure()
+func (state *SmartRouterState) storeWindowLocked(name, window string, ratio, windowSeconds, now float64) {
+	state.ensureLocked()
 	if state.Windows[name] == nil {
 		state.Windows[name] = map[string]RouterWindow{}
 	}
@@ -275,13 +277,12 @@ func (state *SmartRouterState) storeWindow(name, window string, ratio, windowSec
 	}
 }
 
-func (state *SmartRouterState) CurrentWindowRatios(name string, now float64) map[string]float64 {
-	state.ensure()
+func (state *SmartRouterState) currentWindowRatiosLocked(name string, now float64) map[string]float64 {
+	state.ensureLocked()
 	windows := state.Windows[name]
 	if len(windows) == 0 {
 		return map[string]float64{}
 	}
-
 	current := make(map[string]float64, len(windows))
 	for window, item := range windows {
 		estimated := clampFloat(
@@ -300,8 +301,22 @@ func (state *SmartRouterState) CurrentWindowRatios(name string, now float64) map
 	return current
 }
 
+func (state *SmartRouterState) CurrentWindowRatios(name string, now float64) map[string]float64 {
+	if state == nil {
+		return map[string]float64{}
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.currentWindowRatiosLocked(name, now)
+}
+
 func (state *SmartRouterState) CaptureRateHeaders(provider string, headers map[string]string, now float64) {
-	state.ensure()
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.ensureLocked()
 	provider = strings.ToLower(strings.TrimSpace(provider))
 
 	if provider == "cerebras" {
@@ -322,31 +337,24 @@ func (state *SmartRouterState) CaptureRateHeaders(provider string, headers map[s
 		for _, window := range windows {
 			ratio, ok := RouterRatio(routerHeader(headers, window.Remaining), routerHeader(headers, window.Limit))
 			if ok {
-				state.storeWindow(name, window.Name, ratio, window.Seconds, now)
+				state.storeWindowLocked(name, window.Name, ratio, window.Seconds, now)
 			}
 		}
-		current := state.CurrentWindowRatios(name, now)
+		current := state.currentWindowRatiosLocked(name, now)
 		if len(current) > 0 {
 			state.Bottleneck[name] = minRatioKey(current, routerWindowOrder)
 		}
 		return
 	}
-
 	if provider != "groq" {
 		return
 	}
 
 	name := "groq_gptoss"
-	if ratio, ok := RouterRatio(
-		routerHeader(headers, "x-ratelimit-remaining-requests"),
-		routerHeader(headers, "x-ratelimit-limit-requests"),
-	); ok {
+	if ratio, ok := RouterRatio(routerHeader(headers, "x-ratelimit-remaining-requests"), routerHeader(headers, "x-ratelimit-limit-requests")); ok {
 		state.RequestRatio[name] = ratio
 	}
-	if ratio, ok := RouterRatio(
-		routerHeader(headers, "x-ratelimit-remaining-tokens"),
-		routerHeader(headers, "x-ratelimit-limit-tokens"),
-	); ok {
+	if ratio, ok := RouterRatio(routerHeader(headers, "x-ratelimit-remaining-tokens"), routerHeader(headers, "x-ratelimit-limit-tokens")); ok {
 		state.TokenRatio[name] = ratio
 	}
 	if seconds, ok := RouterResetSeconds(routerHeader(headers, "x-ratelimit-reset-requests")); ok {
@@ -355,7 +363,6 @@ func (state *SmartRouterState) CaptureRateHeaders(provider string, headers map[s
 	if seconds, ok := RouterResetSeconds(routerHeader(headers, "x-ratelimit-reset-tokens")); ok {
 		state.TokenResetAt[name] = now + seconds
 	}
-
 	candidates := map[string]float64{}
 	if ratio, ok := state.RequestRatio[name]; ok {
 		candidates["req_day"] = ratio
@@ -379,20 +386,18 @@ func RouterBaseWeight(name string, values map[string]string) float64 {
 	}
 }
 
-func (state *SmartRouterState) EffectiveWeight(name string, values map[string]string, now float64) float64 {
-	state.ensure()
+func (state *SmartRouterState) effectiveWeightLocked(name string, values map[string]string, now float64) float64 {
+	state.ensureLocked()
 	if state.CooldownUntil[name] > now {
 		return 0
 	}
-
 	weight := RouterBaseWeight(name, values)
 	if name == "cerebras_gptoss" {
-		current := state.CurrentWindowRatios(name, now)
+		current := state.currentWindowRatiosLocked(name, now)
 		if len(current) > 0 {
 			bottleneck := minRatioKey(current, routerWindowOrder)
 			state.Bottleneck[name] = bottleneck
 			weight *= math.Max(0.05, current[bottleneck])
-
 			requestValues := make([]float64, 0, len(current))
 			tokenValues := make([]float64, 0, len(current))
 			for window, ratio := range current {
@@ -446,12 +451,20 @@ func (state *SmartRouterState) EffectiveWeight(name string, values map[string]st
 			weight *= math.Max(0.05, minimumFloat(ratios))
 		}
 	}
-
 	if latency, ok := state.LatencyMS[name]; ok {
 		latencyFactor := 1000 / math.Max(500, latency)
 		weight *= clampFloat(latencyFactor, 0.65, 1.35)
 	}
 	return math.Max(0, weight)
+}
+
+func (state *SmartRouterState) EffectiveWeight(name string, values map[string]string, now float64) float64 {
+	if state == nil {
+		return 0
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.effectiveWeightLocked(name, values, now)
 }
 
 func minimumFloat(values []float64) float64 {
@@ -477,21 +490,22 @@ func containsString(values []string, target string) bool {
 }
 
 func (state *SmartRouterState) SmartOrder(chain []string, values map[string]string, now float64) []string {
-	state.ensure()
+	if state == nil {
+		return append([]string(nil), chain...)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.ensureLocked()
 	if !routerTruthy(values["ATRI_FREE_SMART_ROUTER"], true) {
 		return append([]string(nil), chain...)
 	}
-
 	primary := make([]string, 0, len(routerPrimaryOrder))
 	for _, name := range routerPrimaryOrder {
 		spec, known := FreeProviderDefinitions[name]
 		if !known || !containsString(chain, name) {
 			continue
 		}
-		if strings.TrimSpace(values[spec.KeyName]) == "" {
-			continue
-		}
-		if state.CooldownUntil[name] > now {
+		if strings.TrimSpace(values[spec.KeyName]) == "" || state.CooldownUntil[name] > now {
 			continue
 		}
 		primary = append(primary, name)
@@ -499,18 +513,16 @@ func (state *SmartRouterState) SmartOrder(chain []string, values map[string]stri
 	if len(primary) < 2 {
 		return append([]string(nil), chain...)
 	}
-
 	weights := make(map[string]float64, len(primary))
 	total := 0.0
 	for _, name := range primary {
-		weight := state.EffectiveWeight(name, values, now)
+		weight := state.effectiveWeightLocked(name, values, now)
 		weights[name] = weight
 		total += weight
 	}
 	if total <= 0 {
 		return append([]string(nil), chain...)
 	}
-
 	for _, name := range primary {
 		state.CurrentWeight[name] += weights[name]
 	}
@@ -528,10 +540,7 @@ func (state *SmartRouterState) SmartOrder(chain []string, values map[string]stri
 			restPrimary = append(restPrimary, name)
 		}
 	}
-	sort.SliceStable(restPrimary, func(i, j int) bool {
-		return weights[restPrimary[i]] > weights[restPrimary[j]]
-	})
-
+	sort.SliceStable(restPrimary, func(i, j int) bool { return weights[restPrimary[i]] > weights[restPrimary[j]] })
 	fallback := make([]string, 0, len(chain))
 	for _, name := range chain {
 		if !containsString(primary, name) {
@@ -545,7 +554,12 @@ func (state *SmartRouterState) SmartOrder(chain []string, values map[string]stri
 }
 
 func (state *SmartRouterState) RecordLatency(name string, elapsedMS float64, values map[string]string) {
-	state.ensure()
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.ensureLocked()
 	if name != "cerebras_gptoss" && name != "groq_gptoss" {
 		return
 	}
@@ -557,17 +571,42 @@ func (state *SmartRouterState) RecordLatency(name string, elapsedMS float64, val
 	}
 }
 
+func (state *SmartRouterState) CooldownFor(name string, spec FreeProviderSpec) float64 {
+	if state == nil {
+		return 0
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.ensureLocked()
+	return FreePoolCooldownUntil(name, spec, state.CooldownUntil)
+}
+
+func (state *SmartRouterState) SetCooldown(key string, until float64) {
+	if state == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.ensureLocked()
+	state.CooldownUntil[key] = until
+}
+
 func pointerFloat(value float64) *float64 {
 	copyValue := value
 	return &copyValue
 }
 
 func (state *SmartRouterState) Status(values map[string]string, now float64) SmartRouterStatus {
-	state.ensure()
+	if state == nil {
+		return SmartRouterStatus{Enabled: routerTruthy(values["ATRI_FREE_SMART_ROUTER"], true), Providers: map[string]RouterProviderStatus{}}
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.ensureLocked()
 	providers := map[string]RouterProviderStatus{}
 	for _, name := range routerPrimaryOrder {
 		provider := RouterProviderStatus{
-			EffectiveWeight:   state.EffectiveWeight(name, values, now),
+			EffectiveWeight:   state.effectiveWeightLocked(name, values, now),
 			Bottleneck:        state.Bottleneck[name],
 			Windows:           map[string]RouterWindow{},
 			CooldownInSeconds: math.Max(0, state.CooldownUntil[name]-now),
@@ -588,14 +627,13 @@ func (state *SmartRouterState) Status(values map[string]string, now float64) Sma
 			provider.TokenResetInSeconds = pointerFloat(math.Max(0, reset-now))
 		}
 		if name == "cerebras_gptoss" {
-			current := state.CurrentWindowRatios(name, now)
+			current := state.currentWindowRatiosLocked(name, now)
 			for window, ratio := range current {
-				item := state.Windows[name][window]
-				provider.Windows[window] = RouterWindow{
-					Ratio:         ratio,
-					ObservedAt:    item.ObservedAt,
-					WindowSeconds: item.WindowSeconds,
+				item, ok := state.Windows[name][window]
+				if !ok {
+					continue
 				}
+				provider.Windows[window] = RouterWindow{Ratio: ratio, ObservedAt: item.ObservedAt, WindowSeconds: item.WindowSeconds}
 			}
 		}
 		providers[name] = provider

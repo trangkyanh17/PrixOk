@@ -141,10 +141,15 @@ pub fn normalize_history(history: &Value, max_history_items: usize) -> Vec<Value
         return Vec::new();
     };
     let limit = max_history_items.max(2);
-    let start = items.len().saturating_sub(limit);
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(limit.min(items.len()));
 
-    for item in &items[start..] {
+    // Walk from newest to oldest and count only valid user/model messages.
+    // Slicing before validation could let trailing tool/system/invalid entries
+    // crowd useful conversational history out of the retained window.
+    for item in items.iter().rev() {
+        if result.len() >= limit {
+            break;
+        }
         let Some(object) = item.as_object() else {
             continue;
         };
@@ -172,6 +177,7 @@ pub fn normalize_history(history: &Value, max_history_items: usize) -> Vec<Value
         clean.insert("parts".to_string(), Value::Array(clean_parts));
         result.push(Value::Object(clean));
     }
+    result.reverse();
     result
 }
 

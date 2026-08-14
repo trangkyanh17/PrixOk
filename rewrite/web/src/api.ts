@@ -85,15 +85,32 @@ export function calculateStats(nodes: FileNode[]): SelectionStats {
 
 export function areAllChildrenSelected(folder: FileNode): boolean {
   const children = folder.children ?? [];
-  return children.length > 0 && children.every((child) =>
-    child.type === "folder" ? areAllChildrenSelected(child) : child.selected,
-  );
+  if (children.length === 0) return false;
+  const stack = [...children];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.type === "file") {
+      if (!node.selected) return false;
+      continue;
+    }
+    const nested = node.children ?? [];
+    if (nested.length === 0) return false;
+    stack.push(...nested);
+  }
+  return true;
 }
 
 export function areSomeChildrenSelected(folder: FileNode): boolean {
-  return (folder.children ?? []).some((child) =>
-    child.type === "folder" ? areSomeChildrenSelected(child) : child.selected,
-  );
+  const stack = [...(folder.children ?? [])];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.type === "file") {
+      if (node.selected) return true;
+      continue;
+    }
+    if (node.children) stack.push(...node.children);
+  }
+  return false;
 }
 
 export function toggleFolder(folder: FileNode, selected: boolean): void {
@@ -136,9 +153,12 @@ export async function getTorrentTree(gid: string, pin: string): Promise<TorrentT
   return response.json() as Promise<TorrentTreeResponse>;
 }
 
+const jsonHeaders = { "Content-Type": "application/json" } as const;
+
 export async function submitSelection(gid: string, pin: string, files: FileNode[]): Promise<void> {
   const response = await fetch(torrentUrl(gid, pin, "selection"), {
     method: "POST",
+    headers: jsonHeaders,
     body: JSON.stringify(files),
   });
   if (!response.ok) throw new Error(`selection failed: ${response.status}`);
@@ -151,6 +171,7 @@ export async function renameTorrentEntry(
 ): Promise<void> {
   const response = await fetch(torrentUrl(gid, pin, "rename"), {
     method: "POST",
+    headers: jsonHeaders,
     body: JSON.stringify(request),
   });
   if (!response.ok) throw new Error(`rename failed: ${response.status}`);

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -43,6 +44,8 @@ type FreePoolRuntime struct {
 	Capabilities        *CapabilityState
 	CapabilityStatePath string
 	Router              *SmartRouterState
+
+	stateMu sync.Mutex
 }
 
 func httpHeaderValues(headers http.Header) map[string]string {
@@ -147,6 +150,8 @@ func (runtime *FreePoolRuntime) runtimeValues() map[string]string {
 }
 
 func (runtime *FreePoolRuntime) runtimeRouter() *SmartRouterState {
+	runtime.stateMu.Lock()
+	defer runtime.stateMu.Unlock()
 	if runtime.Router == nil {
 		runtime.Router = NewSmartRouterState()
 	}
@@ -167,6 +172,8 @@ func manualFreePoolName(providerMode string) string {
 }
 
 func (runtime *FreePoolRuntime) healControl() ControlState {
+	runtime.stateMu.Lock()
+	defer runtime.stateMu.Unlock()
 	state := NormalizeControlState(runtime.Control)
 	if runtime.Capabilities != nil {
 		state, _ = HealControlState(state, *runtime.Capabilities)
@@ -185,17 +192,18 @@ func cloneFreeProviderSpec(spec FreeProviderSpec) FreeProviderSpec {
 }
 
 func (runtime *FreePoolRuntime) markTerminalModelFailure(spec FreeProviderSpec, callErr *FreeProviderCallError) {
-	if runtime.Capabilities == nil || !IsTerminalModelError(callErr.StatusCode, callErr.HasStatus, callErr.Error()) {
+	if callErr == nil || !IsTerminalModelError(callErr.StatusCode, callErr.HasStatus, callErr.Error()) {
 		return
 	}
-	runtime.Capabilities.MarkModelUnavailable(
-		spec.Provider,
-		spec.Model,
-		callErr.Error(),
-		time.Now().Unix(),
-	)
+	runtime.stateMu.Lock()
+	defer runtime.stateMu.Unlock()
+	if runtime.Capabilities == nil {
+		return
+	}
+	now := time.Now().Unix()
+	runtime.Capabilities.MarkModelUnavailable(spec.Provider, spec.Model, callErr.Error(), now)
 	if strings.TrimSpace(runtime.CapabilityStatePath) != "" {
-		_ = SaveCapabilityState(runtime.CapabilityStatePath, runtime.Capabilities, time.Now().Unix())
+		_ = SaveCapabilityState(runtime.CapabilityStatePath, runtime.Capabilities, now)
 	}
 }
 
@@ -223,13 +231,14 @@ func (runtime *FreePoolRuntime) GenerateFreeChat(
 		return nil, nil
 	}
 
+	router := runtime.runtimeRouter()
 	var chain []string
 	if manualName := manualFreePoolName(providerMode); manualName != "" {
 		chain = []string{manualName}
 	} else {
 		chain = FreePoolTaskChain(taskType)
 		if taskType != "coding_agentic" {
-			chain = runtime.runtimeRouter().SmartOrder(chain, values, monotonicSeconds())
+			chain = router.SmartOrder(chain, values, monotonicSeconds())
 		}
 	}
 
@@ -264,7 +273,7 @@ func (runtime *FreePoolRuntime) GenerateFreeChat(
 			continue
 		}
 		now := monotonicSeconds()
-		if FreePoolCooldownUntil(name, spec, runtime.runtimeRouter().CooldownUntil) > now {
+		if router.CooldownFor(name, spec) > now {
 			continue
 		}
 		providerThinking := ResolveProviderThinking(control, spec.Provider, thinkingLevel)
@@ -280,22 +289,22 @@ func (runtime *FreePoolRuntime) GenerateFreeChat(
 			providerThinking,
 			maxTokens,
 			timeoutSeconds,
-			runtime.runtimeRouter(),
+			router,
 		)
 		if err != nil {
 			callErr, ok := err.(*FreeProviderCallError)
 			if ok {
 				runtime.markTerminalModelFailure(spec, callErr)
 				cooldownKey := FreePoolFailureCooldownKey(name, spec, callErr.StatusCode)
-				runtime.runtimeRouter().CooldownUntil[cooldownKey] = monotonicSeconds() + FreePoolFailureCooldownSeconds(callErr.StatusCode, callErr.HasStatus)
+				router.SetCooldown(cooldownKey, monotonicSeconds()+FreePoolFailureCooldownSeconds(callErr.StatusCode, callErr.HasStatus))
 			} else {
-				runtime.runtimeRouter().CooldownUntil[name] = monotonicSeconds() + FreePoolUnexpectedFailureCooldownSeconds()
+				router.SetCooldown(name, monotonicSeconds()+FreePoolUnexpectedFailureCooldownSeconds())
 			}
 			continue
 		}
 
 		elapsedMS := float64(time.Since(started).Milliseconds())
-		runtime.runtimeRouter().RecordLatency(name, elapsedMS, values)
+		router.RecordLatency(name, elapsedMS, values)
 		return &FreeReply{
 			Text:     text,
 			Provider: spec.Provider,

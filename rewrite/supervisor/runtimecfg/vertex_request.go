@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const maxVertexResponseBytes = 8 << 20
+
 type VertexTokenProvider func(ctx context.Context, forceRefresh bool) (string, error)
 type VertexSleepFunc func(ctx context.Context, duration time.Duration) error
 
@@ -116,7 +118,7 @@ func PostVertex(
 			}
 		}
 
-		body, readErr := io.ReadAll(response.Body)
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, maxVertexResponseBytes+1))
 		_ = response.Body.Close()
 		if readErr != nil {
 			lastNetworkError = readErr
@@ -129,6 +131,14 @@ func PostVertex(
 			return nil, &VertexHTTPError{
 				Message: fmt.Sprintf("Lỗi mạng khi gọi Vertex: %T", readErr),
 				Reason:  "NETWORK_ERROR",
+			}
+		}
+		if len(body) > maxVertexResponseBytes {
+			return nil, &VertexHTTPError{
+				Message:    fmt.Sprintf("Vertex response vượt giới hạn %d bytes", maxVertexResponseBytes),
+				StatusCode: response.StatusCode,
+				Reason:     "RESPONSE_TOO_LARGE",
+				RequestID:  vertexRequestID(response.Header),
 			}
 		}
 

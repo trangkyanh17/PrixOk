@@ -6,6 +6,7 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -21,6 +22,7 @@ const AUTO_MEMORY_MARKERS: &[&str] = &[
 ];
 
 const STOPWORDS: &str = "anh atri ban bạn cai cái cho cua của dang đang day đây do đó duoc được em giu giữ hay hãy hien hiện khong không la là lai lại mot một nay này nhung nhưng noi nói nội prix roi rồi the thế thi thì toi tôi trong user va và voi với";
+const MAX_EDIT_SIMILARITY_CHARS: usize = 512;
 
 #[derive(Debug, Clone)]
 pub struct LongMemoryConfig {
@@ -326,31 +328,43 @@ fn now_seconds() -> i64 {
         .unwrap_or(0)
 }
 
-fn meaningful_tokens(value: &str) -> HashSet<String> {
-    normalize_text(value)
+fn stopwords() -> &'static HashSet<&'static str> {
+    static WORDS: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    WORDS.get_or_init(|| STOPWORDS.split_whitespace().collect())
+}
+
+fn meaningful_tokens_normalized(normalized: &str) -> HashSet<String> {
+    normalized
         .split_whitespace()
-        .filter(|token| {
-            token.chars().count() >= 3 && !STOPWORDS.split_whitespace().any(|word| word == *token)
-        })
+        .filter(|token| token.chars().count() >= 3 && !stopwords().contains(*token))
         .map(ToOwned::to_owned)
         .collect()
 }
 
-fn query_relevance(content: &str, query: &str) -> f64 {
-    let content_tokens = meaningful_tokens(content);
-    let query_tokens = meaningful_tokens(query);
-    if content_tokens.is_empty() || query_tokens.is_empty() {
+fn meaningful_tokens(value: &str) -> HashSet<String> {
+    meaningful_tokens_normalized(&normalize_text(value))
+}
+
+fn query_relevance_with_tokens(content: &str, query_tokens: &HashSet<String>) -> f64 {
+    if query_tokens.is_empty() {
         return 0.0;
     }
-
-    let shared = content_tokens.intersection(&query_tokens).count();
+    let content_tokens = meaningful_tokens(content);
+    if content_tokens.is_empty() {
+        return 0.0;
+    }
+    let shared = content_tokens.intersection(query_tokens).count();
     if shared == 0 {
         return 0.0;
     }
-
     let containment = shared as f64 / content_tokens.len().min(query_tokens.len()) as f64;
     let coverage = shared as f64 / content_tokens.len().max(query_tokens.len()) as f64;
     containment.max(coverage)
+}
+
+fn query_relevance(content: &str, query: &str) -> f64 {
+    let query_tokens = meaningful_tokens(query);
+    query_relevance_with_tokens(content, &query_tokens)
 }
 
 fn similarity(left: &str, right: &str) -> f64 {
@@ -363,8 +377,8 @@ fn similarity(left: &str, right: &str) -> f64 {
         return 1.0;
     }
 
-    let left_tokens = meaningful_tokens(&left);
-    let right_tokens = meaningful_tokens(&right);
+    let left_tokens = meaningful_tokens_normalized(&left);
+    let right_tokens = meaningful_tokens_normalized(&right);
     let token_score = if left_tokens.is_empty() || right_tokens.is_empty() {
         0.0
     } else {
@@ -383,12 +397,17 @@ fn similarity(left: &str, right: &str) -> f64 {
 }
 
 fn edit_similarity(left: &str, right: &str) -> f64 {
-    let a = left.chars().collect::<Vec<_>>();
-    let b = right.chars().collect::<Vec<_>>();
-    if a.is_empty() || b.is_empty() {
+    let left_len = left.chars().count();
+    let right_len = right.chars().count();
+    if left_len == 0 || right_len == 0 {
+        return 0.0;
+    }
+    if left_len > MAX_EDIT_SIMILARITY_CHARS || right_len > MAX_EDIT_SIMILARITY_CHARS {
         return 0.0;
     }
 
+    let a = left.chars().collect::<Vec<_>>();
+    let b = right.chars().collect::<Vec<_>>();
     let mut previous = (0..=b.len()).collect::<Vec<_>>();
     let mut current = vec![0; b.len() + 1];
     for (i, left_ch) in a.iter().enumerate() {
@@ -416,6 +435,7 @@ fn select_cards(
     let mut seen = HashSet::new();
     let mut manual_always = 0usize;
     let mut scored = Vec::new();
+    let query_tokens = meaningful_tokens(query);
 
     for row in rows {
         let normalized = normalize_text(&row.content);
@@ -423,7 +443,7 @@ fn select_cards(
             continue;
         }
 
-        let relevance = query_relevance(&row.content, query);
+        let relevance = query_relevance_with_tokens(&row.content, &query_tokens);
         if row.source.eq_ignore_ascii_case("manual") && manual_always < config.manual_always_limit {
             selected.push(row.clone());
             manual_always += 1;
@@ -457,21 +477,24 @@ fn select_archive(
     let mut seen = HashSet::new();
     let mut selected_contents = Vec::<String>::new();
     let mut scored = Vec::new();
+    let query_tokens = meaningful_tokens(query);
 
     for row in rows {
         let normalized = normalize_text(&row.content);
         if normalized.is_empty() || recent_texts.contains(&normalized) || !seen.insert(normalized) {
             continue;
         }
+
+        // Relevance is cheaper than fuzzy edit similarity and prevents an
+        // irrelevant near-duplicate from suppressing an actually relevant row.
+        let relevance = query_relevance_with_tokens(&row.content, &query_tokens);
+        if relevance <= 0.0 {
+            continue;
+        }
         if selected_contents
             .iter()
             .any(|prior| similarity(&row.content, prior) >= config.auto_memory_dedupe_threshold)
         {
-            continue;
-        }
-
-        let relevance = query_relevance(&row.content, query);
-        if relevance <= 0.0 {
             continue;
         }
         selected_contents.push(row.content.clone());
@@ -578,6 +601,42 @@ mod tests {
     }
 
     #[test]
+    fn irrelevant_near_duplicate_does_not_hide_relevant_archive() {
+        let rows = vec![
+            MemoryHit {
+                content: "máy chính chạy termux debian với worker production ổn định".repeat(8),
+                created_at: 20,
+                source: "chat".into(),
+            },
+            MemoryHit {
+                content: format!(
+                    "{} docker",
+                    "máy chính chạy termux debian với worker production ổn định".repeat(8)
+                ),
+                created_at: 10,
+                source: "chat".into(),
+            },
+        ];
+        let selected = select_archive(
+            &rows,
+            "docker",
+            &HashSet::new(),
+            &LongMemoryConfig::default(),
+        );
+        assert_eq!(selected.len(), 1);
+        assert!(selected[0].content.contains("docker"));
+    }
+
+    #[test]
+    fn long_similarity_uses_token_path_without_large_edit_matrix() {
+        let common = "alpha beta gamma ".repeat(200);
+        let left = format!("{common}docker");
+        let right = format!("{common}docker compose");
+        assert!(similarity(&left, &right) > 0.8);
+        assert_eq!(edit_similarity(&left, &right), 0.0);
+    }
+
+    #[test]
     fn recent_text_is_not_retrieved_again() {
         let (_dir, store) = store();
         let text = "Bot production chạy Debian trong Termux";
@@ -599,5 +658,11 @@ mod tests {
         let stats = store.stats("chat").unwrap();
         assert_eq!(stats.archive_messages, 0);
         assert_eq!(stats.memory_cards, 0);
+    }
+
+    #[test]
+    fn query_relevance_still_matches_expected_tokens() {
+        assert!(query_relevance("bot production chạy Termux", "bot termux") > 0.0);
+        assert_eq!(query_relevance("bánh mì", "bot termux"), 0.0);
     }
 }

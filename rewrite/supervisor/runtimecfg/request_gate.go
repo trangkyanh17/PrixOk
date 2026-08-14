@@ -17,6 +17,8 @@ type RuntimeSweepResult struct {
 }
 
 type RuntimeStateTracker struct {
+	mu sync.Mutex
+
 	MaxRuntimeChats int
 	TTLSeconds      float64
 	LastSweep       float64
@@ -39,7 +41,8 @@ func NewRuntimeStateTracker(maxRuntimeChats int, ttlSeconds float64) *RuntimeSta
 	}
 }
 
-func (state *RuntimeStateTracker) ensure() {
+// ensureLocked normalizes state. Callers must hold state.mu.
+func (state *RuntimeStateTracker) ensureLocked() {
 	if state.MaxRuntimeChats < 10 {
 		state.MaxRuntimeChats = 10
 	}
@@ -59,7 +62,12 @@ func (state *RuntimeStateTracker) Touch(
 	now float64,
 	isLocked func(ChatRuntimeKey) bool,
 ) RuntimeSweepResult {
-	state.ensure()
+	if state == nil {
+		return RuntimeSweepResult{}
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.ensureLocked()
 	state.LastSeen[key] = now
 
 	if now-state.LastSweep < 60 && len(state.LastSeen) <= state.MaxRuntimeChats {
@@ -126,7 +134,12 @@ func (state *RuntimeStateTracker) ConsumeUserCooldown(
 	cooldownSeconds float64,
 	force bool,
 ) bool {
-	state.ensure()
+	if state == nil {
+		return false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.ensureLocked()
 	previous := state.LastRequestAt[userID]
 	if !force && now-previous < cooldownSeconds {
 		return false
@@ -136,7 +149,12 @@ func (state *RuntimeStateTracker) ConsumeUserCooldown(
 }
 
 func (state *RuntimeStateTracker) ClearUserCooldown(userID int64) {
-	state.ensure()
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.ensureLocked()
 	delete(state.LastRequestAt, userID)
 }
 

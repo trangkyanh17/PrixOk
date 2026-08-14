@@ -25,3 +25,8 @@ thiserror = "2"
 unicode-normalization = "0.1"
 walkdir = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

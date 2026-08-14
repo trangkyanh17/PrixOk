@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -105,6 +106,64 @@ func TestSupervisedMCPBackendCloseCancelsActiveCall(t *testing.T) {
 	}
 	if err := backend.Close(); err != nil {
 		t.Fatalf("idempotent close: %v", err)
+	}
+}
+
+func TestSupervisedMCPBackendPruneWaitsForActiveCall(t *testing.T) {
+	transport := newBlockingMCPTransport()
+	var clock atomic.Int64
+	clock.Store(100)
+	raw := NewMCPTransportBackend(nil)
+	raw.IdleTTL = 50 * time.Second
+	raw.Now = func() time.Time { return time.Unix(clock.Load(), 0) }
+	raw.Factory = func(MCPPluginSpec) (MCPTransport, error) { return transport, nil }
+	backend := NewSupervisedMCPBackend(raw)
+
+	if _, err := backend.ListTools(context.Background(), "context7"); err != nil {
+		t.Fatal(err)
+	}
+	callCtx, cancelCall := context.WithCancel(context.Background())
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := backend.CallTool(callCtx, "context7", "blocking_tool", nil)
+		callDone <- err
+	}()
+	select {
+	case <-transport.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tool call did not start")
+	}
+
+	clock.Store(200)
+	pruneDone := make(chan int, 1)
+	go func() { pruneDone <- backend.PruneIdle() }()
+	select {
+	case count := <-pruneDone:
+		t.Fatalf("prune ran during active call: %d", count)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cancelCall()
+	select {
+	case err := <-callDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("call err=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("call did not stop")
+	}
+	select {
+	case count := <-pruneDone:
+		if count != 1 {
+			t.Fatalf("pruned=%d want=1", count)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("prune did not resume")
+	}
+	select {
+	case <-transport.closeEntered:
+	default:
+		t.Fatal("prune did not close stale transport")
 	}
 }
 

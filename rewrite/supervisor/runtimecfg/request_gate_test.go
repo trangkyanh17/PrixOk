@@ -2,6 +2,7 @@ package runtimecfg
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -97,6 +98,32 @@ func TestUserCooldownAndForceReply(t *testing.T) {
 	state.ClearUserCooldown(7)
 	if _, ok := state.LastRequestAt[7]; ok {
 		t.Fatal("cooldown was not cleared")
+	}
+}
+
+func TestRuntimeStateTrackerConcurrentAccess(t *testing.T) {
+	state := NewRuntimeStateTracker(32, 300)
+	var wg sync.WaitGroup
+	for worker := int64(0); worker < 16; worker++ {
+		worker := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for step := int64(0); step < 100; step++ {
+				now := float64(1000 + worker*100 + step)
+				state.Touch(ChatRuntimeKey{ChatID: worker + 1, ThreadID: step % 3}, now, nil)
+				state.ConsumeUserCooldown(worker+1, now, 1, step%7 == 0)
+				if step%11 == 0 {
+					state.ClearUserCooldown(worker + 1)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.LastSeen) > state.MaxRuntimeChats {
+		t.Fatalf("runtime chats=%d max=%d", len(state.LastSeen), state.MaxRuntimeChats)
 	}
 }
 

@@ -127,8 +127,10 @@ func (backend *SupervisedMCPBackend) PruneIdle() int {
 	if backend == nil {
 		return 0
 	}
-	backend.gate.RLock()
-	defer backend.gate.RUnlock()
+	// Pruning closes transports. Use the exclusive gate so an idle sweep can
+	// never tear down a session while ListTools/CallTool/Prewarm is using it.
+	backend.gate.Lock()
+	defer backend.gate.Unlock()
 	if backend.closed.Load() || backend.backend == nil {
 		return 0
 	}

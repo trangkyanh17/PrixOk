@@ -4,6 +4,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -104,13 +105,22 @@ impl ArtifactIndex {
     }
 
     pub fn search(&self, chat_key: &str, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
-        let conn = self.connect()?;
-        let mut stmt = conn.prepare("SELECT a.artifact_ref,a.filename,c.path,c.content FROM chunks c JOIN artifacts a ON a.id=c.artifact_id WHERE a.chat_key=?1 ORDER BY a.created_at DESC,c.id ASC LIMIT 10000")?;
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut seen = HashSet::new();
         let words: Vec<String> = query
             .split_whitespace()
-            .map(|s| s.to_lowercase())
-            .filter(|s| s.len() > 1)
+            .map(str::to_lowercase)
+            .filter(|word| word.len() > 1)
+            .filter(|word| seen.insert(word.clone()))
             .collect();
+        if words.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare("SELECT a.artifact_ref,a.filename,c.path,c.content FROM chunks c JOIN artifacts a ON a.id=c.artifact_id WHERE a.chat_key=?1 ORDER BY a.created_at DESC,c.id ASC LIMIT 10000")?;
         let rows = stmt.query_map([chat_key], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -123,7 +133,7 @@ impl ArtifactIndex {
         for row in rows {
             let (artifact_ref, filename, path, content) = row?;
             let lower = content.to_lowercase();
-            let matched = words.iter().filter(|w| lower.contains(w.as_str())).count();
+            let matched = words.iter().filter(|word| lower.contains(word.as_str())).count();
             if matched == 0 {
                 continue;
             }
@@ -132,7 +142,7 @@ impl ArtifactIndex {
                 filename,
                 path,
                 content,
-                score: matched as f64 / words.len().max(1) as f64,
+                score: matched as f64 / words.len() as f64,
             });
         }
         hits.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -181,8 +191,17 @@ mod tests {
             })
             .unwrap();
         assert_eq!(stored.chunk_count, 1);
-        let hits = index.search("1:0", "database timeout", 5).unwrap();
+        let hits = index.search("1:0", "database timeout database", 5).unwrap();
         assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].score, 1.0);
         assert!(!hits[0].content.contains("secret"));
+    }
+
+    #[test]
+    fn skips_scan_for_empty_terms_or_zero_limit() {
+        let dir = tempdir().unwrap();
+        let index = ArtifactIndex::new(dir.path().join("a.sqlite3")).unwrap();
+        assert!(index.search("missing", "a I", 5).unwrap().is_empty());
+        assert!(index.search("missing", "database", 0).unwrap().is_empty());
     }
 }

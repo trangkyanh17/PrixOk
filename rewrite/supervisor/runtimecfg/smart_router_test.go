@@ -3,6 +3,7 @@ package runtimecfg
 import (
 	"math"
 	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -117,5 +118,40 @@ func TestStatusReportsCooldownAndTelemetry(t *testing.T) {
 	}
 	if groq.RequestRemainingRatio == nil || !closeEnough(*groq.RequestRemainingRatio, 0.4) {
 		t.Fatalf("request ratio=%v", groq.RequestRemainingRatio)
+	}
+}
+
+func TestSmartRouterConcurrentTelemetryAndOrdering(t *testing.T) {
+	state := NewSmartRouterState()
+	values := map[string]string{
+		"CEREBRAS_API_KEY": "c-key",
+		"GROQ_API_KEY":     "g-key",
+	}
+	chain := []string{"groq_gptoss", "cerebras_gptoss", "openrouter_free"}
+	var wg sync.WaitGroup
+	for worker := 0; worker < 12; worker++ {
+		worker := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for step := 0; step < 100; step++ {
+				now := float64(worker*1000 + step + 1)
+				state.CaptureRateHeaders("groq", map[string]string{
+					"x-ratelimit-remaining-requests": "50",
+					"x-ratelimit-limit-requests":     "100",
+					"x-ratelimit-reset-requests":     "60s",
+				}, now)
+				state.RecordLatency("groq_gptoss", float64(500+step), values)
+				state.SmartOrder(chain, values, now)
+				state.Status(values, now)
+				state.SetCooldown("openrouter_free_global", now+1)
+				_ = state.CooldownFor("openrouter_free", FreeProviderSpec{Provider: "openrouter"})
+			}
+		}()
+	}
+	wg.Wait()
+	status := state.Status(values, 20000)
+	if len(status.Providers) != 2 {
+		t.Fatalf("providers=%v", status.Providers)
 	}
 }
