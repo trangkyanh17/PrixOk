@@ -20,13 +20,7 @@ const AUTO_MEMORY_MARKERS: &[&str] = &[
     "về sau hãy",
 ];
 
-const STOPWORDS: &[&str] = &[
-    "anh", "atri", "ban", "bạn", "cai", "cái", "cho", "cua", "của", "dang", "đang",
-    "day", "đây", "do", "đó", "duoc", "được", "em", "giu", "giữ", "hay", "hãy", "hien",
-    "hiện", "khong", "không", "la", "là", "lai", "lại", "mot", "một", "nay", "này", "nhung",
-    "nhưng", "noi", "nói", "nội", "prix", "roi", "rồi", "the", "thế", "thi", "thì", "toi",
-    "tôi", "trong", "user", "va", "và", "voi", "với",
-];
+const STOPWORDS: &str = "anh atri ban bạn cai cái cho cua của dang đang day đây do đó duoc được em giu giữ hay hãy hien hiện khong không la là lai lại mot một nay này nhung nhưng noi nói nội prix roi rồi the thế thi thì toi tôi trong user va và voi với";
 
 #[derive(Debug, Clone)]
 pub struct LongMemoryConfig {
@@ -129,7 +123,12 @@ impl LongMemoryStore {
         Ok(conn)
     }
 
-    pub fn add_memory_card(&self, chat_key: &str, content: &str, source: &str) -> Result<bool> {
+    pub fn add_memory_card(
+        &self,
+        chat_key: &str,
+        content: &str,
+        source: &str,
+    ) -> Result<bool> {
         let content = content.trim().chars().take(4000).collect::<String>();
         if content.is_empty() || normalize_text(&content).is_empty() {
             return Ok(false);
@@ -225,9 +224,6 @@ impl LongMemoryStore {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let cards = select_cards(&card_rows, query, &normalized_recent, &self.config);
 
-        // The Python runtime prefers FTS5 and falls back to LIKE. During the rewrite
-        // phase we score a bounded recent user-only window in Rust, preserving the
-        // same relevance/dedupe rules without depending on SQLite FTS compile flags.
         let archive_scan_limit = self.config.retrieval_limit.saturating_mul(64).max(128) as i64;
         let mut archive_statement = conn.prepare(
             "SELECT content,created_at,source
@@ -245,13 +241,7 @@ impl LongMemoryStore {
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        let archive = select_archive(
-            &archive_rows,
-            query,
-            &normalized_recent,
-            &self.config,
-        );
+        let archive = select_archive(&archive_rows, query, &normalized_recent, &self.config);
 
         Ok(MemorySearchResult { cards, archive })
     }
@@ -299,14 +289,10 @@ impl LongMemoryStore {
     pub fn forget_all(&self, chat_key: &str) -> Result<(usize, usize)> {
         let mut conn = self.connect()?;
         let transaction = conn.transaction()?;
-        let archive_deleted = transaction.execute(
-            "DELETE FROM chat_archive WHERE chat_key=?1",
-            [chat_key],
-        )?;
-        let cards_deleted = transaction.execute(
-            "DELETE FROM memory_cards WHERE chat_key=?1",
-            [chat_key],
-        )?;
+        let archive_deleted =
+            transaction.execute("DELETE FROM chat_archive WHERE chat_key=?1", [chat_key])?;
+        let cards_deleted =
+            transaction.execute("DELETE FROM memory_cards WHERE chat_key=?1", [chat_key])?;
         transaction.commit()?;
         Ok((archive_deleted, cards_deleted))
     }
@@ -347,7 +333,9 @@ fn now_seconds() -> i64 {
 fn meaningful_tokens(value: &str) -> HashSet<String> {
     normalize_text(value)
         .split_whitespace()
-        .filter(|token| token.chars().count() >= 3 && !STOPWORDS.contains(token))
+        .filter(|token| {
+            token.chars().count() >= 3 && !STOPWORDS.split_whitespace().any(|word| word == *token)
+        })
         .map(ToOwned::to_owned)
         .collect()
 }
@@ -502,10 +490,7 @@ fn select_archive(
         .collect()
 }
 
-fn score_order(
-    left: &(f64, i64, MemoryHit),
-    right: &(f64, i64, MemoryHit),
-) -> Ordering {
+fn score_order(left: &(f64, i64, MemoryHit), right: &(f64, i64, MemoryHit)) -> Ordering {
     right
         .0
         .partial_cmp(&left.0)
@@ -520,7 +505,10 @@ mod tests {
 
     fn store() -> (tempfile::TempDir, LongMemoryStore) {
         let dir = tempdir().unwrap();
-        let store = LongMemoryStore::new(dir.path().join("memory.sqlite3"), LongMemoryConfig::default());
+        let store = LongMemoryStore::new(
+            dir.path().join("memory.sqlite3"),
+            LongMemoryConfig::default(),
+        );
         (dir, store)
     }
 
@@ -538,7 +526,11 @@ mod tests {
             .add_memory_card("chat", "Hãy nhớ máy chính chạy Termux Debian", "automatic")
             .unwrap());
         assert!(!store
-            .add_memory_card("chat", "Hãy nhớ máy chính chạy Termux Debian nhé", "automatic")
+            .add_memory_card(
+                "chat",
+                "Hãy nhớ máy chính chạy Termux Debian nhé",
+                "automatic",
+            )
             .unwrap());
         assert_eq!(store.stats("chat").unwrap().memory_cards, 1);
     }
@@ -566,7 +558,10 @@ mod tests {
             .add_memory_card("chat", "Màu giao diện là xanh", "automatic")
             .unwrap();
         store
-            .archive_user_turn("chat", "Bot production chạy Debian trong Termux và dùng tmux")
+            .archive_user_turn(
+                "chat",
+                "Bot production chạy Debian trong Termux và dùng tmux",
+            )
             .unwrap();
         store
             .archive_user_turn("chat", "Hôm nay tôi ăn bánh mì")
@@ -599,7 +594,9 @@ mod tests {
     #[test]
     fn forget_all_removes_archive_and_cards() {
         let (_dir, store) = store();
-        store.archive_user_turn("chat", "Nhớ là bot dùng tmux").unwrap();
+        store
+            .archive_user_turn("chat", "Nhớ là bot dùng tmux")
+            .unwrap();
         let (archive, cards) = store.forget_all("chat").unwrap();
         assert_eq!(archive, 1);
         assert_eq!(cards, 1);
