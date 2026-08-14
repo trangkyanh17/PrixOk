@@ -362,6 +362,7 @@ fn query_relevance_with_tokens(content: &str, query_tokens: &HashSet<String>) ->
     containment.max(coverage)
 }
 
+#[cfg(test)]
 fn query_relevance(content: &str, query: &str) -> f64 {
     let query_tokens = meaningful_tokens(query);
     query_relevance_with_tokens(content, &query_tokens)

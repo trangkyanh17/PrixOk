@@ -156,7 +156,7 @@ pub enum BotCommand {
 }
 
 pub fn parse_command(text: &str) -> Option<BotCommand> {
-    let token = text.trim().split_whitespace().next()?;
+    let token = text.split_whitespace().next()?;
     if !token.starts_with('/') {
         return None;
     }
