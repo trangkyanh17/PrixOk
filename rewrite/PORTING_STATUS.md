@@ -7,6 +7,8 @@ This branch is experimental and must not be merged into `main` or `dev` until pa
 - Rust `atri-core`: environment configuration, provider configuration types, chat message types, basic bot command parsing.
 - Rust `atri-native`: SHA-256 file hashing, bounded directory listing, ZIP/TAR/TAR.GZ archive inspection, traversal rejection, archive size/ratio limits, SQLite artifact storage/search and content redaction.
 - Rust long-memory core: WAL-backed `chat_archive` and `memory_cards`, user-only durable archive, explicit memory auto-pin markers, automatic-card dedupe, bounded relevance retrieval, recent-history suppression, manual-card priority, stats/forget operations, long-memory prompt context formatting and the V148 repetition guard.
+- Go runtime control: Gemini model specs and aliases, model/thinking validation, atomic persisted `config.py` updates, duplicate-assignment collapse, file-mode preservation and deterministic model-before-thinking writes.
+- Go provider runtime: provider/model choices, provider-specific thinking levels and healing, request payloads, provider headers, model availability filtering, status icons, task/model metadata and task-specific model ordering.
 - Go supervisor: production repair-backoff policy and configurable runtime paths/intervals.
 - TypeScript web layer: typed torrent tree model, tree flattening, folder sizing, selection statistics, recursive selection helpers, request types, torrent tree fetch, selection submit and rename requests.
 - Dedicated GitHub Actions workflow: Rust format/check/test/release/smoke, Go format/vet/test/build, TypeScript typecheck.
@@ -17,8 +19,11 @@ This branch is experimental and must not be merged into `main` or `dev` until pa
 - `bot/modules/atri_ai.py`: AI orchestration, request scheduling, Vertex/provider routing, tool calls, continuation handling and Telegram response flow.
 - `bot/modules/atri_memory.py`: recent chat normalization/persistence API parity and retention behavior.
 - `bot/modules/atri_long_memory.py`: exact FTS5/LIKE ranking parity, NFKC/SequenceMatcher-equivalent similarity, legacy-memory migration and assistant-history cleanup, plus production AI-runtime integration. Core durable storage/retrieval/context behavior is now ported.
-- `bot/modules/atri_runtime.py`: model/thinking runtime control and persisted configuration.
-- `bot/modules/atri_provider_*`: provider registry, capabilities, request payload parity, failover and free-provider controls.
+- `bot/modules/atri_runtime.py`: production command/UI bridge remains; model aliases, thinking rules and durable config-file writes are ported.
+- `bot/modules/atri_provider_config.py`: provider env-file loading/cache and environment overlay remain to port.
+- `bot/modules/atri_provider_capabilities.py`: live provider/key/model probing, discovery, persisted audit state and alert snapshots remain; static model/task metadata, status filtering and classification helpers are ported.
+- `bot/modules/atri_provider_control.py`: persisted control-state file and Telegram callback/UI integration remain; static model choices, thinking healing and resolution primitives are ported.
+- `bot/modules/atri_provider_request.py`: request payload and header construction are ported.
 - `bot/modules/atri_attachment_runtime.py`: complete attachment extraction and media/text parity beyond native archive primitives.
 - `bot/modules/atri_document_runtime.py`: document generation bridge and progressive finalization.
 - `bot/modules/atri_command_ui.py`: command and callback UI parity.
