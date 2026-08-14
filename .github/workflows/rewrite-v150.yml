@@ -67,7 +67,6 @@ jobs:
           bash ../termux-v150-persistence-host.sh --self-test
           bash ../termux-v150-pre-reboot-check.sh --self-test
           bash ../termux-v150-deploy.sh --self-test
-          bash ../termux-v151-shadow-canary.sh --self-test
           python3 -m py_compile ../v151_shadow_patch.py
           bash -n ../termux-v150-production-watchdog.sh ../termux-v150-bot-launcher.sh ../termux-v150-boot-hook.sh ../termux-v151-shadow-canary.sh
           grep -q 'boot_hook_lock_busy' ../termux-v150-boot-hook.sh
@@ -78,6 +77,11 @@ jobs:
           grep -q '^EXPECTED_BRANCH="main"$' ../termux-v150-pre-reboot-check.sh
           grep -q '^EXPECTED_BRANCH="main"$' ../termux-v151-shadow-canary.sh
           grep -q 'atri-v151-shadow/runtime.env' ../termux-v150-production-watchdog.sh
+          grep -q 'v151_shadow_patch.py' ../termux-v151-shadow-canary.sh
+          grep -q 'ATRI_V150_TELEGRAM_SHADOW=true' ../termux-v151-shadow-canary.sh
+          grep -q 'AUTO ROLLBACK' ../termux-v151-shadow-canary.sh
+          ! grep -En '^[[:space:]]*git[[:space:]]+(pull|reset|checkout|clean)\b' ../termux-v151-shadow-canary.sh
+          ! grep -En '^[[:space:]]*rm[[:space:]]+-rf[[:space:]]+/app([/[:space:]]|$)' ../termux-v151-shadow-canary.sh
           grep -q 'ATRI_PRODUCTION_LAUNCHER_GUARD=1' ../termux-v150-bot-launcher.sh
           grep -q 'prixok-bot-v150.sh' ../termux-v150-production-watchdog.sh
           ! grep -q 'atri-production-ensure.sh' ../../termux/prixok-bot.sh
@@ -85,7 +89,7 @@ jobs:
           grep -q 'exec python3 -m bot' ../../start.sh
           ! grep -En 'local[^#]*timeout_seconds=.*deadline=.*timeout_seconds' ../termux-production-recovery-common.sh ../termux-v150-persistence-host.sh ../termux-v150-deploy.sh ../termux-v151-shadow-canary.sh
           ! grep -En 'kill[[:space:]]+-|tmux[[:space:]]+kill|git[[:space:]]+(pull|reset|checkout|clean)|update\.py|install[[:space:]]+-m|mv[[:space:]]+-f' ../termux-v150-pre-reboot-check.sh
-          ! grep -En 'git[[:space:]]+(pull|reset|checkout|clean)|update\.py' ../termux-v150-deploy.sh ../termux-v151-shadow-canary.sh
+          ! grep -En 'git[[:space:]]+(pull|reset|checkout|clean)|update\.py' ../termux-v150-deploy.sh
           bash -u -c '
             MCP_PID=""
             source ../termux-production-recovery-common.sh
