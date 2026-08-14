@@ -25,7 +25,7 @@ REPORT=""
 APPLY_BACKUP=""
 SOURCE_APPLIED=0
 UPGRADE_DONE=0
-BOT_RESTARTED=0
+BOT_RESTART_ATTEMPTED=0
 ROLLBACK_RUNNING=0
 
 usage() {
@@ -47,12 +47,20 @@ EOF
 
 positive_int() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; }
 
+validate_shadow_addr() {
+  local port
+  [[ "$SHADOW_ADDR" =~ ^127\.0\.0\.1:([0-9]{1,5})$ ]] || return 1
+  port="${BASH_REMATCH[1]}"
+  ((port >= 1 && port <= 65535))
+}
+
 if [[ "$ACTION" == "--self-test" ]]; then
   [[ "$EXPECTED_BRANCH" == main ]]
   [[ "$ENABLE_FILE" == */.local/state/atri-v151-shadow/enabled ]]
   [[ "$RUNTIME_ENV" == */.local/state/atri-v151-shadow/runtime.env ]]
   positive_int "$RESTART_TIMEOUT"
   positive_int "$HEALTH_TIMEOUT"
+  validate_shadow_addr
   for cmd in status apply rollback; do
     grep -q "^    $cmd)" "$0"
   done
@@ -75,6 +83,10 @@ esac
 
 if ! positive_int "$RESTART_TIMEOUT" || ! positive_int "$HEALTH_TIMEOUT"; then
   echo "invalid ATRI_V151_RESTART_TIMEOUT/ATRI_V151_HEALTH_TIMEOUT" >&2
+  exit 2
+fi
+if ! validate_shadow_addr; then
+  echo "ATRI_TELEGRAM_SHADOW_ADDR must be loopback 127.0.0.1:<1-65535>" >&2
   exit 2
 fi
 
@@ -309,7 +321,7 @@ EOF
 }
 
 rollback_apply_failure() {
-  local reason="$1"
+  local reason="$1" pane
   ((ROLLBACK_RUNNING == 0)) || return 0
   ROLLBACK_RUNNING=1
   section "AUTO ROLLBACK"
@@ -324,11 +336,12 @@ rollback_apply_failure() {
     bash "$DEPLOY_MANAGER" rollback || true
   fi
 
-  if ((BOT_RESTARTED == 1)); then
-    local pane
+  if ((BOT_RESTART_ATTEMPTED == 1)); then
     pane="$(bot_pane_pid || true)"
     if [[ "$pane" =~ ^[0-9]+$ ]]; then
       restart_bot_controlled "$pane" || true
+    else
+      wait_new_bot_healthy 0 || true
     fi
   fi
 
@@ -391,11 +404,11 @@ apply_canary() {
   pass SHADOW_INGRESS "$(shadow_health)"
 
   section "CONTROLLED BOT RESTART"
+  BOT_RESTART_ATTEMPTED=1
   if ! restart_bot_controlled "$pane_before"; then
     rollback_apply_failure "bot did not restart healthy within timeout"
     return 1
   fi
-  BOT_RESTARTED=1
   pass BOT_RESTART "old_pane=$pane_before new_pane=$NEW_PANE"
 
   if ! shadow_log_marker_after "$log_offset"; then
@@ -422,7 +435,7 @@ apply_canary() {
 }
 
 status_canary() {
-  local enabled="NO" source="NOT_APPLIED" ingress="DOWN" fd="UNKNOWN"
+  local enabled="NO" source="NOT_APPLIED" ingress="DOWN" fd="UNKNOWN" response meta
   require_host
   section "REPO"
   meta="$(repo_meta || true)"
@@ -432,9 +445,7 @@ status_canary() {
 
   [[ -f "$ENABLE_FILE" ]] && enabled=YES
   if source_patcher verify >/dev/null 2>&1; then source=APPLIED; fi
-  if response="$(shadow_health 2>/dev/null)"; then
-    ingress="$response"
-  fi
+  if response="$(shadow_health 2>/dev/null)"; then ingress="$response"; fi
   if boot_lock_fd_clean; then fd=NO_BOOT_LOCK_FD; else fd=CHECK_FAILED; fi
 
   section "V151 SHADOW"
@@ -458,7 +469,7 @@ rollback_canary() {
   }
   meta="$backup/canary-meta.env"
   candidate="$(awk -F= '$1=="REPO_SHA"{print $2}' "$meta")"
-  deploy_backup="$(awk -F= '$1=="DEPLOY_BACKUP"{sub(/^DEPLOY_BACKUP=/,""); print}' "$meta")"
+  deploy_backup="$(sed -n 's/^DEPLOY_BACKUP=//p' "$meta")"
   current_deploy_backup="$(cat "$DEPLOY_STATE_DIR/last-backup" 2>/dev/null || true)"
   if [[ "$current_deploy_backup" != "$deploy_backup" ]]; then
     fail ROLLBACK "deploy backup pointer changed since canary; refusing stale rollback"
