@@ -8,6 +8,7 @@ type BuiltinToolOptions struct {
 	GoogleMaps         GoogleMapsToolRuntime
 	GoogleCloud        GoogleCloudToolRuntime
 	GoogleCapabilities GoogleCapabilitiesRuntime
+	GoogleWorkspace    GoogleWorkspaceToolRuntime
 }
 
 func RegisterBuiltinTools(registry *ToolRegistry, options BuiltinToolOptions) error {
@@ -27,6 +28,9 @@ func RegisterBuiltinTools(registry *ToolRegistry, options BuiltinToolOptions) er
 		return err
 	}
 	if err := RegisterGoogleCapabilitiesTool(registry, options.GoogleCapabilities); err != nil {
+		return err
+	}
+	if err := RegisterGoogleWorkspaceTools(registry, options.GoogleWorkspace); err != nil {
 		return err
 	}
 	return nil

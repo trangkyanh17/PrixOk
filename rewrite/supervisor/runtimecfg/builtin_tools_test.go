@@ -17,12 +17,21 @@ func TestNewBuiltinToolRegistryRegistersPortedTools(t *testing.T) {
 		"google_geocode",
 		"google_translate",
 		"google_capabilities",
+		"google_drive_search",
+		"google_drive_read_text",
+		"google_calendar_events",
+		"google_gmail_search",
+		"google_gmail_read",
+		"google_sheets_read",
 	} {
 		if !registry.Has(name) {
 			t.Fatalf("missing builtin tool %s", name)
 		}
 	}
 	if declarations := registry.Declarations("chat", false); len(declarations) != 9 {
-		t.Fatalf("declarations=%v", declarations)
+		t.Fatalf("public declarations=%v", declarations)
+	}
+	if declarations := registry.Declarations("chat", true); len(declarations) != 15 {
+		t.Fatalf("owner declarations=%v", declarations)
 	}
 }
