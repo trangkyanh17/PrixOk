@@ -2,10 +2,15 @@
 set -Eeuo pipefail
 
 BIN="$HOME/.local/lib/atri-v150/atri-supervisor"
+BOT_LAUNCHER="$HOME/.local/lib/atri-v150/prixok-bot-v150.sh"
 LOG_TIMEZONE="${ATRI_LOG_TIMEZONE:-Asia/Ho_Chi_Minh}"
 
 if [[ ! -x "$BIN" ]]; then
   echo "missing executable: $BIN" >&2
+  exit 127
+fi
+if [[ ! -x "$BOT_LAUNCHER" ]]; then
+  echo "missing executable: $BOT_LAUNCHER" >&2
   exit 127
 fi
 
@@ -15,7 +20,7 @@ exec env \
   ATRI_REWRITE_WATCHDOG_OBSERVE_ONLY=false \
   ATRI_REWRITE_MCP_LIFECYCLE=false \
   ATRI_BOT_SESSION=prixok-bot \
-  ATRI_BOT_LAUNCHER="$HOME/prixok-bot.sh" \
+  ATRI_BOT_LAUNCHER="$BOT_LAUNCHER" \
   ATRI_LOCAL_HEALTH="$HOME/atri-production-local-health.sh" \
   ATRI_BROWSER_ENSURE="$HOME/atri-production-browser-ensure.sh" \
   ATRI_NETWORK_STATE="$HOME/atri-production-network-state.sh" \
