@@ -3,6 +3,12 @@ set -Eeuo pipefail
 
 HOST_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 HOST_HOME="${HOME:-/data/data/com.termux/files/home}"
+export HOME="$HOST_HOME"
+export PREFIX="$HOST_PREFIX"
+export PATH="$HOST_PREFIX/bin:/system/bin:/system/xbin"
+export TMPDIR="$HOST_PREFIX/tmp"
+export LD_LIBRARY_PATH="$HOST_PREFIX/lib"
+
 BIN="$HOST_HOME/.local/lib/atri-v150/atri-supervisor"
 LAUNCHER="$HOST_HOME/atri-v150-production-watchdog.sh"
 STATE_DIR="$HOST_HOME/.cache/atri-v150-persistence"
