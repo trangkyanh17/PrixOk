@@ -1,6 +1,9 @@
 package runtimecfg
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 type BuiltinRuntimeConfig struct {
 	Values     map[string]string
@@ -29,6 +32,10 @@ type BuiltinRuntimeConfig struct {
 	DeltaForceDB        string
 	DeltaForceInvoker   DeltaForceNativeInvoker
 
+	MCPBackend    MCPBackend
+	MCPAllowWrite bool
+	MCPCacheTTL   time.Duration
+
 	VoiceSender GoogleVoiceSender
 }
 
@@ -37,6 +44,7 @@ type BuiltinRuntime struct {
 	Credentials *ServiceAccountTokenProvider
 	Workspace   GoogleAccessTokenProvider
 	Audio       GoogleAudioRuntime
+	MCP         *MCPRuntime
 }
 
 func configuredCloudCredentials(
@@ -142,6 +150,18 @@ func NewConfiguredBuiltinRuntime(config BuiltinRuntimeConfig) (*BuiltinRuntime, 
 		return nil, err
 	}
 
+	var mcpRuntime *MCPRuntime
+	if config.MCPBackend != nil {
+		mcpRuntime = &MCPRuntime{
+			Backend:  config.MCPBackend,
+			Policy:   MCPPolicy{AllowWrite: config.MCPAllowWrite},
+			CacheTTL: config.MCPCacheTTL,
+		}
+		if err := RegisterMCPTools(registry, mcpRuntime); err != nil {
+			return nil, err
+		}
+	}
+
 	return &BuiltinRuntime{
 		Registry:    registry,
 		Credentials: credentials,
@@ -151,5 +171,6 @@ func NewConfiguredBuiltinRuntime(config BuiltinRuntimeConfig) (*BuiltinRuntime, 
 			Credentials:   credentials,
 			SpeechBaseURL: config.SpeechBaseURL,
 		},
+		MCP: mcpRuntime,
 	}, nil
 }
