@@ -53,7 +53,7 @@ func ProbeVertexModel(
 	payload := map[string]any{
 		"contents": []map[string]any{
 			{
-				"role": "user",
+				"role":  "user",
 				"parts": []map[string]string{{"text": "Reply OK."}},
 			},
 		},
