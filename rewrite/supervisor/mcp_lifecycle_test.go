@@ -135,16 +135,16 @@ func TestMCPLifecycleRejectsMissingBackend(t *testing.T) {
 	}
 }
 
-func TestFormatMCPResultsIsDeterministicAndSingleLine(t *testing.T) {
+func TestFormatMCPResultsIsDeterministicSingleLineAndControlSafe(t *testing.T) {
 	long := strings.Repeat("đ", 300)
 	result := formatMCPResults(map[string]string{
-		"serena":   "failed\nwith\tnewlines",
-		"context7": long,
+		"serena\nplugin": "failed\nwith\tnewlines\x1b[31m",
+		"context7":       long,
 	})
-	if strings.ContainsAny(result, "\r\n\t") {
-		t.Fatalf("result contains control whitespace: %q", result)
+	if strings.ContainsAny(result, "\r\n\t\x1b") {
+		t.Fatalf("result contains control characters: %q", result)
 	}
-	if !strings.HasPrefix(result, "context7=") || !strings.Contains(result, " serena=failed with newlines") {
+	if !strings.HasPrefix(result, "context7=") || !strings.Contains(result, " serena plugin=failed with newlines [31m") {
 		t.Fatalf("result=%q", result)
 	}
 	if !strings.Contains(result, "...") {

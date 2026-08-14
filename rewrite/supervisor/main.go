@@ -28,9 +28,10 @@ func main() {
 		return
 	}
 
-	backend := runtimecfg.NewMCPTransportBackend(nil)
-	backend.RequestTimeout = config.MCPRequestTimeout
-	backend.IdleTTL = config.MCPIdleTTL
+	transportBackend := runtimecfg.NewMCPTransportBackend(nil)
+	transportBackend.RequestTimeout = config.MCPRequestTimeout
+	transportBackend.IdleTTL = config.MCPIdleTTL
+	backend := runtimecfg.NewSupervisedMCPBackend(transportBackend)
 
 	lifecycle := newMCPLifecycle(backend, mcpLifecycleConfig{
 		Plugins:     config.MCPPrewarmPlugins,

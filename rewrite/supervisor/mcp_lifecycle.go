@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -65,6 +66,12 @@ func (lifecycle *mcpLifecycle) normalizedConfig() mcpLifecycleConfig {
 }
 
 func sanitizeMCPStatus(value string) string {
+	value = strings.Map(func(char rune) rune {
+		if unicode.IsControl(char) {
+			return ' '
+		}
+		return char
+	}, value)
 	value = strings.Join(strings.Fields(value), " ")
 	const limit = 240
 	runes := []rune(value)
@@ -85,7 +92,11 @@ func formatMCPResults(results map[string]string) string {
 	sort.Strings(plugins)
 	parts := make([]string, 0, len(plugins))
 	for _, plugin := range plugins {
-		parts = append(parts, fmt.Sprintf("%s=%s", plugin, sanitizeMCPStatus(results[plugin])))
+		label := sanitizeMCPStatus(plugin)
+		if label == "" {
+			label = "mcp"
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", label, sanitizeMCPStatus(results[plugin])))
 	}
 	return strings.Join(parts, " ")
 }
