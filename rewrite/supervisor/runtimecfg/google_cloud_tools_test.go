@@ -43,7 +43,9 @@ func TestGoogleCloudTranslateUsesServiceAccountAndReturnsParityShape(t *testing.
 	}))
 	defer tokenServer.Close()
 
+	translationRequests := 0
 	translationServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		translationRequests++
 		if r.Method != http.MethodPost {
 			t.Fatalf("translation method=%s", r.Method)
 		}
@@ -57,12 +59,18 @@ func TestGoogleCloudTranslateUsesServiceAccountAndReturnsParityShape(t *testing.
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["targetLanguageCode"] != "en" || body["sourceLanguageCode"] != "vi" || body["mimeType"] != "text/plain" {
+		if body["targetLanguageCode"] != "en" || body["mimeType"] != "text/plain" {
 			t.Fatalf("body=%v", body)
 		}
 		contents := body["contents"].([]any)
-		if len(contents) != 2 {
-			t.Fatalf("contents=%v", contents)
+		if translationRequests == 1 {
+			if body["sourceLanguageCode"] != "vi" || len(contents) != 2 {
+				t.Fatalf("first body=%v", body)
+			}
+		} else {
+			if _, ok := body["sourceLanguageCode"]; ok || len(contents) != 1 {
+				t.Fatalf("second body=%v", body)
+			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"translations": []any{
@@ -105,6 +113,9 @@ func TestGoogleCloudTranslateUsesServiceAccountAndReturnsParityShape(t *testing.
 	}
 	if tokenRequests != 1 {
 		t.Fatalf("credential cache missed requests=%d", tokenRequests)
+	}
+	if translationRequests != 2 {
+		t.Fatalf("translation requests=%d", translationRequests)
 	}
 }
 
