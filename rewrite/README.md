@@ -74,6 +74,8 @@ These are validation/migration tools. They are not the normal ongoing upgrade pa
 
 ## Managed production deploy / upgrade
 
+`main` is the canonical source branch for the isolated `/opt/prixok-v150` build/deploy clone. The historical `rewrite/rust-go-ts-v150` branch is retired from the operational deployment path.
+
 After V150 production handoff and reboot persistence are proven, use:
 
 ```bash
@@ -84,17 +86,19 @@ bash "$HOME/termux-v150-deploy.sh" rollback
 bash "$HOME/termux-v150-deploy.sh" cleanup-legacy
 ```
 
-The source-controlled manager is `termux-v150-deploy.sh`. Full operational semantics, automatic rollback behavior, backup locations and legacy restoration are documented in [`PRODUCTION_DEPLOY.md`](PRODUCTION_DEPLOY.md).
+The source-controlled manager is `termux-v150-deploy.sh`. Full operational semantics, automatic rollback behavior, backup locations, one-time branch migration and legacy restoration are documented in [`PRODUCTION_DEPLOY.md`](PRODUCTION_DEPLOY.md).
 
-The deploy manager builds from the isolated `/opt/prixok-v150` clone and verifies the live `/app` source fingerprint before/after deployment. It never performs source update/reset/checkout/clean operations against `/app`.
+The deploy manager builds from the isolated `/opt/prixok-v150` clone and verifies the live `/app` source fingerprint before/after deployment. It requires the clone to be on clean `main` and never performs source update/reset/checkout/clean operations against `/app`.
 
 ## CI
 
-`Rewrite V150` CI runs for the rewrite branch, for relevant pull requests into `main`, and for relevant pushes on `main`. It verifies:
+`Rewrite V150` CI runs for relevant pull requests into `main` and relevant pushes on `main`. It verifies:
 
 - Cargo lock presence, fmt/check/Clippy/tests/release build in locked mode;
 - Go fmt/vet/tests/race/build and Android/arm64 cross-build;
 - shell syntax and production helper self-tests;
+- `main` as the operational V150 source branch;
+- boot-hook lock lifecycle invariants, including closing FD 9 before the long-lived watchdog starts;
 - the Python production-worker invariant;
 - npm lock presence, `npm ci`, and TypeScript build.
 

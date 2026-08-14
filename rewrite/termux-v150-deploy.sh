@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -Eeuo pipefail
 
-EXPECTED_BRANCH="rewrite/rust-go-ts-v150"
+EXPECTED_BRANCH="main"
 DEBIAN_CLONE="${ATRI_V150_DEBIAN_CLONE:-/opt/prixok-v150}"
 HOST_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 HOST_HOME="${HOME:-/data/data/com.termux/files/home}"
@@ -27,7 +27,7 @@ Usage: termux-v150-deploy.sh <command>
 
 Commands:
   status          Read-only production/deploy status.
-  install         First managed V150 install from the isolated rewrite clone.
+  install         First managed V150 install from the isolated main clone.
   upgrade         Build and atomically replace an existing healthy V150 runtime.
   rollback        Restore the runtime snapshot saved before the last install/upgrade.
   cleanup-legacy  Archive legacy watchdog/ensure host artifacts and legacy boot hooks.
@@ -51,7 +51,7 @@ restore_deployed_sha_state() {
 }
 
 if [[ "$ACTION" == "--self-test" ]]; then
-  [[ "$EXPECTED_BRANCH" == "rewrite/rust-go-ts-v150" ]]
+  [[ "$EXPECTED_BRANCH" == "main" ]]
   [[ "$V150_BIN" == */.local/lib/atri-v150/atri-supervisor ]]
   [[ "$BOOT_HOOK" == */.termux/boot/20-atri-v150-production.sh ]]
   positive_int "$BUILD_JOBS"
