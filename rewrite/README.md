@@ -43,3 +43,31 @@ ATRI_UVX=/path/to/uvx
 Existing `UV_LINK_MODE` / `UV_CACHE_DIR` are also respected when no `ATRI_MCP_*` override is supplied. HTTP-only MCP lifecycle runs (for example Context7/GitHub only) do not mutate the uv environment.
 
 The supervisor defaults for `ATRI_MCP_PREWARM_TIMEOUT` and `ATRI_MCP_REQUEST_TIMEOUT` are 240 seconds. This leaves headroom for a cold Serena/Pyright startup on ARM64 Termux while the coordinated supervisor shutdown timeout remains separately bounded.
+
+## One-command Termux validation
+
+After CI is green, the live phone validation can be run from the `rewrite` directory with one command:
+
+```bash
+./termux-all-in-one.sh
+```
+
+The script is intentionally scoped to the rewrite clone. It validates the expected branch and clean tracked tree, stops only an existing `atri-supervisor` whose `/proc/<pid>/cwd` matches the same rewrite directory, rebuilds the supervisor (or performs a full build if native binaries are missing), runs Go tests and the native SHA-256 smoke test, then exercises Context7 + Serena + Semgrep together.
+
+The MCP phase checks combined startup/health, samples RSS, injects a failure into only the Semgrep child and verifies automatic reconnect, sends SIGTERM and checks bounded shutdown/orphan cleanup, then starts the combined stack a second time to verify restart behavior.
+
+The watchdog phase is an isolated canary: it creates a unique temporary tmux session and temporary health/network/repair/launcher helpers. It checks the healthy/network path and the unhealthy/repair path without using the production bot session or production helper paths. The canary session is removed on exit.
+
+The supervisor accepts `ATRI_LOG_TIMEZONE` (and falls back to `TZ`) for log timestamps. The all-in-one script defaults this to `Asia/Ho_Chi_Minh` so the Termux report matches the phone's local Vietnam time.
+
+The final report contains a PASS/FAIL table plus full MCP/watchdog logs and is written to `/storage/emulated/0/Download` or `/sdcard/Download` when writable, otherwise `rewrite/target`.
+
+Useful tuning variables:
+
+```bash
+ATRI_BUILD_JOBS=2
+ATRI_ALL_IN_ONE_STARTUP_TIMEOUT=300
+ATRI_ALL_IN_ONE_HEALTH_INTERVAL=15
+ATRI_ALL_IN_ONE_SOAK_SECONDS=35
+ATRI_LOG_TIMEZONE=Asia/Ho_Chi_Minh
+```

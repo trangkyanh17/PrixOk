@@ -63,6 +63,9 @@ func runRewriteSupervisor() error {
 }
 
 func main() {
+	if err := configureLogTimezone(); err != nil {
+		log.Printf("log timezone config: %v", err)
+	}
 	if err := runRewriteSupervisor(); err != nil {
 		log.Printf("rewrite supervisor stopped with error: %v", err)
 		os.Exit(1)
