@@ -128,6 +128,8 @@ func TestAtriParityToolBoundary(t *testing.T) {
 		{"tools", "tool_functions", "get_weather", true},
 		{"tools", "tool_functions", "google_calendar_events", true},
 		{"tools", "tool_functions", "search_delta_force_cn", true},
+		{"tools", "tool_functions", "google_places_search", false},
+		{"tools", "tool_functions", "google_route", false},
 		{"tools", "tool_functions", "hallucinated_tool", false},
 		{"tools", "tool_functions", "code_plugin_call", false},
 		{"web", "google_search", "get_weather", false},
