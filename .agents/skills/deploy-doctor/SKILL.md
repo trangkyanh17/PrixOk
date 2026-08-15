@@ -7,6 +7,9 @@ metadata:
   atri-worker-eligible: "false"
   atri-risk: "high"
   atri-model-hint: "vertex"
+  atri-permission: "owner"
+  atri-stage: "70"
+  atri-capabilities: "deployment; process-topology; health-check; rollback"
   atri-triggers: "deploy lỗi; deploy loi; termux lỗi; termux loi; debian proot; tmux bot; service không chạy; service khong chay; bot không start; bot khong start; launcher lỗi; launcher loi; vps deploy"
 ---
 
@@ -27,7 +30,7 @@ Repair deployment with the smallest reversible change.
 
 ## Atri environment guardrails
 
-Do not print secrets. Do not change unrelated kernel/memory tuning. Do not make git commits or pushes unless explicitly requested.
+This skill is owner-only. Do not print secrets. Do not change unrelated kernel/memory tuning. Do not make git commits or pushes unless explicitly requested.
 
 ## Output
 

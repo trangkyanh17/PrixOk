@@ -6,6 +6,9 @@ metadata:
   atri-worker-eligible: "false"
   atri-risk: "medium"
   atri-model-hint: "vertex"
+  atri-permission: "owner"
+  atri-stage: "60"
+  atri-capabilities: "skill-design; skill-write; skill-audit"
   atri-triggers: "tạo skill; tao skill; create skill; skill creator; SKILL.md; agent skill; sửa skill; edit skill; tối ưu skill; optimize skill"
 ---
 
@@ -33,9 +36,12 @@ Use string values:
 - `atri-worker-eligible`: `true` only if skill instructions and expected task material are safe for public workers.
 - `atri-risk`: `low`, `medium`, or `high`.
 - `atri-model-hint`: `vertex`, `coding`, `research`, or `auto`.
-- `atri-triggers`: semicolon-separated concrete phrases used by Atri's deterministic fast matcher.
+- `atri-triggers`: semicolon-separated concrete phrases used by Atri's deterministic matcher.
+- `atri-permission`: `public`, `authorized`, or `owner`. Use `owner` for skills that can mutate repositories, deployment, credentials, or other privileged state.
+- `atri-stage`: integer-like string. Lower stages run earlier in an automatic V157 chain; use planning/discovery before analysis and mutation.
+- `atri-capabilities`: semicolon-separated capability labels used by the V157 plan/dashboard.
 
-Privacy metadata is not a replacement for Atri's global privacy gate.
+Privacy metadata is not a replacement for Atri's global privacy gate, and permission metadata is not authorization to execute a tool. Tool/action policy still applies independently.
 
 ## Trigger quality
 

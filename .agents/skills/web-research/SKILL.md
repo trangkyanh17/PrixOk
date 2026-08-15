@@ -6,6 +6,9 @@ metadata:
   atri-worker-eligible: "true"
   atri-risk: "low"
   atri-model-hint: "research"
+  atri-permission: "authorized"
+  atri-stage: "20"
+  atri-capabilities: "web-search; source-verification; research"
   atri-triggers: "tìm kiếm trên mạng; tim kiem tren mang; tìm trên mạng; search web; web research; research online; tìm nguồn; verify online; kiểm tra trên mạng; latest public information"
 ---
 

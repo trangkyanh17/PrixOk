@@ -123,13 +123,22 @@ from .core.handlers import add_handlers
 from .modules.atri_v150_shadow import add_v150_shadow_handlers
 from .modules.atri_system_guard import install_atri_system_post_import_guard
 from .modules.atri_network_egress_guard import install_atri_network_egress_guard
+from .modules.atri_capability_bootstrap import (
+    add_capability_runtime_handlers,
+    install_capability_runtime,
+)
 
 add_aria2_callbacks()
 create_help_buttons()
 # V155 must install after core.handlers imports legacy modules but before their
 # Telegram handlers are registered, leaving no request-time unguarded window.
 install_atri_network_egress_guard()
+# V157 patches the already-imported Atri handler/skill aliases before Telegram
+# registration so routing, permissions, project context and job tracking are
+# effective on the first user message without changing atri_ai.py's guarded core.
+install_capability_runtime()
 add_handlers()
+add_capability_runtime_handlers(TgClient.bot)
 install_atri_system_post_import_guard()
 add_v150_shadow_handlers(TgClient.bot)
 
