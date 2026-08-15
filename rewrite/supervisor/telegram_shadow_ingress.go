@@ -115,6 +115,14 @@ func (ingress *telegramShadowIngress) authorized(request *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(ingress.secret)) == 1
 }
 
+func parityDiagnosticMode(event atriParityEvent) string {
+	mode := strings.TrimSpace(event.Mode)
+	if mode == "" {
+		mode = strings.TrimSpace(event.ActualMode)
+	}
+	return strings.ToLower(mode)
+}
+
 func (ingress *telegramShadowIngress) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
@@ -168,7 +176,7 @@ func (ingress *telegramShadowIngress) handler() http.Handler {
 			event.Stage,
 			match,
 			reason,
-			strings.ToLower(strings.TrimSpace(event.Mode+event.ActualMode)),
+			parityDiagnosticMode(event),
 			event.ToolName,
 		)
 		writer.Header().Set("Content-Type", "application/json")
