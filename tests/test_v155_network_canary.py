@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import py_compile
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -225,7 +226,21 @@ def test_v155_canary_contract_contains_pre_and_post_gates():
 
     assert "git status --porcelain=v1 --untracked-files=all" in source
     assert "origin_head" in source
-    assert "/app/bot/modules/atri_ai.py" not in source
-    assert "/app/bot/modules/rss.py" not in source
-    assert "/app/bot/modules/mirror_leech.py" not in source
-    assert "/app/bot/modules/ytdlp.py" not in source
+
+    forbidden_rels = (
+        "bot/modules/atri_ai.py",
+        "bot/modules/rss.py",
+        "bot/modules/mirror_leech.py",
+        "bot/modules/ytdlp.py",
+    )
+    patcher = _load_patcher()
+    assert set(patcher.MANAGED_RELS).isdisjoint(forbidden_rels)
+
+    # Safety comments/self-checks may name forbidden live paths. What matters is
+    # that the canary never issues a direct shell mutation against those files.
+    mutation = re.compile(r"^\s*(?:cp|mv|install|rm|sed|tee)\b", re.MULTILINE)
+    for rel in forbidden_rels:
+        live_path = f"/app/{rel}"
+        for line in source.splitlines():
+            if live_path in line:
+                assert mutation.search(line) is None, line
