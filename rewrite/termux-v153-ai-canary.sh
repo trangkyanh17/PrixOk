@@ -59,11 +59,19 @@ validate_shadow_addr() {
   ((port >= 1 && port <= 65535))
 }
 
+validate_github_probe() {
+  [[ "$GITHUB_PROBE_OWNER" =~ ^[A-Za-z0-9_.-]{1,100}$ ]] || return 1
+  [[ "$GITHUB_PROBE_REPO" =~ ^[A-Za-z0-9_.-]{1,100}$ ]] || return 1
+  [[ "$GITHUB_PROBE_REF" =~ ^[A-Za-z0-9._/-]{1,200}$ ]] || return 1
+  [[ "$GITHUB_PROBE_REF" != *".."* ]]
+}
+
 if [[ "$ACTION" == "--self-test" ]]; then
   [[ "$EXPECTED_BRANCH" == main ]]
   positive_int "$RESTART_TIMEOUT"
   positive_int "$HEALTH_TIMEOUT"
   validate_shadow_addr
+  validate_github_probe
   for cmd in status apply rollback; do
     grep -q "^    $cmd)" "$0"
   done
@@ -94,6 +102,10 @@ if ! positive_int "$RESTART_TIMEOUT" || ! positive_int "$HEALTH_TIMEOUT"; then
 fi
 if ! validate_shadow_addr; then
   echo "ATRI_TELEGRAM_SHADOW_ADDR must be 127.0.0.1:<1-65535>" >&2
+  exit 2
+fi
+if ! validate_github_probe; then
+  echo "invalid ATRI_V153_GITHUB_PROBE_OWNER/REPO/REF" >&2
   exit 2
 fi
 
@@ -149,7 +161,7 @@ require_host() {
     fail HOST_CONTEXT "isolated Debian clone not found"
     return 1
   }
-  [[ -x "$ROOTFS_DIR/app/mltbenv/bin/python" ]] || {
+  debian_run "test -x /app/mltbenv/bin/python" >/dev/null 2>&1 || {
     fail HOST_CONTEXT "production Python missing: /app/mltbenv/bin/python"
     return 1
   }
