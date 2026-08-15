@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Resolve the single production `python -m bot` worker from /proc.
+"""Resolve the single production bot worker from /proc.
 
-V156.1 intentionally parses argv instead of using a pgrep string so the
-production gate accepts python, python3, and versioned/path interpreters while
-still refusing zero or multiple bot workers.
+V156.2 uses ownership of the production lock file as the primary identity
+signal. This avoids relying on argv rendering inside Termux/proot, where the
+same Python worker may appear behind wrapper-specific command lines.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
 
 _PYTHON_BASENAME = re.compile(r"^python(?:3(?:\.\d+)*)?$")
+_DEFAULT_LOCK = Path("/app/.atri-prixok-bot-v133.lock")
 
 
 def is_bot_argv(argv: list[str]) -> bool:
+    """Best-effort diagnostic matcher retained from V156.1."""
     if len(argv) < 3:
         return False
     interpreter = Path(argv[0]).name
@@ -29,6 +32,7 @@ def read_cmdline(path: Path) -> list[str]:
 
 
 def find_bot_pids(proc_root: Path) -> list[int]:
+    """Return argv-matching bot PIDs for diagnostics only."""
     matches: list[int] = []
     for entry in proc_root.iterdir():
         if not entry.name.isdigit():
@@ -42,18 +46,61 @@ def find_bot_pids(proc_root: Path) -> list[int]:
     return sorted(matches)
 
 
+def find_lock_owner_pids(proc_root: Path, lock_file: Path) -> list[int]:
+    """Return PIDs with an open FD referencing the exact lock inode.
+
+    Comparing st_dev/st_ino through /proc/<pid>/fd is robust across proot path
+    rewriting because the kernel FD still references the same underlying file.
+    Multiple FDs held by one PID are deduplicated.
+    """
+    lock_stat = lock_file.stat()
+    lock_identity = (lock_stat.st_dev, lock_stat.st_ino)
+    matches: list[int] = []
+
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        fd_dir = entry / "fd"
+        try:
+            fds = list(fd_dir.iterdir())
+        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+            continue
+
+        for fd in fds:
+            try:
+                stat = os.stat(fd)
+            except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+                continue
+            if (stat.st_dev, stat.st_ino) == lock_identity:
+                matches.append(int(entry.name))
+                break
+
+    return sorted(matches)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--proc-root", default="/proc")
+    parser.add_argument("--lock-file", default=str(_DEFAULT_LOCK))
     args = parser.parse_args()
 
-    pids = find_bot_pids(Path(args.proc_root))
+    proc_root = Path(args.proc_root)
+    lock_file = Path(args.lock_file)
+    try:
+        pids = find_lock_owner_pids(proc_root, lock_file)
+    except (FileNotFoundError, PermissionError, OSError) as exc:
+        print(f"V156.2 production lock PID gate cannot stat lock file {lock_file}: {exc}", file=sys.stderr)
+        return 1
+
     if len(pids) != 1:
+        argv_pids = find_bot_pids(proc_root)
         print(
-            f"V156.1 production bot PID gate requires exactly one worker; found {len(pids)}: {pids}",
+            "V156.2 production lock PID gate requires exactly one lock owner; "
+            f"found {len(pids)}: {pids}; argv_candidates={argv_pids}",
             file=sys.stderr,
         )
         return 1
+
     print(pids[0])
     return 0
 
