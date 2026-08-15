@@ -31,17 +31,17 @@ type atriParityEvent struct {
 }
 
 type atriParityEngine struct {
-	accepted     atomic.Uint64
-	rejected     atomic.Uint64
-	routeTotal   atomic.Uint64
-	routeMatch   atomic.Uint64
-	routeMiss    atomic.Uint64
-	planTotal    atomic.Uint64
-	planMatch    atomic.Uint64
-	planMiss     atomic.Uint64
-	toolTotal    atomic.Uint64
-	toolMatch    atomic.Uint64
-	toolMiss     atomic.Uint64
+	accepted   atomic.Uint64
+	rejected   atomic.Uint64
+	routeTotal atomic.Uint64
+	routeMatch atomic.Uint64
+	routeMiss  atomic.Uint64
+	planTotal  atomic.Uint64
+	planMatch  atomic.Uint64
+	planMiss   atomic.Uint64
+	toolTotal  atomic.Uint64
+	toolMatch  atomic.Uint64
+	toolMiss   atomic.Uint64
 }
 
 type atriParitySnapshot struct {
@@ -319,6 +319,30 @@ var codeToolNames = map[string]struct{}{
 	"code_plugin_batch": {}, "code_plugin_status": {}, "code_context7_docs": {},
 }
 
+var toolsModeNames = map[string]struct{}{
+	"get_weather": {},
+	"search_delta_force_cn": {},
+	"get_delta_force_cn_history": {},
+	"compare_delta_force_cn_seasons": {},
+	"google_youtube_search": {},
+	"google_safe_browsing": {},
+	"google_places_search": {},
+	"google_route": {},
+	"google_translate": {},
+	"google_books_search": {},
+	"google_drive_search": {},
+	"google_drive_read_text": {},
+	"google_calendar_events": {},
+	"google_gmail_search": {},
+	"google_gmail_read": {},
+	"google_tts_speak": {},
+	"google_geocode": {},
+	"google_vision_ocr": {},
+	"google_document_ai": {},
+	"google_sheets_read": {},
+	"google_capabilities": {},
+}
+
 func validateObservedTool(mode, profile, name string) bool {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	profile = strings.ToLower(strings.TrimSpace(profile))
@@ -331,7 +355,8 @@ func validateObservedTool(mode, profile, name string) bool {
 		_, ok := codeToolNames[name]
 		return ok
 	case "tools":
-		return !strings.HasPrefix(name, "code_")
+		_, ok := toolsModeNames[name]
+		return ok
 	default:
 		return false
 	}
