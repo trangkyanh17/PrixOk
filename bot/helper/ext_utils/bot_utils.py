@@ -14,6 +14,7 @@ from ...core.config_manager import Config
 from ..telegram_helper.button_build import ButtonMaker
 from .telegraph_helper import telegraph
 from .network_utils import NetworkTargetBlocked, probe_public_http_url
+from .runtime_tuning import ATRI_THREAD_POOL_WORKERS
 from .help_messages import (
     YT_HELP_DICT,
     GDL_HELP_DICT,
@@ -23,7 +24,10 @@ from .help_messages import (
 
 COMMAND_USAGE = {}
 
-THREAD_POOL = ThreadPoolExecutor(max_workers=500)
+THREAD_POOL = ThreadPoolExecutor(
+    max_workers=ATRI_THREAD_POOL_WORKERS,
+    thread_name_prefix="atri-global",
+)
 
 
 class SetInterval:
