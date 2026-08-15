@@ -36,6 +36,15 @@ def parity_enabled() -> bool:
     return _env_bool("ATRI_V152_PARITY", False) or _ENABLE_FILE.is_file()
 
 
+def tool_profile_for_mode(mode: str) -> str:
+    return {
+        "chat": "none",
+        "web": "google_search",
+        "tools": "tool_functions",
+        "code": "code_plugins",
+    }.get(str(mode or "chat").casefold(), "none")
+
+
 def _parity_url() -> str:
     explicit = os.getenv("ATRI_V152_PARITY_URL", "").strip()
     if explicit:
