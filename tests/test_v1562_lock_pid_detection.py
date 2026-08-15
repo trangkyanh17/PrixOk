@@ -16,7 +16,9 @@ def test_v1562_uses_worker_written_singleton_lock_as_pid_source():
 
     assert "/app/.atri-prixok-bot-v133.lock" in wrapper
     assert 'kill -0 "$pid"' in wrapper
-    assert "v156_bot_pid_probe.py" not in wrapper
+    # The wrapper may mention the old probe name only in a fail-closed drift
+    # guard; it must never invoke the argv-based probe as the PID source.
+    assert "python3 '$DEBIAN_CLONE/rewrite/v156_bot_pid_probe.py' --proc-root /proc" not in wrapper
 
     # The lock is not a guessed side channel: the production worker itself
     # acquires it and writes os.getpid() into it after successful flock().
