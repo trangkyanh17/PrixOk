@@ -90,7 +90,7 @@ def held_lock_pid(lock_path: Path, proc_root: Path) -> tuple[bool, int | None]:
     caller fails closed instead of silently falling back to process guessing.
     """
     try:
-        handle = lock_path.open("a+", encoding="utf-8")
+        handle = lock_path.open("r+", encoding="utf-8")
     except (FileNotFoundError, PermissionError, OSError):
         return False, None
 
