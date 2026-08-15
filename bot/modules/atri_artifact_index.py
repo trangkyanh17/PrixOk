@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # ATRI_PERSISTENT_ARTIFACT_RAG_V145
 # ATRI_ARTIFACT_INDEX_PERFORMANCE_V146
+# ATRI_ARTIFACT_EXACT_LINE_CITATIONS_V158_PILOT
 
 import atexit
 import base64
@@ -86,7 +87,11 @@ _STOP_WORDS = {
 
 
 def _redact(text: str) -> str:
-    value = _PEM_RE.sub("<REDACTED_PEM>", str(text or ""))
+    raw = str(text or "")
+    value = _PEM_RE.sub(
+        lambda match: "<REDACTED_PEM>" + ("\n" * match.group(0).count("\n")),
+        raw,
+    )
     value = _SECRET_LINE_RE.sub(r"\1<REDACTED>", value)
     value = _BEARER_RE.sub("Bearer <REDACTED>", value)
     return _GENERIC_KEY_RE.sub("<REDACTED_KEY>", value)
@@ -399,8 +404,8 @@ def make_line_chunks(
             end += 1
         if end <= start:
             end = start + 1
-        content = "\n".join(lines[start:end]).strip()
-        if content:
+        content = "\n".join(lines[start:end])
+        if content.strip():
             chunks.append(
                 {
                     "path": str(path or "attachment"),
@@ -440,8 +445,8 @@ def store_artifact(
     for raw in chunks:
         if len(normalized) >= MAX_CHUNKS_PER_ARTIFACT:
             break
-        content = _redact(str(raw.get("content", "") or "")).strip()
-        if not content:
+        content = _redact(str(raw.get("content", "") or ""))
+        if not content.strip():
             continue
         if indexed_chars + len(content) > MAX_INDEX_CHARS_PER_ARTIFACT:
             remaining = MAX_INDEX_CHARS_PER_ARTIFACT - indexed_chars
@@ -814,6 +819,13 @@ def _media_parts(
     return parts
 
 
+def _number_excerpt_lines(start_line: int, content: str) -> str:
+    """Render authoritative original line labels without asking the model to count."""
+    base = max(1, int(start_line or 1))
+    lines = str(content or "").splitlines()
+    return "\n".join(f"L{base + offset}|{line}" for offset, line in enumerate(lines))
+
+
 def retrieve_for_message(message: Any) -> dict[str, Any]:
     started = time.monotonic()
     _metric("retrieve_calls")
@@ -853,10 +865,11 @@ def retrieve_for_message(message: Any) -> dict[str, Any]:
                 break
             content = content[:remaining] + "\n[EXCERPT_TRUNCATED]"
         anchor = f"archive:{row['path']}:L{row['start_line']}-L{row['end_line']}"
+        numbered = _number_excerpt_lines(int(row["start_line"]), content)
         excerpts.append(
-            f"[{anchor}] kind={row['kind']}\n{content}\n[END {anchor}]"
+            f"[{anchor}] kind={row['kind']}\n{numbered}\n[END {anchor}]"
         )
-        used += len(content)
+        used += len(content) + len(numbered) - len(content)
         kinds.add(str(row["kind"]))
     context = "\n".join(
         [
@@ -867,7 +880,8 @@ def retrieve_for_message(message: Any) -> dict[str, Any]:
             f"kind={artifact['kind']}",
             f"query={_redact(query)[:1000]}",
             "EVIDENCE CONTRACT:",
-            "- Every factual claim about this artifact must cite one or more exact [archive:path:Lx-Ly] anchors below.",
+            "- Every factual claim about this artifact must cite exact original lines. Inside each excerpt, L<number>| is authoritative; cite [archive:path:L<number>] and use a range only for contiguous multi-line evidence.",
+            "- Never derive a line number by counting displayed lines; use the printed L<number>| label.",
             "- If the excerpts do not contain the answer, say that the artifact does not provide enough evidence. Do not guess versions, compatibility, causes, or fixes.",
             "- Separate local-file evidence from external web facts. External facts require an actual web/tool result and a separate source citation.",
             "- For logs: identify timestamp/PID/tag/error signature first, then root cause and the smallest repair; label inference explicitly.",

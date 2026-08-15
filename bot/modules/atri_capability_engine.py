@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # ATRI_CAPABILITY_ORCHESTRATOR_V157
+# ATRI_V158_LIVE_PILOT
 
 import inspect
 import json
@@ -528,6 +529,47 @@ def classify_task(text: str, records: list[Any] | None = None) -> str:
     return "chat"
 
 
+def classify_plan_task(text: str, records: list[Any] | None = None) -> str:
+    """Return a human-facing plan label without widening provider task types.
+
+    classify_task() remains the provider/free-pool classifier. This helper only
+    refines V157 plan/job telemetry after Skill V2 has selected concrete skills.
+    """
+    records = records or []
+    base = classify_task(text, records)
+    if base != "chat":
+        return base
+
+    names = {str(getattr(record, "name", "") or "") for record in records}
+    capabilities: set[str] = set()
+    for record in records:
+        capabilities.update(_capabilities(record))
+
+    if "log-diagnoser" in names or capabilities.intersection(
+        {"log-timeline", "root-cause"}
+    ):
+        return "log_analysis"
+    if "image-analyst" in names or capabilities.intersection(
+        {"vision", "screenshot-analysis"}
+    ):
+        return "image_analysis"
+    if names.intersection(
+        {"file-analyst", "cross-file-reasoner", "archive-explorer"}
+    ) or capabilities.intersection(
+        {"artifact-rag", "file-search", "cross-file", "archive", "file-map"}
+    ):
+        return "file_analysis"
+    if "document-writer" in names or capabilities.intersection(
+        {"document-design", "structured-writing", "artifact-output"}
+    ):
+        return "document"
+    if "project-planner" in names or capabilities.intersection(
+        {"project-context", "planning", "task-chain"}
+    ):
+        return "planning"
+    return "chat"
+
+
 def build_skill_plan(
     text: str,
     *,
@@ -575,7 +617,7 @@ def build_skill_plan(
 
     allowed.sort(key=lambda record: (_stage(record), str(getattr(record, "name", ""))))
     allowed = allowed[:_MAX_CHAIN]
-    task = classify_task(text, allowed)
+    task = classify_plan_task(text, allowed)
     project = active_project(user_id)
     force_vertex = bool(base_activation.get("force_vertex", False)) or bool(project)
     if any(
@@ -737,34 +779,55 @@ def _worker_plan_context(plan: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _skills_dashboard_text() -> str:
+def _skills_dashboard_text(*, full: bool = False) -> str:
     from bot.modules import atri_skills
 
     records = atri_skills.get_skills(include_disabled=True)
     disabled = set(atri_skills._load_state().get("disabled", []))
     audits = atri_skills.audit_skills()
-    owner_only = sum(1 for record in records.values() if _permission(record) == "owner")
+    owner_names = sorted(
+        name for name, record in records.items() if _permission(record) == "owner"
+    )
     private = sum(
         1
         for record in records.values()
         if str(getattr(record, "privacy", "auto")) == "private"
     )
-    chainable = sum(1 for record in records.values() if _capabilities(record))
+    structured_names = sorted(
+        name for name, record in records.items() if _capabilities(record)
+    )
     bad = sum(1 for issues in audits.values() if issues)
+    enabled = len(records) - len(disabled)
+
     lines = [
-        "Atri Skills Dashboard V2",
-        f"installed={len(records)} enabled={len(records) - len(disabled)} audit_clean={len(records) - bad}/{len(records)}",
-        f"owner_only={owner_only} private={private} structured_capabilities={chainable}",
+        "Atri Skills Dashboard V2.1 — V158 pilot",
+        f"status={enabled}/{len(records)} ON | audit={len(records) - bad}/{len(records)} clean",
+        f"owner_only={len(owner_names)} private={private} structured={len(structured_names)}",
         "",
+        "Structured Skill V2:",
     ]
-    for name, record in sorted(records.items()):
-        mark = "OFF" if name in disabled else "ON"
-        permission = _permission(record)
-        caps = ",".join(_capabilities(record)) or "legacy"
-        lines.append(
-            f"[{mark}] {name} — risk={getattr(record, 'risk', 'medium')} "
-            f"perm={permission} stage={_stage(record)} caps={caps}"
-        )
+    if structured_names:
+        for index in range(0, len(structured_names), 5):
+            lines.append("- " + ", ".join(structured_names[index:index + 5]))
+    else:
+        lines.append("- none")
+    lines.append("Owner-only: " + (", ".join(owner_names) if owner_names else "none"))
+    lines.append("Disabled: " + (", ".join(sorted(disabled)) if disabled else "none"))
+
+    if full:
+        lines.extend(["", "[FULL SKILL DETAILS]"])
+        for name, record in sorted(records.items()):
+            mark = "OFF" if name in disabled else "ON"
+            permission = _permission(record)
+            caps = ",".join(_capabilities(record)) or "legacy"
+            lines.append(
+                f"[{mark}] {name} — risk={getattr(record, 'risk', 'medium')} "
+                f"perm={permission} stage={_stage(record)} caps={caps}"
+            )
+    else:
+        lines.append(f"Legacy-compatible={len(records) - len(structured_names)}")
+        lines.append("Chi tiết: /skills dashboard full")
+
     lines.extend(
         [
             "",
@@ -1012,7 +1075,8 @@ async def _skills_command_v2(client: Any, message: Any) -> None:
         parts = str(getattr(message, "text", "") or "").strip().split()
     action = str(parts[1] if len(parts) > 1 else "").casefold()
     if action == "dashboard":
-        await _reply(message, _skills_dashboard_text())
+        full = len(parts) > 2 and str(parts[2]).casefold() in {"full", "all", "detail", "details"}
+        await _reply(message, _skills_dashboard_text(full=full))
         return
     original = _ORIGINALS.get("skills_command")
     if not callable(original):
