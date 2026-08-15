@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -303,9 +304,8 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = _build_parser().parse_args()
-    proc_root = Path(args.proc_root)
+def _identity_command(args: argparse.Namespace, proc_root: Path) -> int:
+    """Emit only numeric identity results on stdout; errors go to stderr."""
     try:
         if args.command == "list-legacy":
             for pid in list_legacy_pids(proc_root):
@@ -318,6 +318,19 @@ def main() -> int:
         if args.command == "bot-pid":
             print(resolve_bot_pid(proc_root, args.pane_pid, args.recorded_pid))
             return 0
+    except Exception as exc:
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    raise AssertionError(args.command)
+
+
+def main() -> int:
+    args = _build_parser().parse_args()
+    proc_root = Path(args.proc_root)
+    if args.command in {"list-legacy", "list-v150", "bot-pid"}:
+        return _identity_command(args, proc_root)
+
+    try:
         if args.command == "snapshot":
             result = sample_process(proc_root, args.pid)
             result["ok"] = True
