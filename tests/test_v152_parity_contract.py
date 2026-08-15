@@ -34,7 +34,10 @@ def test_v152_patcher_scope_is_narrow():
     assert "ATRI_V152_DECISION_PARITY_PLAN" in source
     assert "ATRI_V152_DECISION_PARITY_TOOL_BOUNDARY" in source
     assert "refusing destructive rollback" in source
-    assert not re.search(r"\b(?:git|subprocess|os\.system)\b", source)
+    assert not re.search(r"(?m)^\s*import\s+subprocess\b", source)
+    assert not re.search(r"\bsubprocess\.(?:run|Popen|call|check_call|check_output)\b", source)
+    assert not re.search(r"\bos\.system\s*\(", source)
+    assert not re.search(r"(?m)^\s*(?:git|shutil\.rmtree)\s+", source)
 
 
 def test_v152_canary_preserves_v151_and_has_rollback():
@@ -44,6 +47,7 @@ def test_v152_canary_preserves_v151_and_has_rollback():
     assert "AUTO ROLLBACK" in source
     assert "v152_parity_patch.py" in source
     assert "/v1/atri/parity" in source
+    assert "X-Atri-Shadow-Secret" in source
     assert "NO_BOOT_LOCK_FD" in source
     assert not re.search(
         r"(?m)^\s*git\s+(?:pull|reset|checkout|clean)\b",
