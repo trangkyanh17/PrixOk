@@ -60,7 +60,12 @@ LOGGER.info(
     _ATRI_V133_AI_SHA256,
 )
 
+from .modules.atri_network_egress_guard import install_atri_early_network_guard
+
 Config.load()
+# MyJD/JDownloader can boot inside main(), so its redirect/proxy guard must be
+# installed before main() starts rather than waiting for Telegram handlers.
+install_atri_early_network_guard()
 
 
 async def main():
@@ -117,9 +122,13 @@ from .helper.listeners.aria2_listener import add_aria2_callbacks
 from .core.handlers import add_handlers
 from .modules.atri_v150_shadow import add_v150_shadow_handlers
 from .modules.atri_system_guard import install_atri_system_post_import_guard
+from .modules.atri_network_egress_guard import install_atri_network_egress_guard
 
 add_aria2_callbacks()
 create_help_buttons()
+# V155 must install after core.handlers imports legacy modules but before their
+# Telegram handlers are registered, leaving no request-time unguarded window.
+install_atri_network_egress_guard()
 add_handlers()
 install_atri_system_post_import_guard()
 add_v150_shadow_handlers(TgClient.bot)
