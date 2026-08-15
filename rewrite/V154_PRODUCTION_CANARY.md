@@ -7,7 +7,7 @@ It is intentionally **not** a source deploy. `/app` remains the customized produ
 ## Preconditions
 
 - Run from the Termux host, not inside Debian.
-- `/opt/prixok-v150` is a clean `main` clone at the candidate SHA.
+- `/opt/prixok-v150` is `main`, has zero tracked/staged/untracked changes, and `HEAD` exactly matches the local `origin/main` tracking ref.
 - Exactly one V150 supervisor owns production; no legacy mutating watchdog exists.
 - `prixok-bot` exists, its lock is held and local health is healthy.
 - V151 Gate A, V152 Gate B1 and the V153 live source guard are already active.
@@ -19,13 +19,13 @@ If a prerequisite is missing, `apply` stops before touching V154 source.
 From Termux host:
 
 ```bash
-proot-distro login debian -- bash -lc 'cd /opt/prixok-v150 && git status --short --branch'
+proot-distro login debian -- bash -lc 'cd /opt/prixok-v150 && git status --short --branch && printf "HEAD=" && git rev-parse HEAD && printf "origin/main=" && git rev-parse origin/main'
 cp "$(find "$PREFIX/var/lib/proot-distro" -path '*/debian/rootfs/opt/prixok-v150/rewrite/termux-v154-production-canary.sh' -print -quit)" "$HOME/termux-v154-production-canary.sh"
 chmod 700 "$HOME/termux-v154-production-canary.sh"
 bash "$HOME/termux-v154-production-canary.sh" apply
 ```
 
-The script itself does not run `git pull`, `git reset`, `git checkout` or `git clean`. The first line above is read-only and is only there to make the candidate clone state visible before the transaction.
+The script itself does not run `git pull`, `git reset`, `git checkout` or `git clean`. Git operations inside the canary are read-only integrity checks only.
 
 A complete report is written to:
 
@@ -42,10 +42,10 @@ $HOME/.local/state/atri-v154-production/
 ## What apply proves
 
 1. Termux/PRoot bridge and production venv are available.
-2. Isolated candidate clone is clean `main`.
+2. Isolated candidate clone is trusted locally: branch `main`, no tracked/staged/untracked drift, and `HEAD == origin/main`.
 3. One V150 supervisor, no legacy watchdog, one healthy bot session and held worker lock.
 4. V151 Gate A and V152 Gate B1 still have zero parity mismatch; V153 live patch verifies.
-5. `python-docx`, `openpyxl`, `PyMuPDF`, `PyYAML` and `playwright` import in the production venv. Missing packages are installed without `--upgrade`; all newly-created distributions are recorded for rollback.
+5. `python-docx`, `openpyxl`, `PyMuPDF`, `PyYAML` and `playwright` import in the production venv. If installation is needed, `v154_package_guard.py` first snapshots every installed distribution/version, runs a pip dry-run plan, then performs the install. A successful transaction may add distributions but may not change or remove any pre-existing distribution/version.
 6. Exactly seven live source paths are transactionally managed:
    - `bot/__init__.py`
    - `bot/__main__.py`
@@ -72,12 +72,12 @@ $HOME/.local/state/atri-v154-production/
 
 Any failure after mutation triggers `AUTO ROLLBACK`:
 
-- restore the exact pre-V154 seven-file source snapshot;
-- controlled restart back into the previous source;
-- remove only Python distributions that were absent before this canary;
+- restore the pre-V154 seven-file source snapshot only if its stale-SHA checks still match;
+- restore the pre-canary logical distribution/version snapshot; newly added distributions are removed, and an interrupted pip transaction that changed an old version is restored and verified;
+- perform a controlled restart only when source/package rollback completed safely;
 - recheck V151 Gate A, V152 Gate B1, V153 and production health.
 
-Rollback refuses to overwrite a live source file whose SHA changed after V154 apply.
+If source or package rollback is stale/incomplete, the canary refuses the automatic restart and marks production for manual inspection instead of pretending rollback passed.
 
 ## Manual status / rollback
 
@@ -86,4 +86,6 @@ bash "$HOME/termux-v154-production-canary.sh" status
 bash "$HOME/termux-v154-production-canary.sh" rollback
 ```
 
-Do not use manual rollback to erase later intentional production edits. The patcher will refuse a stale destructive rollback and report the changed path.
+Manual rollback accepts only `last-backup` paths resolving under `$HOME/.local/state/atri-v154-production/backups/apply-*`, requires a complete source/package snapshot, and requires the backup `REPO_SHA` to match the current trusted clone SHA. This prevents a later canary revision from interpreting an older backup with different rollback semantics.
+
+Do not use manual rollback to erase later intentional production edits. The source patcher will refuse a stale destructive rollback and report the changed path.
