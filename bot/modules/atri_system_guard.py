@@ -12,11 +12,18 @@ from __future__ import annotations
 #   downloading it into memory.
 # - skill records entering the trusted prompt registry must satisfy the same
 #   name/path/description invariants reported by the skill auditor.
+# - Vertex tool-round limits count actual model responses containing function
+#   calls; continuation and empty-text retries do not silently expand that
+#   budget, and parallel calls in one response count as one round.
 #
-# The guard performs no network request at import/install time.
+# The pre-import guard performs no network request at install time. The
+# post-import guard wraps the existing pooled Vertex client only after atri_ai
+# is loaded; it does not replace the underlying HTTP transport or Telegram
+# owner.
 
 import base64
 import logging
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +32,11 @@ _LOGGER = logging.getLogger("bot")
 _SPEECH_INPUT_LIMIT = 10 * 1024 * 1024
 _GEMINI_AUDIO_LIMIT = 20 * 1024 * 1024
 _INSTALLED = False
+_POST_IMPORT_INSTALLED = False
+_TOOL_ROUND_STATE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "atri_v154_tool_round_state",
+    default=None,
+)
 
 
 def _media_size(media: Any) -> int:
@@ -165,7 +177,7 @@ def _install_attachment_contract() -> None:
         if current is not None:
             media, kind = current
             declared_size = _media_size(media)
-            mime, name = _audio_mime_name(media, kind)
+            _mime, name = _audio_mime_name(media, kind)
 
             # voice/audio is already handled by atri_ai through Google Speech
             # and build_gemini_audio_part. Returning a handled-empty attachment
@@ -271,6 +283,109 @@ def _install_skill_contract() -> None:
     atri_skills._ATRI_V154_SKILL_CONTRACT = True
 
 
+def _response_has_function_calls(response: Any) -> bool:
+    try:
+        if int(getattr(response, "status_code", 0) or 0) >= 400:
+            return False
+        payload = response.json()
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    for candidate in payload.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content") or {}
+        if not isinstance(content, dict):
+            continue
+        for part in content.get("parts") or []:
+            if isinstance(part, dict) and isinstance(part.get("functionCall"), dict):
+                return True
+    return False
+
+
+class _VertexClientProxy:
+    """Proxy the existing pooled client and count model tool-call rounds."""
+
+    def __init__(self, client: Any, atri_ai: Any) -> None:
+        self._client = client
+        self._atri_ai = atri_ai
+
+    @property
+    def is_closed(self) -> bool:
+        return bool(getattr(self._client, "is_closed", False))
+
+    async def post(self, *args: Any, **kwargs: Any) -> Any:
+        response = await self._client.post(*args, **kwargs)
+        state = _TOOL_ROUND_STATE.get()
+        if state is None or not _response_has_function_calls(response):
+            return response
+
+        state["rounds"] = int(state.get("rounds", 0)) + 1
+        rounds = int(state["rounds"])
+        limit = int(state.get("limit", 0))
+        _LOGGER.info(
+            "ATRI_TOOL_ROUND_V154 mode=%s round=%s limit=%s",
+            state.get("mode", "unknown"),
+            rounds,
+            limit,
+        )
+        if rounds > limit:
+            raise self._atri_ai.VertexRequestError(
+                f"Atri tool round limit exceeded: {rounds}>{limit}",
+                reason="TOOL_ROUND_LIMIT",
+            )
+        return response
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+
+def _install_tool_round_contract() -> None:
+    from bot.modules import atri_ai
+
+    if getattr(atri_ai, "_ATRI_V154_TOOL_ROUND_CONTRACT", False):
+        return
+
+    original_get_client = atri_ai._get_vertex_http_client
+    original_vertex_generate = atri_ai._vertex_generate_vertex
+
+    async def guarded_get_vertex_http_client() -> Any:
+        client = await original_get_client()
+        return _VertexClientProxy(client, atri_ai)
+
+    async def guarded_vertex_generate(*args: Any, **kwargs: Any) -> str:
+        mode = str(kwargs.get("mode", "chat") or "chat").casefold()
+        limit = 8 if mode == "code" else 3
+        token = _TOOL_ROUND_STATE.set(
+            {
+                "mode": mode,
+                "limit": limit,
+                "rounds": 0,
+            }
+        )
+        try:
+            return await original_vertex_generate(*args, **kwargs)
+        except atri_ai.VertexRequestError as exc:
+            if str(getattr(exc, "reason", "") or "").casefold() != "tool_round_limit":
+                raise
+            _LOGGER.warning(
+                "ATRI_TOOL_ROUND_LIMIT_V154 mode=%s limit=%s",
+                mode,
+                limit,
+            )
+            return (
+                "Em đã dừng chuỗi công cụ vì vượt giới hạn an toàn "
+                f"{limit} vòng. Hãy thu hẹp yêu cầu hoặc tách tác vụ thành các bước nhỏ hơn."
+            )
+        finally:
+            _TOOL_ROUND_STATE.reset(token)
+
+    atri_ai._get_vertex_http_client = guarded_get_vertex_http_client
+    atri_ai._vertex_generate_vertex = guarded_vertex_generate
+    atri_ai._ATRI_V154_TOOL_ROUND_CONTRACT = True
+
+
 def install_atri_system_guard() -> None:
     global _INSTALLED
     if _INSTALLED:
@@ -280,5 +395,18 @@ def install_atri_system_guard() -> None:
     _install_skill_contract()
     _INSTALLED = True
     _LOGGER.info(
-        "ATRI_SYSTEM_CONTRACT_GUARD_V154_INSTALLED audio=1 artifact_isolation=1 skill_registry=1"
+        "ATRI_SYSTEM_CONTRACT_GUARD_V154_INSTALLED "
+        "audio=1 artifact_isolation=1 skill_registry=1"
+    )
+
+
+def install_atri_system_post_import_guard() -> None:
+    """Install contracts that require atri_ai to be imported first."""
+    global _POST_IMPORT_INSTALLED
+    if _POST_IMPORT_INSTALLED:
+        return
+    _install_tool_round_contract()
+    _POST_IMPORT_INSTALLED = True
+    _LOGGER.info(
+        "ATRI_SYSTEM_POST_IMPORT_GUARD_V154_INSTALLED tool_round_budget=1"
     )
