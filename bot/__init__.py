@@ -56,8 +56,6 @@ rss_dict = {}
 auth_chats = {}
 excluded_extensions = ["aria2", "!qB"]
 included_extensions = []
-drives_names = []
-drives_ids = []
 index_urls = []
 sudo_users = []
 non_queued_dl = set()
@@ -78,3 +76,14 @@ sabnzbd_client = SabnzbdClient(
 )
 
 scheduler = AsyncIOScheduler(event_loop=bot_loop)
+
+# ATRI_AI_RUNTIME_GUARD_V153_BOOT
+# Install after LOGGER/event-loop initialization but before bot modules import
+# the code-plugin hub. The guard is read-only and does not start any network
+# request during import.
+try:
+    from bot.modules.atri_ai_runtime_guard import install_atri_ai_runtime_guard
+
+    install_atri_ai_runtime_guard()
+except Exception:
+    LOGGER.exception("ATRI_AI_RUNTIME_GUARD_V153_INSTALL_FAILED")
