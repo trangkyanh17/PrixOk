@@ -99,3 +99,15 @@ try:
     install_atri_system_guard()
 except Exception:
     LOGGER.exception("ATRI_SYSTEM_CONTRACT_GUARD_V154_INSTALL_FAILED")
+
+# ATRI_STICKER_CHAT_PRIVACY_V154_BOOT
+# Sticker learning is private conversation-derived state; install chat scoping
+# before atri_ai imports sticker helpers by value.
+try:
+    from bot.modules.atri_sticker_privacy_guard import (
+        install_atri_sticker_privacy_guard,
+    )
+
+    install_atri_sticker_privacy_guard()
+except Exception:
+    LOGGER.exception("ATRI_STICKER_CHAT_PRIVACY_V154_INSTALL_FAILED")
