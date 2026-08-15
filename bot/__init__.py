@@ -111,3 +111,15 @@ try:
     install_atri_sticker_privacy_guard()
 except Exception:
     LOGGER.exception("ATRI_STICKER_CHAT_PRIVACY_V154_INSTALL_FAILED")
+
+# ATRI_WEBAPP_NETWORK_GUARD_V154_BOOT
+# The real browser skill must not reach loopback/private networks through a
+# public-looking hostname or redirect.
+try:
+    from bot.modules.atri_webapp_safety_guard import (
+        install_atri_webapp_safety_guard,
+    )
+
+    install_atri_webapp_safety_guard()
+except Exception:
+    LOGGER.exception("ATRI_WEBAPP_NETWORK_GUARD_V154_INSTALL_FAILED")
