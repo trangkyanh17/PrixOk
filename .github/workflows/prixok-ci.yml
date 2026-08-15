@@ -189,7 +189,7 @@ jobs:
           printf '%s\n' "$output"
 
           if (( status != 0 )); then
-            diagnostic="$(printf '%s\n' "$output" | tail -n 160)"
+            diagnostic="$(printf '%s\n' "$output" | tail -n 60)"
             diagnostic="${diagnostic//'%'/'%25'}"
             diagnostic="${diagnostic//$'\r'/'%0D'}"
             diagnostic="${diagnostic//$'\n'/'%0A'}"
