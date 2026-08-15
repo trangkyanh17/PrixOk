@@ -41,6 +41,11 @@ openpyxl
 PyMuPDF
 PyYAML
 
+# ATRI_WEBAPP_RUNTIME_V154
+# Atri connects this Python client to the existing isolated Chrome CDP runtime;
+# browser binaries are managed separately by the Termux/browser helper.
+playwright
+
 mcp>=2,<3
 uv
 sentry-sdk>=2,<3
