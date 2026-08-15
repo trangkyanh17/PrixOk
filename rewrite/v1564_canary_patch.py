@@ -40,7 +40,7 @@ def patch_text(text: str) -> str:
     text = _replace_once(
         text,
         '  debian_run "test -x /app/mltbenv/bin/python" >/dev/null 2>&1 || { fail HOST_CONTEXT "production Python missing"; return 1; }\n  pass HOST_CONTEXT "Termux host rootfs=$ROOTFS_DIR"',
-        '  debian_run "test -x /app/mltbenv/bin/python" >/dev/null 2>&1 || { fail HOST_CONTEXT "production Python missing"; return 1; }\n  [[ -f "$ROOTFS_DIR$DEBIAN_CLONE/rewrite/v1564_root_proc_probe.py" ]] || { fail HOST_CONTEXT "V156.4 root probe missing"; return 1; }\n  [[ "$(su -c id -u 2>/dev/null | tail -n1 | tr -d "\\r")" == 0 ]] || { fail HOST_CONTEXT "KernelSU root probe unavailable"; return 1; }\n  root_probe list-v150 --v150-bin "$V150_BIN" >/dev/null 2>&1 || { fail HOST_CONTEXT "root /proc probe unavailable"; return 1; }\n  pass HOST_CONTEXT "Termux host rootfs=$ROOTFS_DIR root_proc=READY"',
+        '  debian_run "test -x /app/mltbenv/bin/python" >/dev/null 2>&1 || { fail HOST_CONTEXT "production Python missing"; return 1; }\n  [[ -f "$ROOTFS_DIR$DEBIAN_CLONE/rewrite/v1564_root_proc_probe.py" ]] || { fail HOST_CONTEXT "V156.4 root probe missing"; return 1; }\n  [[ "$(su -c "id -u" 2>/dev/null | tail -n1 | tr -d "\\r")" == 0 ]] || { fail HOST_CONTEXT "KernelSU root probe unavailable"; return 1; }\n  root_probe list-v150 --v150-bin "$V150_BIN" >/dev/null 2>&1 || { fail HOST_CONTEXT "root /proc probe unavailable"; return 1; }\n  pass HOST_CONTEXT "Termux host rootfs=$ROOTFS_DIR root_proc=READY"',
         "root preflight",
     )
     text = _replace_once(
