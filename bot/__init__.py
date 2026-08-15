@@ -135,3 +135,15 @@ try:
     install_atri_xlsx_formula_guard()
 except Exception:
     LOGGER.exception("ATRI_XLSX_FORMULA_SAFETY_V1541_INSTALL_FAILED")
+
+# ATRI_ARTIFACT_RELEVANCE_GUARD_V1542_BOOT
+# Persistent file RAG must be opt-in by relevance: unrelated chat must never
+# inherit old artifact chunks or extend their TTL.
+try:
+    from bot.modules.atri_artifact_relevance_guard import (
+        install_atri_artifact_relevance_guard,
+    )
+
+    install_atri_artifact_relevance_guard()
+except Exception:
+    LOGGER.exception("ATRI_ARTIFACT_RELEVANCE_GUARD_V1542_INSTALL_FAILED")
