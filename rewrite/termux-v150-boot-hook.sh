@@ -16,6 +16,7 @@ LOG="$HOST_HOME/.atri-v150-persistence.log"
 LOCK_FILE="$STATE_DIR/boot-hook.lock"
 DELAY="${ATRI_V150_BOOT_DELAY:-20}"
 START_TIMEOUT="${ATRI_V150_BOOT_START_TIMEOUT:-60}"
+ROOT_PS="$HOST_PREFIX/bin/ps"
 
 mkdir -p "$STATE_DIR"
 exec 9>"$LOCK_FILE"
@@ -36,22 +37,33 @@ printf '%s\n' "$boot_id" >"$STATE_DIR/last_hook_boot_id"
 printf '%s\n' "$(date +%s)" >"$STATE_DIR/last_hook_epoch"
 printf '%s boot_hook_invoked boot_id=%s\n' "$(date '+%F %T')" "$boot_id" >>"$LOG"
 
-legacy_pids() {
-  pgrep -af '[a]tri-production-watchdog.sh' 2>/dev/null | awk 'NF{print $1}' | sort -n
+# ATRI_V150_ROOT_OWNER_GUARD_V1564
+# Android may hide unrelated /proc entries from the Termux app UID. Never use a
+# user-view pgrep result to decide whether another production owner exists.
+root_ps_snapshot() {
+  command -v su >/dev/null 2>&1 || return 1
+  [[ -x "$ROOT_PS" ]] || return 1
+  su -c "PATH=$HOST_PREFIX/bin:/system/bin:/system/xbin LD_LIBRARY_PATH=$HOST_PREFIX/lib $ROOT_PS -eo pid,args" 2>/dev/null
 }
 
-v150_pids() {
-  pgrep -af "$BIN" 2>/dev/null | awk 'NF{print $1}' | sort -n
+owner_snapshot_or_fail() {
+  local snapshot
+  if ! snapshot="$(root_ps_snapshot)"; then
+    printf '%s\n' "ROOT_PROC_UNAVAILABLE" >"$STATE_DIR/last_result"
+    printf '%s boot_hook_root_proc_unavailable\n' "$(date '+%F %T')" >>"$LOG"
+    return 1
+  fi
+  mapfile -t legacy < <(awk '$0 ~ /[a]tri-production-watchdog\.sh/ {print $1}' <<<"$snapshot" | sort -n -u)
+  mapfile -t current < <(awk -v bin="$BIN" '$0 ~ /[a]tri-supervisor/ { if ($0 ~ bin || $0 ~ /[[:space:]]atri-supervisor([[:space:]]|$)/) print $1 }' <<<"$snapshot" | sort -n -u)
 }
 
-mapfile -t legacy < <(legacy_pids)
+owner_snapshot_or_fail || exit 78
 if ((${#legacy[@]} > 0)); then
   printf '%s\n' "BLOCKED_LEGACY_OWNER pids=${legacy[*]}" >"$STATE_DIR/last_result"
   printf '%s boot_hook_blocked legacy=%s\n' "$(date '+%F %T')" "${legacy[*]}" >>"$LOG"
   exit 75
 fi
 
-mapfile -t current < <(v150_pids)
 if ((${#current[@]} == 1)); then
   printf '%s\n' "ALREADY_RUNNING pid=${current[0]}" >"$STATE_DIR/last_result"
   printf '%s boot_hook_already_running pid=%s\n' "$(date '+%F %T')" "${current[0]}" >>"$LOG"
@@ -72,10 +84,9 @@ if ((DELAY > 0)); then
   sleep "$DELAY"
 fi
 
-# Re-check ownership after the boot delay so two boot paths cannot create two
-# V150 watchdogs. A legacy owner always wins the safety gate: V150 will not start.
-mapfile -t legacy < <(legacy_pids)
-mapfile -t current < <(v150_pids)
+# Re-check root-visible ownership after the boot delay so two boot paths cannot
+# create two V150 watchdogs. A legacy owner always wins the safety gate.
+owner_snapshot_or_fail || exit 78
 if ((${#legacy[@]} > 0)); then
   printf '%s\n' "BLOCKED_LEGACY_OWNER pids=${legacy[*]}" >"$STATE_DIR/last_result"
   exit 75
@@ -97,8 +108,7 @@ started_pid=$!
 
 for ((i=0; i<START_TIMEOUT; i++)); do
   sleep 1
-  mapfile -t legacy < <(legacy_pids)
-  mapfile -t current < <(v150_pids)
+  owner_snapshot_or_fail || exit 78
   if ((${#legacy[@]} > 0)); then
     printf '%s\n' "START_CONFLICT_LEGACY pids=${legacy[*]}" >"$STATE_DIR/last_result"
     printf '%s boot_hook_start_conflict legacy=%s\n' "$(date '+%F %T')" "${legacy[*]}" >>"$LOG"
@@ -108,6 +118,9 @@ for ((i=0; i<START_TIMEOUT; i++)); do
     printf '%s\n' "STARTED pid=${current[0]} boot_id=$boot_id" >"$STATE_DIR/last_result"
     printf '%s boot_hook_started pid=%s requested_pid=%s\n' "$(date '+%F %T')" "${current[0]}" "$started_pid" >>"$LOG"
     exit 0
+  elif ((${#current[@]} > 1)); then
+    printf '%s\n' "DUPLICATE_V150 pids=${current[*]}" >"$STATE_DIR/last_result"
+    exit 76
   fi
 done
 
