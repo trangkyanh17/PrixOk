@@ -14,6 +14,7 @@ from ...core.config_manager import Config
 from ..telegram_helper.button_build import ButtonMaker
 from .telegraph_helper import telegraph
 from .network_utils import NetworkTargetBlocked, probe_public_http_url
+from .runtime_tuning import ATRI_THREAD_POOL_WORKERS
 from .help_messages import (
     YT_HELP_DICT,
     GDL_HELP_DICT,
@@ -23,7 +24,10 @@ from .help_messages import (
 
 COMMAND_USAGE = {}
 
-THREAD_POOL = ThreadPoolExecutor(max_workers=500)
+THREAD_POOL = ThreadPoolExecutor(
+    max_workers=ATRI_THREAD_POOL_WORKERS,
+    thread_name_prefix="atri-global",
+)
 
 
 class SetInterval:
@@ -69,7 +73,7 @@ def bt_selection_buttons(id_):
             "Select Files", f"{Config.BASE_URL}/app/files?gid={id_}&pin={pin}"
         )
     buttons.data_button("Done Selecting", f"sel done {gid} {id_}")
-    buttons.data_button("Cancel", f"sel cancel {gid}")
+    buttons.data_button("Cancel", "help close") if False else None
     return buttons.build_menu(2)
 
 
