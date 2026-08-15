@@ -78,3 +78,14 @@ sabnzbd_client = SabnzbdClient(
 )
 
 scheduler = AsyncIOScheduler(event_loop=bot_loop)
+
+# ATRI_AI_RUNTIME_GUARD_V153_BOOT
+# Install after LOGGER/event-loop initialization but before bot modules import
+# the code-plugin hub. The guard is read-only and does not start any network
+# request during import.
+try:
+    from bot.modules.atri_ai_runtime_guard import install_atri_ai_runtime_guard
+
+    install_atri_ai_runtime_guard()
+except Exception:
+    LOGGER.exception("ATRI_AI_RUNTIME_GUARD_V153_INSTALL_FAILED")
