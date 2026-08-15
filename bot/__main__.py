@@ -116,10 +116,12 @@ from .helper.ext_utils.bot_utils import create_help_buttons
 from .helper.listeners.aria2_listener import add_aria2_callbacks
 from .core.handlers import add_handlers
 from .modules.atri_v150_shadow import add_v150_shadow_handlers
+from .modules.atri_system_guard import install_atri_system_post_import_guard
 
 add_aria2_callbacks()
 create_help_buttons()
 add_handlers()
+install_atri_system_post_import_guard()
 add_v150_shadow_handlers(TgClient.bot)
 
 # Warm Semgrep MCP in the background during bot startup so users do not

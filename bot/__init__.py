@@ -89,3 +89,37 @@ try:
     install_atri_ai_runtime_guard()
 except Exception:
     LOGGER.exception("ATRI_AI_RUNTIME_GUARD_V153_INSTALL_FAILED")
+
+# ATRI_SYSTEM_CONTRACT_GUARD_V154_BOOT
+# Cross-module Atri contracts must be installed before atri_ai imports helper
+# functions by value. The guard performs no network request during install.
+try:
+    from bot.modules.atri_system_guard import install_atri_system_guard
+
+    install_atri_system_guard()
+except Exception:
+    LOGGER.exception("ATRI_SYSTEM_CONTRACT_GUARD_V154_INSTALL_FAILED")
+
+# ATRI_STICKER_CHAT_PRIVACY_V154_BOOT
+# Sticker learning is private conversation-derived state; install chat scoping
+# before atri_ai imports sticker helpers by value.
+try:
+    from bot.modules.atri_sticker_privacy_guard import (
+        install_atri_sticker_privacy_guard,
+    )
+
+    install_atri_sticker_privacy_guard()
+except Exception:
+    LOGGER.exception("ATRI_STICKER_CHAT_PRIVACY_V154_INSTALL_FAILED")
+
+# ATRI_WEBAPP_NETWORK_GUARD_V154_BOOT
+# The real browser skill must not reach loopback/private networks through a
+# public-looking hostname or redirect.
+try:
+    from bot.modules.atri_webapp_safety_guard import (
+        install_atri_webapp_safety_guard,
+    )
+
+    install_atri_webapp_safety_guard()
+except Exception:
+    LOGGER.exception("ATRI_WEBAPP_NETWORK_GUARD_V154_INSTALL_FAILED")
