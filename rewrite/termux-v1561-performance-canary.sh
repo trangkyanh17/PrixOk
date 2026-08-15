@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 DEBIAN_CLONE="${ATRI_V150_DEBIAN_CLONE:-/opt/prixok-v150}"
 HOST_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
-TMP_ROOT="${TMPDIR:-$HOME/.cache}"
+TMP_ROOT="${TMPDIR:-${HOME:-/tmp}/.cache}"
 ROOTFS_DIR=""
 
 find_rootfs() {
@@ -19,6 +19,64 @@ find_rootfs() {
   return 1
 }
 
+patch_canary() {
+  local source="$1" patched_file="$2" line
+  local patched=0 skipping=0
+  : >"$patched_file"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if (( skipping )); then
+      if [[ "$line" == "}" ]]; then
+        skipping=0
+      fi
+      continue
+    fi
+
+    if [[ "$line" == "production_bot_pid() {" ]]; then
+      ((patched+=1))
+      skipping=1
+      cat >>"$patched_file" <<'EOF'
+production_bot_pid() {
+  local raw
+  raw="$(debian_run "python3 '$DEBIAN_CLONE/rewrite/v156_bot_pid_probe.py' --proc-root /proc" 2>/dev/null | tr -d '\r')"
+  [[ "$raw" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$raw"
+}
+EOF
+      continue
+    fi
+
+    printf '%s\n' "$line" >>"$patched_file"
+  done <"$source"
+
+  if (( patched != 1 || skipping != 0 )); then
+    echo "V156.1: expected exactly one production_bot_pid() function in base canary" >&2
+    return 1
+  fi
+  if grep -q "pgrep -f '\[p\]ython3 -m bot'" "$patched_file"; then
+    echo "V156.1: legacy strict PID matcher survived patch" >&2
+    return 1
+  fi
+  if ! grep -q "v156_bot_pid_probe.py" "$patched_file"; then
+    echo "V156.1: semantic PID probe hook missing after patch" >&2
+    return 1
+  fi
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  script_dir="$(cd "$(dirname "$0")" && pwd)"
+  source_file="$script_dir/termux-v156-performance-canary.sh"
+  probe_file="$script_dir/v156_bot_pid_probe.py"
+  [[ -f "$source_file" && -f "$probe_file" ]]
+  temp_file="$(mktemp "${TMPDIR:-/tmp}/atri-v1561-selftest.XXXXXX.sh")"
+  trap 'rm -f "$temp_file"' EXIT
+  patch_canary "$source_file" "$temp_file"
+  bash -n "$temp_file"
+  grep -q "python3 '\$DEBIAN_CLONE/rewrite/v156_bot_pid_probe.py' --proc-root /proc" "$temp_file"
+  echo "v156.1 performance canary PID hotfix self-test: PASS"
+  exit 0
+fi
+
 ROOTFS_DIR="$(find_rootfs || true)"
 [[ -n "$ROOTFS_DIR" ]] || { echo "V156.1: Debian clone/rootfs not found" >&2; exit 1; }
 
@@ -32,46 +90,6 @@ PATCHED="$(mktemp "$TMP_ROOT/atri-v1561-canary.XXXXXX.sh")"
 cleanup() { rm -f "$PATCHED"; }
 trap cleanup EXIT INT TERM
 
-patched=0
-skipping=0
-while IFS= read -r line || [[ -n "$line" ]]; do
-  if (( skipping )); then
-    if [[ "$line" == "}" ]]; then
-      skipping=0
-    fi
-    continue
-  fi
-
-  if [[ "$line" == "production_bot_pid() {" ]]; then
-    ((patched+=1))
-    skipping=1
-    cat >>"$PATCHED" <<'EOF'
-production_bot_pid() {
-  local raw
-  raw="$(debian_run "python3 '$DEBIAN_CLONE/rewrite/v156_bot_pid_probe.py' --proc-root /proc" 2>/dev/null | tr -d '\r')"
-  [[ "$raw" =~ ^[0-9]+$ ]] || return 1
-  printf '%s\n' "$raw"
-}
-EOF
-    continue
-  fi
-
-  printf '%s\n' "$line" >>"$PATCHED"
-done <"$SOURCE"
-
-if (( patched != 1 || skipping != 0 )); then
-  echo "V156.1: expected exactly one production_bot_pid() function in base canary" >&2
-  exit 1
-fi
-
-if grep -q "pgrep -f '\[p\]ython3 -m bot'" "$PATCHED"; then
-  echo "V156.1: legacy strict PID matcher survived patch" >&2
-  exit 1
-fi
-if ! grep -q "v156_bot_pid_probe.py" "$PATCHED"; then
-  echo "V156.1: semantic PID probe hook missing after patch" >&2
-  exit 1
-fi
-
+patch_canary "$SOURCE" "$PATCHED"
 chmod 700 "$PATCHED"
 bash "$PATCHED" "$@"
