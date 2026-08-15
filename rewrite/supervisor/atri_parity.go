@@ -319,6 +319,9 @@ var codeToolNames = map[string]struct{}{
 	"code_plugin_batch": {}, "code_plugin_status": {}, "code_context7_docs": {},
 }
 
+// This is the exact tools-mode function surface currently exposed to Vertex.
+// google_places_search/google_route have executors but are not in
+// GOOGLE_TOOL_DECLARATIONS, so they intentionally remain invalid here.
 var toolsModeNames = map[string]struct{}{
 	"get_weather": {},
 	"search_delta_force_cn": {},
@@ -326,8 +329,6 @@ var toolsModeNames = map[string]struct{}{
 	"compare_delta_force_cn_seasons": {},
 	"google_youtube_search": {},
 	"google_safe_browsing": {},
-	"google_places_search": {},
-	"google_route": {},
 	"google_translate": {},
 	"google_books_search": {},
 	"google_drive_search": {},
