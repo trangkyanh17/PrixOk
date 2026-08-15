@@ -44,8 +44,8 @@ def _message(
     )
 
 
-def _store(index, chat_id: int = 100, message_id: int = 10):
-    text = (
+def _store(index, chat_id: int = 100, message_id: int = 10, text: str | None = None):
+    text = text or (
         "RuntimeError database timeout in worker\n"
         "quantum banana foobar evidence\n"
         "python helper implementation\n"
@@ -172,6 +172,29 @@ def test_short_repair_followup_preserves_no_reupload_workflow(artifact_runtime):
     for text in ("sửa đi", "fix tiếp", "tối ưu nó", "check lại"):
         result = index.retrieve_for_message(_message(100, text, message_id=40))
         assert result["present"] is True, text
+
+
+def test_inactive_history_is_not_resurrected_by_generic_followup(artifact_runtime):
+    index = artifact_runtime
+    _store(index, message_id=70, text="older artifact quantum banana evidence")
+    _store(index, message_id=71, text="new active artifact database timeout evidence")
+
+    forgotten = index.retrieve_for_message(
+        _message(100, "/forgetfile", message_id=72)
+    )
+    assert forgotten["present"] is True
+    assert "forgotten=1" in forgotten["parts"][0]["text"]
+
+    generic = index.retrieve_for_message(_message(100, "sửa đi", message_id=73))
+    assert generic["present"] is False
+    assert generic["relevance"] == "no_artifact"
+
+    old_reply = _message(100, "", message_id=70)
+    exact = index.retrieve_for_message(
+        _message(100, "xem lại cái này", message_id=74, reply_to_message=old_reply)
+    )
+    assert exact["present"] is True
+    assert exact["kind"] == "artifact-retrieval"
 
 
 def test_artifact_control_commands_are_not_blocked(artifact_runtime):

@@ -36,6 +36,9 @@ def test_explicit_local_formula_object_is_allowed():
         "=SUM(Sheet2!A1:A3)",
         '=CALL("kernel32","WinExec","JJ","calc",1)',
         "=UNKNOWNFUNC(A1)",
+        "=_xlfn.WEBSERVICE(A1)",
+        '=_xlfn.RTD("prog.id",,"topic")',
+        "=_xlws.UNKNOWNFUNC(A1)",
     ],
 )
 def test_explicit_external_or_unknown_formula_is_rejected(formula: str):

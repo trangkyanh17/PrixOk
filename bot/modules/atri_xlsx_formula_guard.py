@@ -98,7 +98,10 @@ _ALLOWED_FUNCTIONS = frozenset(
         "YEAR",
     }
 )
-_FUNCTION_RE = re.compile(r"(?i)(?<![A-Z0-9_.])([A-Z][A-Z0-9_.]*)\s*\(")
+# Match ordinary Excel function identifiers as well as namespace-prefixed
+# identifiers such as _xlfn.WEBSERVICE. Prefixed/unknown functions stay blocked
+# by the allowlist instead of disappearing from function discovery.
+_FUNCTION_RE = re.compile(r"(?i)(?<![_A-Z0-9.])([_A-Z][_A-Z0-9.]*)\s*\(")
 _EXTERNAL_MARKERS = (
     "://",
     "file:",
