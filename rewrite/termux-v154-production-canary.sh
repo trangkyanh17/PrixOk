@@ -485,17 +485,19 @@ rollback_apply_failure() {
   section "AUTO ROLLBACK"
   info "reason=$reason"
 
-  if ((SOURCE_APPLIED == 1)) && [[ -n "$APPLY_BACKUP" ]]; then
-    if ! source_patcher rollback "$APPLY_BACKUP/source"; then
-      rollback_failed=1
-      warn AUTO_ROLLBACK "source rollback failed/stale; refusing automatic restart"
-    fi
-  fi
-
+  # Keep the currently-running V154 process coherent while undoing dependency
+  # mutations. If package rollback fails, do not restore source or restart.
   if ((PACKAGE_MUTATED == 1)) && [[ -n "$APPLY_BACKUP" ]]; then
     if ! rollback_package_state "$APPLY_BACKUP"; then
       rollback_failed=1
-      warn AUTO_ROLLBACK "package snapshot rollback failed; refusing automatic restart"
+      warn AUTO_ROLLBACK "package snapshot rollback failed; keeping current source/process for manual inspection"
+    fi
+  fi
+
+  if ((rollback_failed == 0)) && ((SOURCE_APPLIED == 1)) && [[ -n "$APPLY_BACKUP" ]]; then
+    if ! source_patcher rollback "$APPLY_BACKUP/source"; then
+      rollback_failed=1
+      warn AUTO_ROLLBACK "source rollback failed/stale; refusing automatic restart"
     fi
   fi
 
@@ -694,13 +696,15 @@ rollback_canary() {
     return 1
   }
 
-  section "ROLLBACK V154 SOURCE"
-  source_patcher rollback "$backup/source"
-  pass SOURCE_ROLLBACK "restored exact pre-V154 7-file source snapshot"
-
+  # Package rollback comes first so a package failure leaves the current V154
+  # source/process coherent and no restart is attempted with a mixed state.
   section "ROLLBACK V154 PACKAGES"
   rollback_package_state "$backup"
   pass PACKAGE_ROLLBACK "restored exact pre-V154 distribution/version snapshot"
+
+  section "ROLLBACK V154 SOURCE"
+  source_patcher rollback "$backup/source"
+  pass SOURCE_ROLLBACK "restored exact pre-V154 7-file source snapshot"
 
   pane="$(bot_pane_pid || true)"
   [[ "$pane" =~ ^[0-9]+$ ]] || {
