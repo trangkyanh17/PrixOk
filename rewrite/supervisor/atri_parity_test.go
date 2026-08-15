@@ -124,10 +124,13 @@ func TestAtriParityToolBoundary(t *testing.T) {
 		want    bool
 	}{
 		{"code", "code_plugins", "code_plugin_call", true},
-		{"code", "code_plugins", "weather", false},
-		{"tools", "tool_functions", "weather", true},
+		{"code", "code_plugins", "get_weather", false},
+		{"tools", "tool_functions", "get_weather", true},
+		{"tools", "tool_functions", "google_calendar_events", true},
+		{"tools", "tool_functions", "search_delta_force_cn", true},
+		{"tools", "tool_functions", "hallucinated_tool", false},
 		{"tools", "tool_functions", "code_plugin_call", false},
-		{"web", "google_search", "weather", false},
+		{"web", "google_search", "get_weather", false},
 	} {
 		if got := validateObservedTool(tt.mode, tt.profile, tt.name); got != tt.want {
 			t.Fatalf("mode=%s profile=%s name=%s got=%v want=%v", tt.mode, tt.profile, tt.name, got, tt.want)
