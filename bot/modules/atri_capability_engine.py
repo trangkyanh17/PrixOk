@@ -501,7 +501,7 @@ def classify_task(text: str, records: list[Any] | None = None) -> str:
         or "repo-auditor" in names
         or any(token in value for token in (
             "sua repo", "fix repo", "trien khai", "deploy", "pull request",
-            "commit va", "codebase", "toan bo source", "all-in-one",
+            "commit va", "codebase", "toan bo source", "toan bo repo", "all-in-one",
         ))
     )
     if agentic:
