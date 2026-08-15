@@ -6,7 +6,7 @@ The canary may need to add a small set of Python distributions to the existing
 before the canary must keep the exact same versions. Rollback removes newly
 added distributions and, if an interrupted pip operation changed an existing
 version, attempts to restore the exact pre-canary version and verifies the final
-snapshot byte-for-byte at the logical package/version level.
+snapshot at the logical distribution/version level.
 """
 
 from __future__ import annotations
@@ -114,11 +114,7 @@ def rollback_to(before: dict[str, str]) -> dict[str, Any]:
     delta_before = diff(before, current)
     new_names = sorted(delta_before["new"])
     if new_names:
-        _pip(
-            "uninstall",
-            "-y",
-            *new_names,
-        )
+        _pip("uninstall", "-y", *new_names)
 
     current = snapshot()
     restore = _restore_requirements(before, current)
@@ -143,7 +139,7 @@ def rollback_to(before: dict[str, str]) -> dict[str, Any]:
             "package rollback did not restore exact snapshot: "
             + json.dumps(remaining, sort_keys=True)
         )
-    return {"rolled_back": True, "delta_before": delta_before, "final": final}
+    return {"rolled_back": True, "delta_before": delta_before}
 
 
 def _planned_mutations(packages: list[str], before: dict[str, str]) -> dict[str, str]:
@@ -164,7 +160,7 @@ def _planned_mutations(packages: list[str], before: dict[str, str]) -> dict[str,
             check=False,
         )
         if result.returncode != 0 or not report.is_file():
-            raise RuntimeError("pip dry-run failed: " + result.stdout[-4000:])
+            raise RuntimeError(f"pip dry-run failed with exit={result.returncode}")
         payload = json.loads(report.read_text(encoding="utf-8"))
 
     planned: dict[str, str] = {}
@@ -211,7 +207,7 @@ def install_safe(packages: list[str], snapshot_path: Path, delta_path: Path) -> 
 
     if install.returncode != 0:
         rollback_to(before)
-        raise RuntimeError("pip install failed: " + install.stdout[-4000:])
+        raise RuntimeError(f"pip install failed with exit={install.returncode}")
     if delta["removed"] or delta["changed"]:
         rollback_to(before)
         raise RuntimeError(
@@ -222,7 +218,6 @@ def install_safe(packages: list[str], snapshot_path: Path, delta_path: Path) -> 
         "installed": True,
         "planned": planned,
         "delta": delta,
-        "pip_tail": install.stdout[-2000:],
     }
 
 
@@ -243,7 +238,7 @@ def main() -> int:
         if args.action == "snapshot":
             current = snapshot()
             _write(snapshot_path, current)
-            payload: dict[str, Any] = {"snapshot": current}
+            payload: dict[str, Any] = {"count": len(current)}
         elif args.action == "delta":
             if delta_path is None:
                 raise RuntimeError("--delta is required")
