@@ -46,13 +46,13 @@ def patch_text(text: str) -> str:
     text = _replace_once(
         text,
         "legacy_watchdog_pids() { pgrep -af '[a]tri-production-watchdog.sh' 2>/dev/null | awk 'NF{print $1}' | sort -n; }",
-        "legacy_watchdog_pids() { root_probe list-legacy 2>/dev/null | awk 'NF{print $1}' | sort -n; }",
+        '''legacy_watchdog_pids() {\n  local raw\n  if ! raw="$(root_probe list-legacy 2>/dev/null)"; then\n    # Sentinel makes every existing array-count consumer fail closed.\n    printf '%s\\n' '__ROOT_PROBE_ERROR_LEGACY__'\n    return 0\n  fi\n  awk '/^[0-9]+$/{print $1}' <<<"$raw" | sort -n\n}''',
         "legacy PID detector",
     )
     text = _replace_once(
         text,
         'v150_watchdog_pids() { pgrep -af "$V150_BIN" 2>/dev/null | awk \'NF{print $1}\' | sort -n; }',
-        'v150_watchdog_pids() { root_probe list-v150 --v150-bin "$V150_BIN" 2>/dev/null | awk \'NF{print $1}\' | sort -n; }',
+        '''v150_watchdog_pids() {\n  local raw\n  if ! raw="$(root_probe list-v150 --v150-bin "$V150_BIN" 2>/dev/null)"; then\n    # Two sentinels can never satisfy the exactly-one V150 invariant.\n    printf '%s\\n' '__ROOT_PROBE_ERROR_V150_A__' '__ROOT_PROBE_ERROR_V150_B__'\n    return 0\n  fi\n  awk '/^[0-9]+$/{print $1}' <<<"$raw" | sort -n\n}''',
         "V150 PID detector",
     )
     old_bot = '''production_bot_pid() {\n  local raw\n  raw="$(debian_run "pgrep -f '[p]ython3 -m bot' || true" 2>/dev/null | tr -d '\\r')"\n  [[ "$(awk 'NF{n++} END{print n+0}' <<<"$raw")" == 1 ]] || return 1\n  awk 'NF{print $1}' <<<"$raw"\n}\n'''
@@ -64,13 +64,20 @@ def patch_text(text: str) -> str:
     text = _replace_once(text, old_resources, new_resources, "resource probe")
 
     old_fd = '''boot_lock_fd_clean() {\n  local -a pids=()\n  mapfile -t pids < <(v150_watchdog_pids)\n  ((${#pids[@]} == 1)) || return 1\n  ! ls -l "/proc/${pids[0]}/fd" 2>/dev/null | grep -q 'boot-hook\\.lock'\n}\n'''
-    new_fd = '''boot_lock_fd_clean() {\n  local -a pids=()\n  mapfile -t pids < <(v150_watchdog_pids)\n  ((${#pids[@]} == 1)) || return 1\n  root_probe fd-clean --pid "${pids[0]}" --forbidden-substring 'boot-hook.lock' >/dev/null\n}\n'''
+    new_fd = '''boot_lock_fd_clean() {\n  local -a pids=()\n  mapfile -t pids < <(v150_watchdog_pids)\n  ((${#pids[@]} == 1)) || return 1\n  [[ "${pids[0]}" =~ ^[0-9]+$ ]] || return 1\n  root_probe fd-clean --pid "${pids[0]}" --forbidden-substring 'boot-hook.lock' >/dev/null\n}\n'''
     text = _replace_once(text, old_fd, new_fd, "boot lock FD probe")
 
     if "pgrep -f '[p]ython3 -m bot'" in text:
         raise ValueError("legacy PRoot bot matcher survived")
-    if MARKER not in text or "root_probe soak" not in text or "root_probe list-legacy" not in text:
-        raise ValueError("V156.4 root-probe contract incomplete")
+    for required in (
+        MARKER,
+        "root_probe soak",
+        "root_probe list-legacy",
+        "__ROOT_PROBE_ERROR_LEGACY__",
+        "__ROOT_PROBE_ERROR_V150_A__",
+    ):
+        if required not in text:
+            raise ValueError(f"V156.4 root-probe contract incomplete: {required}")
     return text
 
 
