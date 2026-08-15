@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 
@@ -34,10 +35,35 @@ def test_free_privacy_gate_allows_bounded_public_task_only_in_chat_mode():
 
 def test_worker_handoff_source_is_explicitly_current_text_only():
     source = Path("bot/modules/atri_ai.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
 
     assert "Worker input is public raw current text only." in source
-    worker_call = source[source.index("worker_reply = await generate_free_chat(") :]
-    worker_call = worker_call[:2500]
-    assert "history=[]" in worker_call
-    assert 'current_parts=[{"text": free_raw_text}]' in worker_call
-    assert "memory_context" not in worker_call
+    worker_call = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or target.id != "worker_reply":
+            continue
+        value = node.value
+        if isinstance(value, ast.Await) and isinstance(value.value, ast.Call):
+            call = value.value
+            if isinstance(call.func, ast.Name) and call.func.id == "generate_free_chat":
+                worker_call = call
+                break
+
+    assert worker_call is not None
+    keywords = {item.arg: item.value for item in worker_call.keywords if item.arg}
+
+    history = keywords.get("history")
+    assert isinstance(history, ast.List) and history.elts == []
+
+    current_parts = keywords.get("current_parts")
+    assert isinstance(current_parts, ast.List) and len(current_parts.elts) == 1
+    current_item = current_parts.elts[0]
+    assert isinstance(current_item, ast.Dict)
+    assert any(
+        isinstance(value, ast.Name) and value.id == "free_raw_text"
+        for value in current_item.values
+    )
+    assert "memory_context" not in keywords
