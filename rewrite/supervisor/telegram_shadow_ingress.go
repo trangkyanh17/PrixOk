@@ -18,6 +18,7 @@ import (
 const (
 	telegramShadowSchemaVersion = 1
 	telegramShadowMaxBodyBytes  = int64(256 * 1024)
+	atriParityMaxBodyBytes      = int64(64 * 1024)
 )
 
 type telegramShadowMedia struct {
@@ -54,12 +55,14 @@ type telegramShadowIngress struct {
 	secret   string
 	accepted atomic.Uint64
 	rejected atomic.Uint64
+	parity   *atriParityEngine
 }
 
 func newTelegramShadowIngress(addr, secret string) *telegramShadowIngress {
 	return &telegramShadowIngress{
 		addr:   strings.TrimSpace(addr),
 		secret: strings.TrimSpace(secret),
+		parity: newAtriParityEngine(),
 	}
 }
 
@@ -112,6 +115,14 @@ func (ingress *telegramShadowIngress) authorized(request *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(ingress.secret)) == 1
 }
 
+func parityDiagnosticMode(event atriParityEvent) string {
+	mode := strings.TrimSpace(event.Mode)
+	if mode == "" {
+		mode = strings.TrimSpace(event.ActualMode)
+	}
+	return strings.ToLower(mode)
+}
+
 func (ingress *telegramShadowIngress) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
@@ -125,8 +136,59 @@ func (ingress *telegramShadowIngress) handler() http.Handler {
 			"mode":     "shadow",
 			"accepted": ingress.accepted.Load(),
 			"rejected": ingress.rejected.Load(),
+			"parity":   ingress.parity.snapshot(),
 		})
 	})
+
+	mux.HandleFunc("/v1/atri/parity", func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			ingress.parity.rejected.Add(1)
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !ingress.authorized(request) {
+			ingress.parity.rejected.Add(1)
+			writer.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		request.Body = http.MaxBytesReader(writer, request.Body, atriParityMaxBodyBytes)
+		defer request.Body.Close()
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		var event atriParityEvent
+		if err := decoder.Decode(&event); err != nil {
+			ingress.parity.rejected.Add(1)
+			http.Error(writer, "invalid Atri parity event", http.StatusBadRequest)
+			return
+		}
+
+		match, reason, err := ingress.parity.evaluate(event)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Never log route text, Telegram identifiers, provider credentials,
+		// model output, tool arguments, or tool results. This is decision parity only.
+		log.Printf(
+			"ATRI_PARITY stage=%s match=%t reason=%s mode=%s tool=%s",
+			event.Stage,
+			match,
+			reason,
+			parityDiagnosticMode(event),
+			event.ToolName,
+		)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"accepted": true,
+			"mode":     "decision-shadow",
+			"match":    match,
+			"reason":   reason,
+		})
+	})
+
 	mux.HandleFunc("/v1/telegram/shadow", func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost {
 			ingress.rejected.Add(1)
