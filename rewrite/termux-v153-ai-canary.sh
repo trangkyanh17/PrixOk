@@ -86,6 +86,7 @@ if [[ "$ACTION" == "--self-test" ]]; then
   grep -q 'v152_parity_patch.py' "$0"
   grep -q 'AUTO ROLLBACK' "$0"
   grep -q 'tmux send-keys -t prixok-bot C-c' "$0"
+  grep -q 'trap finish_report EXIT' "$0"
   echo "v153 AI canary self-test: PASS"
   exit 0
 fi
@@ -325,7 +326,7 @@ wait_new_bot_healthy() {
 restart_bot_controlled() {
   local old_pane="$1"
   [[ "$(bot_session_state)" == PRESENT ]] || return 1
-  tmux send-keys -t prixok-bot C-c
+  tmux send-keys -t prixok-bot C-c || return 1
   wait_new_bot_healthy "$old_pane"
 }
 
@@ -351,11 +352,11 @@ boot_lock_fd_clean() {
 
 write_canary_meta() {
   local backup="$1"
-  cat >"$backup/canary-meta.env" <<EOF
+  cat >"$backup/canary-meta.env" <<EOF || return 1
 REPO_SHA=$REPO_SHA
 EOF
-  chmod 600 "$backup/canary-meta.env"
-  printf '%s\n' "$backup" >"$LAST_BACKUP_FILE"
+  chmod 600 "$backup/canary-meta.env" || return 1
+  printf '%s\n' "$backup" >"$LAST_BACKUP_FILE" || return 1
 }
 
 rollback_apply_failure() {
@@ -412,11 +413,17 @@ apply_canary() {
     return 1
   fi
   SOURCE_APPLIED=1
-  write_canary_meta "$APPLY_BACKUP"
+  if ! write_canary_meta "$APPLY_BACKUP"; then
+    rollback_apply_failure "V153 backup metadata write failed"
+    return 1
+  fi
   pass SOURCE_PATCH "V153 startup hook + guard module installed; backup=$APPLY_BACKUP/source"
 
   section "CONTROLLED BOT RESTART"
-  clear_v151_ready
+  if ! clear_v151_ready; then
+    rollback_apply_failure "failed to clear V151 ready marker before restart"
+    return 1
+  fi
   BOT_RESTART_ATTEMPTED=1
   if ! restart_bot_controlled "$pane_before"; then
     rollback_apply_failure "bot did not restart healthy within timeout"
@@ -464,9 +471,18 @@ apply_canary() {
   pass BOOT_LOCK_FD "NO_BOOT_LOCK_FD"
 
   section "FINAL PRODUCTION"
-  require_healthy_production
-  require_v151_gate_a
-  require_v152_gate_b1
+  if ! require_healthy_production; then
+    rollback_apply_failure "final production health check failed"
+    return 1
+  fi
+  if ! require_v151_gate_a; then
+    rollback_apply_failure "V151 Gate A failed in final production check"
+    return 1
+  fi
+  if ! require_v152_gate_b1; then
+    rollback_apply_failure "V152 Gate B1 failed in final production check"
+    return 1
+  fi
   pass CANARY "V153 AI guard active; Python remains sole Telegram/AI owner"
 }
 
@@ -528,18 +544,22 @@ rollback_canary() {
   pass ROLLBACK "V153 disabled; V151 Gate A + V152 Gate B1 remain active"
 }
 
+finish_report() {
+  local rc=$?
+  trap - EXIT
+  echo "END: $(date)"
+  echo "REPORT: $REPORT"
+  exit "$rc"
+}
+
+trap finish_report EXIT
 section "ATRI V153 AI GUARD CANARY"
 echo "START: $(date)"
 echo "ACTION: $ACTION"
 echo "REPORT: $REPORT"
 
-rc=0
 case "$ACTION" in
-    status) status_canary || rc=$? ;;
-    apply) apply_canary || rc=$? ;;
-    rollback) rollback_canary || rc=$? ;;
+    status) status_canary ;;
+    apply) apply_canary ;;
+    rollback) rollback_canary ;;
 esac
-
-echo "END: $(date)"
-echo "REPORT: $REPORT"
-exit "$rc"
