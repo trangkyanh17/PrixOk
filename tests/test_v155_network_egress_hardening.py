@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import socket
 from pathlib import Path
@@ -36,10 +37,27 @@ def _response(status: int = 200, *, peer: str = "93.184.216.34", **kwargs):
     return httpx.Response(status, extensions=extensions, **kwargs)
 
 
+def _literal_verify_false_calls(source: str) -> list[int]:
+    """Return line numbers for real calls that explicitly disable TLS verification."""
+    tree = ast.parse(source)
+    hits: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for keyword in node.keywords:
+            if (
+                keyword.arg == "verify"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is False
+            ):
+                hits.append(node.lineno)
+    return hits
+
+
 def test_active_v155_http_guard_never_disables_tls_verification():
     for filename in ACTIVE_HTTP_GUARD_FILES:
         source = Path(filename).read_text(encoding="utf-8")
-        assert "verify=False" not in source, filename
+        assert not _literal_verify_false_calls(source), filename
 
 
 def test_sabnzbd_tls_verification_is_secure_by_default_and_redirects_are_off():
