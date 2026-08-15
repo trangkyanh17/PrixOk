@@ -111,13 +111,20 @@ def test_v150_boot_hook_uses_root_owner_guard() -> None:
     assert "9>&-" in text
 
 
-def test_v1564_wrapper_self_test() -> None:
+@pytest.mark.parametrize(
+    ("script", "marker"),
+    [
+        ("termux-v1564-performance-canary.sh", "root-proc self-test: PASS"),
+        ("termux-v1564-v150-safety.sh", "V150 safety installer self-test: PASS"),
+    ],
+)
+def test_v1564_shell_self_tests(script: str, marker: str) -> None:
     result = subprocess.run(
-        ["bash", str(ROOT / "rewrite/termux-v1564-performance-canary.sh"), "--self-test"],
+        ["bash", str(ROOT / "rewrite" / script), "--self-test"],
         cwd=ROOT,
         text=True,
         capture_output=True,
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "root-proc self-test: PASS" in result.stdout
+    assert marker in result.stdout
