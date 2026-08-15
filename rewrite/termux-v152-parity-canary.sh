@@ -17,6 +17,7 @@ V152_ENABLE_FILE="/root/.local/state/atri-v152-parity/enabled"
 ACTION="${1:-status}"
 SHADOW_ADDR="${ATRI_TELEGRAM_SHADOW_ADDR:-127.0.0.1:18750}"
 SHADOW_URL="http://$SHADOW_ADDR"
+SHADOW_SECRET="${ATRI_TELEGRAM_SHADOW_SECRET:-}"
 RESTART_TIMEOUT="${ATRI_V152_RESTART_TIMEOUT:-150}"
 HEALTH_TIMEOUT="${ATRI_V152_HEALTH_TIMEOUT:-180}"
 
@@ -71,6 +72,7 @@ if [[ "$ACTION" == "--self-test" ]]; then
   fi
   grep -q 'v152_parity_patch.py' "$0"
   grep -q '/v1/atri/parity' "$0"
+  grep -q 'X-Atri-Shadow-Secret' "$0"
   grep -q 'tmux send-keys -t prixok-bot C-c' "$0"
   echo "v152 parity self-test: PASS"
   exit 0
@@ -300,8 +302,13 @@ wait_ingress() {
 
 parity_synthetic_probe() {
   local code response_file="$STATE_DIR/probe-response.json"
+  local -a auth_header=()
+  if [[ -n "$SHADOW_SECRET" ]]; then
+    auth_header=(-H "X-Atri-Shadow-Secret: $SHADOW_SECRET")
+  fi
   code="$(curl -sS --max-time 4 -o "$response_file" -w '%{http_code}' \
     -H 'Content-Type: application/json' \
+    "${auth_header[@]}" \
     -X POST "$SHADOW_URL/v1/atri/parity" \
     --data '{"version":1,"stage":"route","route_text":"sua code python","actual_mode":"code","force_github_mcp":false}' || true)"
   [[ "$code" == 202 ]] || return 1
@@ -311,7 +318,7 @@ parity_synthetic_probe() {
 parity_counter_ready() {
   local response
   response="$(shadow_health 2>/dev/null || true)"
-  [[ "$response" =~ \"route_match\":[1-9][0-9]* ]]
+  grep -Eq '"route_match":[1-9][0-9]*' <<<"$response"
 }
 
 boot_lock_fd_clean() {
