@@ -2,9 +2,8 @@ from __future__ import annotations
 
 # ATRI_LEGACY_NETWORK_EGRESS_GUARD_V155
 # Runtime compatibility guard for legacy modules whose request construction is
-# intertwined with large upstream files. It is installed after modules import
-# but before Telegram handlers are registered, so no user request can execute
-# the legacy network paths before they are replaced.
+# intertwined with large upstream files. MyJD is patched before main() starts;
+# the remaining request paths are patched before Telegram handlers register.
 
 import asyncio
 import json
@@ -23,6 +22,7 @@ from bot.helper.ext_utils.network_utils import (
 
 
 _LOGGER = logging.getLogger("bot")
+_EARLY_INSTALLED = False
 _INSTALLED = False
 
 
@@ -60,8 +60,6 @@ async def _safe_mdisk(link: str, name: str):
         source = payload.get("source")
         filename = payload.get("filename")
         if source:
-            # The API response is also an outbound URL. Reject private/local
-            # destinations before yt-dlp can consume it.
             await asyncio.to_thread(validate_public_http_url, str(source))
             link = str(source)
         if not name and filename:
@@ -87,8 +85,7 @@ def _install_task_url_guard() -> None:
         if isinstance(link, str) and link.lower().startswith(("http://", "https://")):
             # Resolve the complete redirect chain under the V155 DNS + connected
             # peer policy, then hand downstream downloaders only the final public
-            # URL. This prevents a checked original URL from being re-followed
-            # through an unsafe redirect chain by aria2/qBittorrent/yt-dlp.
+            # URL rather than letting them re-follow the unchecked original URL.
             probe = await probe_public_http_url(link)
             self.link = probe.final_url
         return result
@@ -153,8 +150,8 @@ def _install_myjd_guard() -> None:
             return self._http_session
 
         # MyJD is a fixed loopback control plane in this project. TLS verify is
-        # meaningless for its http:// endpoint, and redirects are disabled so
-        # the local service cannot bounce the client into another network zone.
+        # irrelevant for its http:// endpoint; redirects and environment proxy
+        # inheritance are disabled so localhost cannot bounce elsewhere.
         transport = httpx.AsyncHTTPTransport(retries=10)
         self._http_session = httpx.AsyncClient(
             base_url=self._MyJdApi__api_url,
@@ -170,16 +167,26 @@ def _install_myjd_guard() -> None:
     MyJdApi._session = guarded_session
 
 
+def install_atri_early_network_guard() -> None:
+    """Patch startup network clients before main() can boot JDownloader."""
+    global _EARLY_INSTALLED
+    if _EARLY_INSTALLED:
+        return
+    _install_myjd_guard()
+    _EARLY_INSTALLED = True
+    _LOGGER.info("ATRI_EARLY_NETWORK_EGRESS_GUARD_V155_INSTALLED")
+
+
 def install_atri_network_egress_guard() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
 
+    install_atri_early_network_guard()
     _install_task_url_guard()
     _install_mirror_exception_guard()
     _install_rss_guard()
     _install_ytdlp_guard()
-    _install_myjd_guard()
 
     _INSTALLED = True
     _LOGGER.info("ATRI_LEGACY_NETWORK_EGRESS_GUARD_V155_INSTALLED")
