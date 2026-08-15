@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Transactional V155 network-egress patch for the customized live /app tree.
 
-Only narrow, source-controlled changes are applied. Large legacy modules are not
-replaced: the V155 runtime guard shadows their network constructors before
-Telegram handlers are registered. Rollback validates every post-apply digest
-before restoring any file, so a later live edit cannot be partially overwritten.
+The patch is intentionally narrow: it edits only small stable anchors in the
+live entrypoint/helpers and copies two dedicated V155 guard modules. Rollback
+preflights every post-apply digest before restoring anything, so stale live
+changes cannot be partially overwritten.
 """
 
 from __future__ import annotations
@@ -31,6 +31,13 @@ MANAGED_RELS = (
     *MODULE_RELS,
 )
 
+MAIN_EARLY_IMPORT_ANCHOR = "from .core.config_manager import Config"
+MAIN_EARLY_IMPORT_LINE = (
+    "from .modules.atri_network_egress_guard import install_atri_early_network_guard"
+)
+MAIN_EARLY_CALL_ANCHOR = "Config.load()"
+MAIN_EARLY_CALL_LINE = "install_atri_early_network_guard()"
+MAIN_START_LINE = "bot_loop.run_until_complete(main())"
 MAIN_IMPORT_ANCHOR = (
     "from .modules.atri_system_guard import install_atri_system_post_import_guard"
 )
@@ -127,16 +134,22 @@ def _restore_file(path: Path, backup: Path, record: dict[str, Any]) -> None:
 
 
 def _main_state(text: str) -> str:
-    import_count = text.count(MAIN_IMPORT_LINE)
-    call_count = text.count(MAIN_CALL_LINE)
-    if import_count == 0 and call_count == 0:
+    counts = {
+        "early_import": text.count(MAIN_EARLY_IMPORT_LINE),
+        "early_call": text.count(MAIN_EARLY_CALL_LINE),
+        "late_import": text.count(MAIN_IMPORT_LINE),
+        "late_call": text.count(MAIN_CALL_LINE),
+    }
+    if all(value == 0 for value in counts.values()):
         return "absent"
-    if import_count != 1 or call_count != 1:
-        raise RuntimeError(
-            f"partial/duplicate V155 main hook import={import_count} call={call_count}"
-        )
-    if text.index(MAIN_CALL_LINE) > text.index(MAIN_HANDLERS_LINE):
-        raise RuntimeError("V155 guard must install before add_handlers()")
+    if any(value != 1 for value in counts.values()):
+        raise RuntimeError(f"partial/duplicate V155 main hook counts={counts}")
+    if text.index(MAIN_EARLY_CALL_LINE) > text.index(MAIN_START_LINE):
+        raise RuntimeError("V155 early guard must install before main() starts")
+    late_call = text.index(MAIN_CALL_LINE)
+    handlers_call = text.index(MAIN_HANDLERS_LINE, late_call)
+    if late_call > handlers_call:
+        raise RuntimeError("V155 full guard must install before add_handlers()")
     return "applied"
 
 
@@ -144,11 +157,32 @@ def _patch_main(text: str) -> tuple[str, str]:
     state = _main_state(text)
     if state == "applied":
         return text, state
-    if text.count(MAIN_IMPORT_ANCHOR) != 1:
-        raise RuntimeError("V154 system guard import anchor must exist exactly once")
-    if text.count(MAIN_CALL_ANCHOR) != 1 or text.count(MAIN_HANDLERS_LINE) != 1:
-        raise RuntimeError("V155 handler-order anchors must exist exactly once")
+
+    anchors = {
+        MAIN_EARLY_IMPORT_ANCHOR: "early import",
+        MAIN_EARLY_CALL_ANCHOR: "early call",
+        MAIN_IMPORT_ANCHOR: "late import",
+        MAIN_CALL_ANCHOR: "late call",
+        MAIN_HANDLERS_LINE: "handlers",
+        MAIN_START_LINE: "main start",
+    }
+    for anchor, label in anchors.items():
+        if text.count(anchor) != 1:
+            raise RuntimeError(f"V155 {label} anchor must exist exactly once")
+
     result = text.replace(
+        MAIN_EARLY_IMPORT_ANCHOR,
+        MAIN_EARLY_IMPORT_ANCHOR + "\n" + MAIN_EARLY_IMPORT_LINE,
+        1,
+    )
+    result = result.replace(
+        MAIN_EARLY_CALL_ANCHOR,
+        MAIN_EARLY_CALL_ANCHOR
+        + "\n# V155 MyJD guard must exist before main() can boot JDownloader.\n"
+        + MAIN_EARLY_CALL_LINE,
+        1,
+    )
+    result = result.replace(
         MAIN_IMPORT_ANCHOR,
         MAIN_IMPORT_ANCHOR + "\n" + MAIN_IMPORT_LINE,
         1,
@@ -160,8 +194,8 @@ def _patch_main(text: str) -> tuple[str, str]:
         + MAIN_CALL_LINE,
         1,
     )
-    if result.index(MAIN_CALL_LINE) > result.index(MAIN_HANDLERS_LINE):
-        raise RuntimeError("generated V155 hook order is unsafe")
+    if _main_state(result) != "applied":
+        raise RuntimeError("generated V155 main hook did not verify")
     return result, state
 
 
@@ -289,8 +323,10 @@ def apply(source_root: Path, live_root: Path, backup_dir: Path) -> dict[str, Any
     backup_dir.mkdir(parents=True, exist_ok=False)
     records: dict[str, dict[str, Any]] = {}
     for rel in MANAGED_RELS:
-        path = live_root / rel
-        records[rel] = _backup_file(path, backup_dir / _backup_name(rel))
+        records[rel] = _backup_file(
+            live_root / rel,
+            backup_dir / _backup_name(rel),
+        )
 
     mutation_started = False
     try:
@@ -349,7 +385,7 @@ def rollback(live_root: Path, backup_dir: Path) -> dict[str, Any]:
     if not isinstance(files, dict) or set(files) != set(MANAGED_RELS):
         raise RuntimeError("invalid V155 backup manifest")
 
-    # Preflight every target before restoring any file: all-or-nothing stale gate.
+    # Check every path first: stale rollback is all-or-nothing.
     for rel in MANAGED_RELS:
         record = files[rel]
         if not isinstance(record, dict):
@@ -369,7 +405,11 @@ def rollback(live_root: Path, backup_dir: Path) -> dict[str, Any]:
             files[rel],
         )
 
-    for rel in ("bot/__main__.py", "bot/helper/ext_utils/bot_utils.py", "sabnzbdapi/requests.py"):
+    for rel in (
+        "bot/__main__.py",
+        "bot/helper/ext_utils/bot_utils.py",
+        "sabnzbdapi/requests.py",
+    ):
         py_compile.compile(str(live_root / rel), doraise=True)
     return {
         "rolled_back": True,
