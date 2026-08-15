@@ -6,6 +6,9 @@ metadata:
   atri-worker-eligible: "false"
   atri-risk: "high"
   atri-model-hint: "vertex"
+  atri-permission: "authorized"
+  atri-stage: "30"
+  atri-capabilities: "repo-map; audit; cross-file; regression"
   atri-triggers: "audit repo; repo audit; audit source; rà soát source; ra soat source; review codebase; audit codebase; kiểm tra toàn bộ source; kiem tra toan bo source; dead code audit"
 ---
 
