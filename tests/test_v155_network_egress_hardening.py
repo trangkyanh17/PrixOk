@@ -8,11 +8,10 @@ import httpx
 import pytest
 
 
-TARGET_TLS_FILES = (
-    "bot/modules/rss.py",
+ACTIVE_HTTP_GUARD_FILES = (
+    "bot/helper/ext_utils/network_utils.py",
     "bot/helper/ext_utils/bot_utils.py",
-    "bot/modules/ytdlp.py",
-    "myjd/myjdapi.py",
+    "bot/modules/atri_network_egress_guard.py",
 )
 
 
@@ -37,27 +36,36 @@ def _response(status: int = 200, *, peer: str = "93.184.216.34", **kwargs):
     return httpx.Response(status, extensions=extensions, **kwargs)
 
 
-def test_baseline_has_no_literal_tls_verification_bypass():
-    for filename in TARGET_TLS_FILES:
+def test_active_v155_http_guard_never_disables_tls_verification():
+    for filename in ACTIVE_HTTP_GUARD_FILES:
         source = Path(filename).read_text(encoding="utf-8")
         assert "verify=False" not in source, filename
 
 
-def test_sabnzbd_tls_verification_is_secure_by_default():
+def test_sabnzbd_tls_verification_is_secure_by_default_and_redirects_are_off():
     source = Path("sabnzbdapi/requests.py").read_text(encoding="utf-8")
     assert "VERIFY_CERTIFICATE: bool = True" in source
+    assert "follow_redirects=False" in source
 
 
-def test_rss_and_content_type_use_public_network_guard():
-    rss = Path("bot/modules/rss.py").read_text(encoding="utf-8")
+def test_legacy_network_paths_are_shadowed_before_handlers_are_registered():
+    main = Path("bot/__main__.py").read_text(encoding="utf-8")
+    runtime_guard = Path("bot/modules/atri_network_egress_guard.py").read_text(
+        encoding="utf-8"
+    )
     bot_utils = Path("bot/helper/ext_utils/bot_utils.py").read_text(encoding="utf-8")
-    mirror = Path("bot/modules/mirror_leech.py").read_text(encoding="utf-8")
 
-    assert "fetch_public_http_text" in rss
-    assert "AsyncClient(" not in rss
+    install_pos = main.index("install_atri_network_egress_guard()")
+    handlers_pos = main.index("add_handlers()", install_pos)
+    assert install_pos < handlers_pos
+
+    assert "rss.AsyncClient = _SafeRssAsyncClient" in runtime_guard
+    assert "ytdlp._mdisk = _safe_mdisk" in runtime_guard
+    assert "MyJdApi._session = guarded_session" in runtime_guard
+    assert "TaskConfig.before_start = guarded_before_start" in runtime_guard
+    assert "mirror_leech.Mirror.new_event = guarded_new_event" in runtime_guard
     assert "probe_public_http_url" in bot_utils
-    assert "NetworkTargetBlocked" in mirror
-    assert "get_content_type_with_final_url" in mirror
+    assert "get_content_type_with_final_url" in bot_utils
 
 
 def test_public_url_guard_blocks_literal_private_local_credentials_and_schemes(
@@ -78,7 +86,9 @@ def test_public_url_guard_blocks_literal_private_local_credentials_and_schemes(
         "http://192.168.1.1/",
         "http://[::1]/",
         "http://localhost/",
+        "http://localhost./",
         "http://service.internal/",
+        "http://router.home.arpa/",
         "http://user:pass@example.com/",
         "file:///etc/passwd",
         "ftp://example.com/file",
@@ -100,6 +110,23 @@ def test_public_url_guard_blocks_hostname_resolving_private(
     )
     with pytest.raises(guard.NetworkTargetBlocked, match="DNS_NON_PUBLIC"):
         guard.validate_public_http_url("http://public-looking.example/feed")
+
+
+def test_public_url_guard_rejects_mixed_public_private_dns(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from bot.helper.ext_utils import network_utils as guard
+
+    monkeypatch.setattr(
+        guard.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            _addr("93.184.216.34"),
+            _addr("127.0.0.1"),
+        ],
+    )
+    with pytest.raises(guard.NetworkTargetBlocked, match="DNS_NON_PUBLIC"):
+        guard.validate_public_http_url("https://mixed.example/")
 
 
 def test_public_url_guard_accepts_public_dns(monkeypatch: pytest.MonkeyPatch):
@@ -208,7 +235,9 @@ def test_probe_returns_final_public_url_and_content_type(
     assert len(calls) == 2
 
 
-def test_rss_text_fetch_has_size_limit(monkeypatch: pytest.MonkeyPatch):
+def test_rss_text_fetch_has_content_length_and_stream_size_limits(
+    monkeypatch: pytest.MonkeyPatch,
+):
     from bot.helper.ext_utils import network_utils as guard
 
     monkeypatch.setattr(
@@ -217,7 +246,27 @@ def test_rss_text_fetch_has_size_limit(monkeypatch: pytest.MonkeyPatch):
         lambda *args, **kwargs: [_addr("93.184.216.34")],
     )
 
-    async def handler(request: httpx.Request):
+    async def declared_too_large(request: httpx.Request):
+        return _response(
+            200,
+            headers={
+                "Content-Type": "application/rss+xml; charset=utf-8",
+                "Content-Length": "1000",
+            },
+            content=b"x",
+            request=request,
+        )
+
+    with pytest.raises(guard.NetworkResponseTooLarge):
+        asyncio.run(
+            guard.fetch_public_http_text(
+                "https://example.com/feed",
+                max_bytes=16,
+                transport=httpx.MockTransport(declared_too_large),
+            )
+        )
+
+    async def streamed_too_large(request: httpx.Request):
         return _response(
             200,
             headers={"Content-Type": "application/rss+xml; charset=utf-8"},
@@ -230,6 +279,6 @@ def test_rss_text_fetch_has_size_limit(monkeypatch: pytest.MonkeyPatch):
             guard.fetch_public_http_text(
                 "https://example.com/feed",
                 max_bytes=16,
-                transport=httpx.MockTransport(handler),
+                transport=httpx.MockTransport(streamed_too_large),
             )
         )
