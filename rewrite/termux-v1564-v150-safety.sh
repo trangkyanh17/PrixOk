@@ -99,7 +99,7 @@ ROOTFS_DIR="$(find_rootfs || true)"
 CANONICAL_HOOK="$ROOTFS_DIR$DEBIAN_CLONE/rewrite/termux-v150-boot-hook.sh"
 ROOT_PROBE="$ROOTFS_DIR$DEBIAN_CLONE/rewrite/v1564_root_proc_probe.py"
 [[ -f "$CANONICAL_HOOK" && -f "$ROOT_PROBE" ]] || { fail HOST_CONTEXT "V156.4 canonical files missing"; exit 1; }
-[[ "$(su -c id -u 2>/dev/null | tail -n1 | tr -d '\r')" == 0 ]] || { fail HOST_CONTEXT "KernelSU root unavailable"; exit 1; }
+[[ "$(su -c "id -u" 2>/dev/null | tail -n1 | tr -d '\r')" == 0 ]] || { fail HOST_CONTEXT "KernelSU root unavailable"; exit 1; }
 pass HOST_CONTEXT "rootfs=$ROOTFS_DIR root=READY"
 
 meta="$(debian_run "cd '$DEBIAN_CLONE' && printf 'branch=%s\\n' \"\$(git branch --show-current)\" && printf 'head=%s\\n' \"\$(git rev-parse HEAD)\" && printf 'origin=%s\\n' \"\$(git rev-parse refs/remotes/origin/main)\" && if [ -z \"\$(git status --porcelain=v1 --untracked-files=all)\" ]; then echo clean=1; else echo clean=0; fi" 2>/dev/null || true)"
