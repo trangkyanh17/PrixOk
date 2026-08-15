@@ -39,7 +39,8 @@ Commands:
   apply        Ensure V154 runtime dependencies, transactionally patch the live
                guard hooks/modules, restart the Python bot once, run isolated
                production smoke probes, and auto-rollback on any failure.
-  rollback     Restore the exact pre-V154 source/package snapshot and restart once.
+  rollback     Restore the exact pre-V154 source/distribution-version snapshot
+               and restart once.
   --self-test  CI syntax/contract checks only.
 
 Safety contract:
@@ -47,8 +48,14 @@ Safety contract:
 - never edits bot/modules/atri_ai.py;
 - never starts a second Telegram/AI worker;
 - requires V151 Gate A, V152 Gate B1 and V153 source baseline first;
-- source rollback is stale-safe and package rollback removes only distributions
-  that did not exist before this canary;
+- requires a clean main checkout including zero untracked files and HEAD equal
+  to the local origin/main tracking ref;
+- successful dependency install may add distributions but may not change or
+  remove any distribution/version that existed before the canary;
+- source rollback is stale-safe and package rollback verifies the exact logical
+  distribution/version snapshot;
+- manual rollback only accepts a backup under this canary's backup root and the
+  same repository SHA that created it;
 - writes one complete report into /storage/emulated/0/Download when available.
 EOF
 }
@@ -74,13 +81,17 @@ if [[ "$ACTION" == "--self-test" ]]; then
     echo "v154 production canary self-test: FAIL (forbidden live source mutation)" >&2
     exit 1
   fi
+  grep -q 'git status --porcelain=v1 --untracked-files=all' "$0"
+  grep -q 'origin_head' "$0"
   grep -q 'v154_production_patch.py' "$0"
   grep -q 'v154_production_probe.py' "$0"
+  grep -q 'v154_package_guard.py' "$0"
   grep -q 'v153_ai_guard_patch.py' "$0"
   grep -q 'ATRI_SYSTEM_CONTRACT_GUARD_V154_INSTALLED' "$0"
   grep -q 'ATRI_ARTIFACT_RELEVANCE_GUARD_V1542_INSTALLED' "$0"
   grep -q 'python-docx openpyxl PyMuPDF PyYAML playwright' "$0"
-  grep -q 'pip-new.txt' "$0"
+  grep -q 'pip-before.json' "$0"
+  grep -q 'pip-delta.json' "$0"
   grep -q 'AUTO ROLLBACK' "$0"
   grep -q 'tmux send-keys -t prixok-bot C-c' "$0"
   grep -q 'trap finish_report EXIT' "$0"
@@ -105,6 +116,7 @@ if ! validate_shadow_addr; then
 fi
 
 mkdir -p "$STATE_DIR" "$BACKUP_ROOT"
+chmod 700 "$STATE_DIR" "$BACKUP_ROOT" 2>/dev/null || true
 choose_report_dir() {
   local d
   for d in /storage/emulated/0/Download /sdcard/Download; do
@@ -146,7 +158,7 @@ require_host() {
     fail HOST_CONTEXT "must run from Termux host"
     return 1
   fi
-  for command in proot-distro tmux curl comm; do
+  for command in proot-distro tmux curl readlink; do
     command -v "$command" >/dev/null 2>&1 || {
       fail HOST_CONTEXT "$command missing"
       return 1
@@ -165,18 +177,19 @@ require_host() {
 }
 
 repo_meta() {
-  debian_run "cd '$DEBIAN_CLONE' && printf 'branch=%s\\n' \"\$(git branch --show-current)\" && printf 'head=%s\\n' \"\$(git rev-parse HEAD)\" && if git diff --quiet && git diff --cached --quiet; then echo clean=1; else echo clean=0; fi" 2>/dev/null
+  debian_run "cd '$DEBIAN_CLONE' && branch=\$(git branch --show-current) && head=\$(git rev-parse HEAD) && origin_head=\$(git rev-parse --verify 'refs/remotes/origin/$EXPECTED_BRANCH' 2>/dev/null || true) && if [ -z \"\$(git status --porcelain=v1 --untracked-files=all)\" ]; then clean=1; else clean=0; fi && printf 'branch=%s\\nhead=%s\\norigin_head=%s\\nclean=%s\\n' \"\$branch\" \"\$head\" \"\$origin_head\" \"\$clean\"" 2>/dev/null
 }
 
 require_repo() {
-  local meta branch head clean f
+  local meta branch head origin_head clean f
   meta="$(repo_meta || true)"
   printf '%s\n' "$meta"
   branch="$(awk -F= '$1=="branch"{print $2}' <<<"$meta")"
   head="$(awk -F= '$1=="head"{print $2}' <<<"$meta")"
+  origin_head="$(awk -F= '$1=="origin_head"{print $2}' <<<"$meta")"
   clean="$(awk -F= '$1=="clean"{print $2}' <<<"$meta")"
-  if [[ "$branch" != "$EXPECTED_BRANCH" || ! "$head" =~ ^[0-9a-f]{40}$ || "$clean" != 1 ]]; then
-    fail REPO "branch=${branch:-unknown} head=${head:-unknown} clean=${clean:-unknown}"
+  if [[ "$branch" != "$EXPECTED_BRANCH" || ! "$head" =~ ^[0-9a-f]{40}$ || "$origin_head" != "$head" || "$clean" != 1 ]]; then
+    fail REPO "branch=${branch:-unknown} head=${head:-unknown} origin_head=${origin_head:-unknown} clean=${clean:-unknown}"
     return 1
   fi
   REPO_SHA="$head"
@@ -186,6 +199,7 @@ require_repo() {
     rewrite/v153_ai_guard_patch.py \
     rewrite/v154_production_patch.py \
     rewrite/v154_production_probe.py \
+    rewrite/v154_package_guard.py \
     bot/modules/atri_system_guard.py \
     bot/modules/atri_sticker_privacy_guard.py \
     bot/modules/atri_webapp_safety_guard.py \
@@ -196,7 +210,14 @@ require_repo() {
       return 1
     }
   done
-  pass REPO "branch=$branch head=$head"
+  pass REPO "branch=$branch head=$head origin/main=$origin_head clean=1"
+}
+
+validate_backup_path() {
+  local backup="$1" root_real backup_real
+  root_real="$(readlink -f "$BACKUP_ROOT" 2>/dev/null || true)"
+  backup_real="$(readlink -f "$backup" 2>/dev/null || true)"
+  [[ -n "$root_real" && -n "$backup_real" && "$backup_real" == "$root_real"/apply-* ]]
 }
 
 legacy_watchdog_pids() { pgrep -af '[a]tri-production-watchdog.sh' 2>/dev/null | awk 'NF{print $1}' | sort -n; }
@@ -316,67 +337,52 @@ smoke_probe() {
   debian_run "cd '$DEBIAN_CLONE' && /app/mltbenv/bin/python rewrite/v154_production_probe.py smoke --live-root /app"
 }
 
-package_snapshot() {
-  debian_run "/app/mltbenv/bin/python -c 'import importlib.metadata as m; print(\"\\n\".join(sorted({str(d.metadata.get(\"Name\") or \"\").strip().lower().replace(\"_\", \"-\") for d in m.distributions() if str(d.metadata.get(\"Name\") or \"\").strip()})))'" | sed '/^$/d'
+package_guard() {
+  local action="$1" backup="$2"
+  shift 2
+  local command="cd '$DEBIAN_CLONE' && /app/mltbenv/bin/python rewrite/v154_package_guard.py '$action' --snapshot '$backup/pip-before.json' --delta '$backup/pip-delta.json'"
+  local package
+  if (($#)); then
+    command+=" --"
+    for package in "$@"; do
+      [[ "$package" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+      command+=" '$package'"
+    done
+  fi
+  debian_run "$command"
 }
 
-compute_package_delta() {
+rollback_package_state() {
   local backup="$1"
-  package_snapshot >"$backup/pip-after.txt"
-  comm -13 "$backup/pip-before.txt" "$backup/pip-after.txt" >"$backup/pip-new.txt"
-}
-
-validate_package_delta() {
-  local backup="$1" name
-  [[ -f "$backup/pip-new.txt" ]] || return 0
-  while IFS= read -r name; do
-    [[ -z "$name" || "$name" =~ ^[a-z0-9][a-z0-9._-]{0,127}$ ]] || return 1
-  done <"$backup/pip-new.txt"
-}
-
-rollback_new_packages() {
-  local backup="$1" name names=""
-  [[ -f "$backup/pip-new.txt" ]] || return 0
-  validate_package_delta "$backup" || return 1
-  while IFS= read -r name; do
-    [[ -n "$name" ]] || continue
-    names+=" $name"
-  done <"$backup/pip-new.txt"
-  [[ -n "$names" ]] || return 0
-  debian_run "/app/mltbenv/bin/python -m pip uninstall -y $names" >/dev/null
+  [[ -f "$backup/pip-before.json" ]] || return 0
+  package_guard rollback "$backup"
 }
 
 ensure_dependencies() {
   local backup="$1" probe
-  package_snapshot >"$backup/pip-before.txt"
+  package_guard snapshot "$backup" >/dev/null
   if probe="$(dependency_probe 2>&1)"; then
+    package_guard delta "$backup" >/dev/null
     printf '%s\n' "$probe"
-    cp "$backup/pip-before.txt" "$backup/pip-after.txt"
-    : >"$backup/pip-new.txt"
-    pass DEPENDENCIES "all V154 runtime imports already present"
+    pass DEPENDENCIES "all V154 runtime imports already present; package snapshot unchanged"
     return 0
   fi
 
-  info "dependency preflight missing/incomplete; installing only V154 top-level runtime packages"
+  info "dependency preflight missing/incomplete; running monotonic V154 package transaction"
   PACKAGE_MUTATED=1
-  if ! debian_run "/app/mltbenv/bin/python -m pip install --disable-pip-version-check --no-input --retries 2 --timeout 60 python-docx openpyxl PyMuPDF PyYAML playwright"; then
-    compute_package_delta "$backup" || true
-    rollback_new_packages "$backup" || true
-    fail DEPENDENCIES "pip install failed; newly-added distributions rolled back where identifiable"
+  if ! package_guard install-safe "$backup" python-docx openpyxl PyMuPDF PyYAML playwright; then
+    rollback_package_state "$backup" || true
+    fail DEPENDENCIES "safe package transaction failed; exact version snapshot rollback attempted"
     return 1
   fi
-  compute_package_delta "$backup"
-  validate_package_delta "$backup" || {
-    fail DEPENDENCIES "unsafe package delta metadata"
-    return 1
-  }
   if ! probe="$(dependency_probe 2>&1)"; then
     printf '%s\n' "$probe"
-    fail DEPENDENCIES "imports still fail after install"
+    rollback_package_state "$backup" || true
+    fail DEPENDENCIES "imports still fail after safe package transaction"
     return 1
   fi
   printf '%s\n' "$probe"
-  pass DEPENDENCIES "V154 imports ready; new_distributions=$(paste -sd, "$backup/pip-new.txt" 2>/dev/null || true)"
+  pass DEPENDENCIES "V154 imports ready; pre-existing distribution versions unchanged"
 }
 
 clear_v151_ready() { debian_run "rm -f '$V151_READY_FILE'" >/dev/null 2>&1; }
@@ -463,45 +469,59 @@ boot_lock_fd_clean() {
 
 write_canary_meta() {
   local backup="$1"
+  validate_backup_path "$backup" || return 1
   cat >"$backup/canary-meta.env" <<EOF || return 1
 REPO_SHA=$REPO_SHA
 EOF
   chmod 600 "$backup/canary-meta.env" || return 1
   printf '%s\n' "$backup" >"$LAST_BACKUP_FILE" || return 1
+  chmod 600 "$LAST_BACKUP_FILE" 2>/dev/null || true
 }
 
 rollback_apply_failure() {
-  local reason="$1" pane
+  local reason="$1" pane rollback_failed=0
   ((ROLLBACK_RUNNING == 0)) || return 0
   ROLLBACK_RUNNING=1
   section "AUTO ROLLBACK"
   info "reason=$reason"
 
   if ((SOURCE_APPLIED == 1)) && [[ -n "$APPLY_BACKUP" ]]; then
-    source_patcher rollback "$APPLY_BACKUP/source" || true
-  fi
-
-  if ((BOT_RESTART_ATTEMPTED == 1)); then
-    pane="$(bot_pane_pid || true)"
-    if [[ "$pane" =~ ^[0-9]+$ ]]; then
-      clear_v151_ready || true
-      restart_bot_controlled "$pane" || true
-      wait_v151_ready || true
+    if ! source_patcher rollback "$APPLY_BACKUP/source"; then
+      rollback_failed=1
+      warn AUTO_ROLLBACK "source rollback failed/stale; refusing automatic restart"
     fi
   fi
 
   if ((PACKAGE_MUTATED == 1)) && [[ -n "$APPLY_BACKUP" ]]; then
-    compute_package_delta "$APPLY_BACKUP" || true
-    rollback_new_packages "$APPLY_BACKUP" || true
+    if ! rollback_package_state "$APPLY_BACKUP"; then
+      rollback_failed=1
+      warn AUTO_ROLLBACK "package snapshot rollback failed; refusing automatic restart"
+    fi
   fi
 
-  if [[ "$(local_health_state)" == HEALTHY && "$(bot_lock_state || echo UNKNOWN)" == HELD ]] && \
+  if ((BOT_RESTART_ATTEMPTED == 1)) && ((rollback_failed == 0)); then
+    pane="$(bot_pane_pid || true)"
+    if [[ "$pane" =~ ^[0-9]+$ ]]; then
+      clear_v151_ready || rollback_failed=1
+      if ((rollback_failed == 0)); then
+        restart_bot_controlled "$pane" || rollback_failed=1
+      fi
+      if ((rollback_failed == 0)); then
+        wait_v151_ready || rollback_failed=1
+      fi
+    else
+      rollback_failed=1
+    fi
+  fi
+
+  if ((rollback_failed == 0)) && \
+     [[ "$(local_health_state)" == HEALTHY && "$(bot_lock_state || echo UNKNOWN)" == HELD ]] && \
      require_v151_gate_a >/dev/null 2>&1 && \
      require_v152_gate_b1 >/dev/null 2>&1 && \
      require_v153_baseline >/dev/null 2>&1; then
-    pass AUTO_ROLLBACK "pre-V154 source/package state restored; V151/V152/V153 healthy"
+    pass AUTO_ROLLBACK "pre-V154 source/distribution-version state restored; V151/V152/V153 healthy"
   else
-    fail AUTO_ROLLBACK "rollback attempted; production needs manual inspection" || true
+    fail AUTO_ROLLBACK "rollback incomplete or stale; production needs manual inspection" || true
   fi
 }
 
@@ -524,8 +544,13 @@ apply_canary() {
   pane_before="$HEALTHY_PANE"
   BOT_LOG_LINES_BEFORE="$(bot_log_line_count || echo 0)"
   [[ "$BOT_LOG_LINES_BEFORE" =~ ^[0-9]+$ ]] || BOT_LOG_LINES_BEFORE=0
-  APPLY_BACKUP="$BACKUP_ROOT/apply-$(date +%Y%m%d-%H%M%S)"
+  APPLY_BACKUP="$BACKUP_ROOT/apply-$(date +%Y%m%d-%H%M%S)-$$"
   mkdir -p "$APPLY_BACKUP"
+  chmod 700 "$APPLY_BACKUP" 2>/dev/null || true
+  validate_backup_path "$APPLY_BACKUP" || {
+    fail BACKUP "backup path escaped canary backup root"
+    return 1
+  }
 
   section "DEPENDENCY PREFLIGHT"
   if ! ensure_dependencies "$APPLY_BACKUP"; then
@@ -651,20 +676,31 @@ rollback_canary() {
   require_host
   section "REPO"
   require_repo
+  section "PRE-ROLLBACK PRODUCTION"
+  require_healthy_production
+
   backup="$(cat "$LAST_BACKUP_FILE" 2>/dev/null || true)"
-  [[ -n "$backup" && -f "$backup/canary-meta.env" && -f "$backup/source/source-manifest.json" ]] || {
+  if ! validate_backup_path "$backup"; then
+    fail ROLLBACK "last-backup is outside the V154 backup root"
+    return 1
+  fi
+  [[ -f "$backup/canary-meta.env" && -f "$backup/source/source-manifest.json" && -f "$backup/pip-before.json" ]] || {
     fail ROLLBACK "no complete V154 canary backup available"
     return 1
   }
   candidate="$(awk -F= '$1=="REPO_SHA"{print $2}' "$backup/canary-meta.env")"
-  [[ "$candidate" =~ ^[0-9a-f]{40}$ ]] || {
-    fail ROLLBACK "invalid V154 backup metadata"
+  [[ "$candidate" =~ ^[0-9a-f]{40}$ && "$candidate" == "$REPO_SHA" ]] || {
+    fail ROLLBACK "backup SHA=${candidate:-invalid} does not match current trusted repo SHA=$REPO_SHA"
     return 1
   }
 
   section "ROLLBACK V154 SOURCE"
   source_patcher rollback "$backup/source"
   pass SOURCE_ROLLBACK "restored exact pre-V154 7-file source snapshot"
+
+  section "ROLLBACK V154 PACKAGES"
+  rollback_package_state "$backup"
+  pass PACKAGE_ROLLBACK "restored exact pre-V154 distribution/version snapshot"
 
   pane="$(bot_pane_pid || true)"
   [[ "$pane" =~ ^[0-9]+$ ]] || {
@@ -675,11 +711,6 @@ rollback_canary() {
   restart_bot_controlled "$pane"
   wait_v151_ready
   pass BOT_ROLLBACK "old_pane=$pane new_pane=$NEW_PANE"
-
-  if [[ -f "$backup/pip-new.txt" ]]; then
-    rollback_new_packages "$backup"
-    pass PACKAGE_ROLLBACK "removed only distributions introduced by V154 canary"
-  fi
 
   require_healthy_production
   require_v151_gate_a
