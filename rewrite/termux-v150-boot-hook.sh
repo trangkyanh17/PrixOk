@@ -46,27 +46,15 @@ root_ps_snapshot() {
   su -c "PATH=$HOST_PREFIX/bin:/system/bin:/system/xbin LD_LIBRARY_PATH=$HOST_PREFIX/lib $ROOT_PS -eo pid,args" 2>/dev/null
 }
 
-legacy_pids() {
-  local snapshot
-  snapshot="$(root_ps_snapshot)" || return 2
-  awk '$0 ~ /[a]tri-production-watchdog\.sh/ {print $1}' <<<"$snapshot" | sort -n -u
-}
-
-v150_pids() {
-  local snapshot
-  snapshot="$(root_ps_snapshot)" || return 2
-  awk -v bin="$BIN" '$0 ~ /[a]tri-supervisor/ { if ($0 ~ bin || $0 ~ /[[:space:]]atri-supervisor([[:space:]]|$)/) print $1 }' <<<"$snapshot" | sort -n -u
-}
-
 owner_snapshot_or_fail() {
-  local legacy_rc=0 v150_rc=0
-  mapfile -t legacy < <(legacy_pids) || legacy_rc=$?
-  mapfile -t current < <(v150_pids) || v150_rc=$?
-  if ((legacy_rc != 0 || v150_rc != 0)); then
+  local snapshot
+  if ! snapshot="$(root_ps_snapshot)"; then
     printf '%s\n' "ROOT_PROC_UNAVAILABLE" >"$STATE_DIR/last_result"
-    printf '%s boot_hook_root_proc_unavailable legacy_rc=%s v150_rc=%s\n' "$(date '+%F %T')" "$legacy_rc" "$v150_rc" >>"$LOG"
+    printf '%s boot_hook_root_proc_unavailable\n' "$(date '+%F %T')" >>"$LOG"
     return 1
   fi
+  mapfile -t legacy < <(awk '$0 ~ /[a]tri-production-watchdog\.sh/ {print $1}' <<<"$snapshot" | sort -n -u)
+  mapfile -t current < <(awk -v bin="$BIN" '$0 ~ /[a]tri-supervisor/ { if ($0 ~ bin || $0 ~ /[[:space:]]atri-supervisor([[:space:]]|$)/) print $1 }' <<<"$snapshot" | sort -n -u)
 }
 
 owner_snapshot_or_fail || exit 78
@@ -120,9 +108,7 @@ started_pid=$!
 
 for ((i=0; i<START_TIMEOUT; i++)); do
   sleep 1
-  if ! owner_snapshot_or_fail; then
-    exit 78
-  fi
+  owner_snapshot_or_fail || exit 78
   if ((${#legacy[@]} > 0)); then
     printf '%s\n' "START_CONFLICT_LEGACY pids=${legacy[*]}" >"$STATE_DIR/last_result"
     printf '%s boot_hook_start_conflict legacy=%s\n' "$(date '+%F %T')" "${legacy[*]}" >>"$LOG"
