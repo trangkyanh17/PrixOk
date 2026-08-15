@@ -6,6 +6,9 @@ metadata:
   atri-worker-eligible: "true"
   atri-risk: "medium"
   atri-model-hint: "coding"
+  atri-permission: "authorized"
+  atri-stage: "50"
+  atri-capabilities: "debugging; code-analysis; test-design"
   atri-triggers: "debug code; fix bug; lỗi code; loi code; bắt bệnh code; bat benh code; exception python; traceback code; runtime bug; code không chạy; code khong chay"
 ---
 

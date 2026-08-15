@@ -6,6 +6,9 @@ metadata:
   atri-worker-eligible: "false"
   atri-risk: "medium"
   atri-model-hint: "vertex"
+  atri-permission: "authorized"
+  atri-stage: "40"
+  atri-capabilities: "log-timeline; root-cause; artifact-rag"
   atri-triggers: "check log; đọc log; doc log; phân tích log; phan tich log; traceback; stack trace; crash log; journalctl; runtime log; bắt bệnh log; bat benh log"
 ---
 
