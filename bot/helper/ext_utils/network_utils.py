@@ -136,10 +136,7 @@ def _redirect_target(response: httpx.Response, current_url: str) -> str | None:
     location = str(response.headers.get("location") or "").strip()
     if not location:
         return None
-    target = urljoin(current_url, location)
-    # Validate immediately, before a second request can be created.
-    validate_public_http_url(target)
-    return target
+    return urljoin(current_url, location)
 
 
 async def _validate_hop(url: str) -> str:
@@ -191,6 +188,7 @@ async def probe_public_http_url(
                     )
             if redirects >= max_redirects:
                 raise _blocked("REDIRECT_LIMIT")
+            await _validate_hop(target)
             current = target
 
     raise _blocked("REQUEST_INCOMPLETE")
@@ -223,12 +221,13 @@ async def fetch_public_http_text(
                     content_length = response.headers.get("Content-Length")
                     if content_length:
                         try:
-                            if int(content_length) > max_bytes:
-                                raise NetworkResponseTooLarge(
-                                    "NETWORK_RESPONSE_TOO_LARGE:content-length"
-                                )
+                            declared_length = int(content_length)
                         except ValueError:
-                            pass
+                            declared_length = None
+                        if declared_length is not None and declared_length > max_bytes:
+                            raise NetworkResponseTooLarge(
+                                "NETWORK_RESPONSE_TOO_LARGE:content-length"
+                            )
 
                     chunks: list[bytes] = []
                     total = 0
@@ -246,6 +245,7 @@ async def fetch_public_http_text(
 
             if redirects >= max_redirects:
                 raise _blocked("REDIRECT_LIMIT")
+            await _validate_hop(target)
             current = target
 
     raise _blocked("REQUEST_INCOMPLETE")
