@@ -26,20 +26,9 @@ def _load_patcher():
 
 
 def _old_main() -> str:
+    # Undefined names are fine for py_compile and keep the fixture faithful to
+    # production ordering without introducing misleading function definitions.
     return '''from .modules.atri_system_guard import install_atri_system_post_import_guard
-
-
-def add_aria2_callbacks():
-    pass
-
-
-def create_help_buttons():
-    pass
-
-
-def add_handlers():
-    pass
-
 
 add_aria2_callbacks()
 create_help_buttons()
@@ -149,10 +138,10 @@ def test_v155_rollback_stale_gate_is_all_or_nothing(tmp_path: Path):
     second = live_root / patcher.MANAGED_RELS[1]
     first_after = first.read_bytes()
     second_after = second.read_bytes()
-
-    # Mutating any managed file after apply must reject rollback before any
-    # earlier path can be restored.
-    second.write_text(second.read_text(encoding="utf-8") + "\n# post-apply drift\n", encoding="utf-8")
+    second.write_text(
+        second.read_text(encoding="utf-8") + "\n# post-apply drift\n",
+        encoding="utf-8",
+    )
 
     with pytest.raises(RuntimeError, match="changed after V155 apply"):
         patcher.rollback(live_root, backup)
@@ -164,8 +153,6 @@ def test_v155_rollback_stale_gate_is_all_or_nothing(tmp_path: Path):
 
 def test_v155_patcher_refuses_partial_or_custom_live_state(tmp_path: Path):
     patcher, source_root, live_root, backup, _ = _fixture_tree(tmp_path)
-
-    # A partially pre-hooked main is ambiguous and must fail before backup or mutation.
     main = live_root / "bot/__main__.py"
     main.write_text(
         main.read_text(encoding="utf-8").replace(
