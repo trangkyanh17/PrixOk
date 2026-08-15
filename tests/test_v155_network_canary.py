@@ -28,7 +28,11 @@ def _load_patcher():
 def _old_main() -> str:
     # Undefined names are fine for py_compile and keep the fixture faithful to
     # production ordering without introducing misleading function definitions.
-    return '''from .modules.atri_system_guard import install_atri_system_post_import_guard
+    return '''from .core.config_manager import Config
+from .modules.atri_system_guard import install_atri_system_post_import_guard
+
+Config.load()
+bot_loop.run_until_complete(main())
 
 add_aria2_callbacks()
 create_help_buttons()
@@ -101,8 +105,11 @@ def test_v155_patcher_apply_verify_and_exact_rollback(tmp_path: Path):
     assert patcher.verify(source_root, live_root)["applied"] is True
 
     main = (live_root / "bot/__main__.py").read_text(encoding="utf-8")
+    early_pos = main.index(patcher.MAIN_EARLY_CALL_LINE)
+    start_pos = main.index(patcher.MAIN_START_LINE)
     install_pos = main.index(patcher.MAIN_CALL_LINE)
     handlers_pos = main.index(patcher.MAIN_HANDLERS_LINE, install_pos)
+    assert early_pos < start_pos
     assert install_pos < handlers_pos
 
     bot_utils = (live_root / "bot/helper/ext_utils/bot_utils.py").read_text(
