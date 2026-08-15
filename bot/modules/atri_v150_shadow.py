@@ -20,6 +20,7 @@ _QUEUE_MAX = 256
 _HTTP_TIMEOUT_SECONDS = 0.75
 _DEFAULT_ENABLE_FILE = "/data/data/com.termux/files/home/.local/state/atri-v151-shadow/enabled"
 _DEBIAN_ENABLE_FILE = "/root/.local/state/atri-v151-shadow/enabled"
+_OBSERVER_READY_FILE = "/root/.local/state/atri-v151-shadow/observer-ready.json"
 _MEDIA_FIELDS = (
     "photo",
     "sticker",
@@ -55,6 +56,46 @@ def _shadow_enabled() -> bool:
     return _env_bool("ATRI_V150_TELEGRAM_SHADOW", False) or any(
         path.is_file() for path in _shadow_enable_files()
     )
+
+
+def _shadow_ready_file() -> Path:
+    explicit = os.getenv("ATRI_V151_SHADOW_READY_FILE", "").strip()
+    return Path(explicit or _OBSERVER_READY_FILE)
+
+
+def _clear_ready_marker() -> None:
+    try:
+        _shadow_ready_file().unlink(missing_ok=True)
+    except OSError as exc:
+        LOGGER.warning("ATRI_V150_TELEGRAM_SHADOW_READY_CLEAR_ERROR error=%s", exc)
+
+
+def _publish_ready_marker() -> bool:
+    path = _shadow_ready_file()
+    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    payload = {
+        "version": _SCHEMA_VERSION,
+        "mode": "observe-only",
+        "group": _HANDLER_GROUP,
+        "queue": _QUEUE_MAX,
+        "pid": os.getpid(),
+        "ready_at": int(time.time()),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(
+            json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+        return True
+    except OSError as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        LOGGER.warning("ATRI_V150_TELEGRAM_SHADOW_READY_WRITE_ERROR error=%s", exc)
+        return False
 
 
 def _shadow_url() -> str:
@@ -223,6 +264,7 @@ def add_v150_shadow_handlers(client: Any) -> bool:
     """Install observe-only handlers. No Telegram send/edit API is reachable here."""
     global _queue, _worker_task
     if not _shadow_enabled():
+        _clear_ready_marker()
         LOGGER.info("ATRI_V150_TELEGRAM_SHADOW_DISABLED")
         return False
     if _worker_task is not None:
@@ -245,10 +287,12 @@ def add_v150_shadow_handlers(client: Any) -> bool:
         _shadow_worker(),
         name="atri-v150-telegram-shadow",
     )
+    ready_written = _publish_ready_marker()
     LOGGER.info(
-        "ATRI_V150_TELEGRAM_SHADOW_ENABLED url=%s group=%s queue=%s mode=observe-only",
+        "ATRI_V150_TELEGRAM_SHADOW_ENABLED url=%s group=%s queue=%s mode=observe-only ready=%s",
         _shadow_url(),
         _HANDLER_GROUP,
         _QUEUE_MAX,
+        int(ready_written),
     )
     return True
