@@ -13,6 +13,7 @@ LAST_BACKUP_FILE="$STATE_DIR/last-backup"
 DEPLOY_STATE_DIR="$HOST_HOME/.local/state/atri-v150-deploy"
 DEPLOY_MANAGER="$HOST_HOME/termux-v150-deploy.sh"
 V150_BIN="$HOST_HOME/.local/lib/atri-v150/atri-supervisor"
+OBSERVER_READY_FILE="/root/.local/state/atri-v151-shadow/observer-ready.json"
 ACTION="${1:-status}"
 SHADOW_ADDR="${ATRI_TELEGRAM_SHADOW_ADDR:-127.0.0.1:18750}"
 SHADOW_URL="http://$SHADOW_ADDR"
@@ -58,6 +59,7 @@ if [[ "$ACTION" == "--self-test" ]]; then
   [[ "$EXPECTED_BRANCH" == main ]]
   [[ "$ENABLE_FILE" == */.local/state/atri-v151-shadow/enabled ]]
   [[ "$RUNTIME_ENV" == */.local/state/atri-v151-shadow/runtime.env ]]
+  [[ "$OBSERVER_READY_FILE" == /root/.local/state/atri-v151-shadow/observer-ready.json ]]
   positive_int "$RESTART_TIMEOUT"
   positive_int "$HEALTH_TIMEOUT"
   validate_shadow_addr
@@ -71,6 +73,7 @@ if [[ "$ACTION" == "--self-test" ]]; then
   grep -q 'tmux send-keys -t prixok-bot C-c' "$0"
   grep -q 'v151_shadow_patch.py' "$0"
   grep -q 'ATRI_V150_TELEGRAM_SHADOW=true' "$0"
+  grep -q 'wait_python_observer_ready' "$0"
   echo "v151 shadow self-test: PASS"
   exit 0
 fi
@@ -296,6 +299,23 @@ restart_bot_controlled() {
   wait_new_bot_healthy "$old_pane"
 }
 
+clear_python_observer_ready() {
+  debian_run "rm -f '$OBSERVER_READY_FILE'" >/dev/null 2>&1
+}
+
+python_observer_ready() {
+  debian_run "test -f '$OBSERVER_READY_FILE' && grep -q '\"mode\":\"observe-only\"' '$OBSERVER_READY_FILE' && grep -q '\"group\":-1000' '$OBSERVER_READY_FILE'" >/dev/null 2>&1
+}
+
+wait_python_observer_ready() {
+  local deadline=$((SECONDS + HEALTH_TIMEOUT))
+  while ((SECONDS < deadline)); do
+    if python_observer_ready; then return 0; fi
+    sleep 2
+  done
+  return 1
+}
+
 shadow_log_marker_after() {
   local offset="$1"
   debian_run "if [ -f /app/log.txt ]; then tail -c +$((offset + 1)) /app/log.txt | grep -q 'ATRI_V150_TELEGRAM_SHADOW_ENABLED'; else exit 1; fi" >/dev/null 2>&1
@@ -331,6 +351,7 @@ rollback_apply_failure() {
   if ((SOURCE_APPLIED == 1)) && [[ -n "$APPLY_BACKUP" ]]; then
     source_patcher rollback "$APPLY_BACKUP/source" || true
   fi
+  clear_python_observer_ready || true
 
   if ((UPGRADE_DONE == 1)) && [[ -x "$DEPLOY_MANAGER" ]]; then
     bash "$DEPLOY_MANAGER" rollback || true
@@ -353,7 +374,7 @@ rollback_apply_failure() {
 }
 
 apply_canary() {
-  local pane_before log_offset previous_sha deploy_backup
+  local pane_before log_offset previous_sha deploy_backup observer_state
   require_host
   section "REPO"
   require_repo
@@ -403,6 +424,11 @@ apply_canary() {
   fi
   pass SHADOW_INGRESS "$(shadow_health)"
 
+  if ! clear_python_observer_ready; then
+    rollback_apply_failure "could not clear stale Python observer readiness marker"
+    return 1
+  fi
+
   section "CONTROLLED BOT RESTART"
   BOT_RESTART_ATTEMPTED=1
   if ! restart_bot_controlled "$pane_before"; then
@@ -411,11 +437,18 @@ apply_canary() {
   fi
   pass BOT_RESTART "old_pane=$pane_before new_pane=$NEW_PANE"
 
-  if ! shadow_log_marker_after "$log_offset"; then
-    rollback_apply_failure "Python shadow enable marker missing after restart"
+  if ! wait_python_observer_ready; then
+    rollback_apply_failure "Python shadow observer did not publish readiness after restart"
     return 1
   fi
-  pass PYTHON_OBSERVER "ATRI_V150_TELEGRAM_SHADOW_ENABLED observed after restart"
+  observer_state="$(debian_run "cat '$OBSERVER_READY_FILE'" 2>/dev/null | tail -n1 | tr -d '\r')"
+  pass PYTHON_OBSERVER "$observer_state"
+
+  if shadow_log_marker_after "$log_offset"; then
+    info "Python shadow log marker observed after restart"
+  else
+    info "Python shadow log marker not found; observer-ready sentinel is authoritative"
+  fi
 
   if ! shadow_synthetic_probe; then
     rollback_apply_failure "local ingress synthetic probe failed"
@@ -435,7 +468,7 @@ apply_canary() {
 }
 
 status_canary() {
-  local enabled="NO" source="NOT_APPLIED" ingress="DOWN" fd="UNKNOWN" response meta
+  local enabled="NO" source="NOT_APPLIED" ingress="DOWN" fd="UNKNOWN" observer="NOT_READY" response meta
   require_host
   section "REPO"
   meta="$(repo_meta || true)"
@@ -446,11 +479,15 @@ status_canary() {
   [[ -f "$ENABLE_FILE" ]] && enabled=YES
   if source_patcher verify >/dev/null 2>&1; then source=APPLIED; fi
   if response="$(shadow_health 2>/dev/null)"; then ingress="$response"; fi
+  if python_observer_ready; then
+    observer="$(debian_run "cat '$OBSERVER_READY_FILE'" 2>/dev/null | tail -n1 | tr -d '\r')"
+  fi
   if boot_lock_fd_clean; then fd=NO_BOOT_LOCK_FD; else fd=CHECK_FAILED; fi
 
   section "V151 SHADOW"
   printf 'enabled=%s\n' "$enabled"
   printf 'source=%s\n' "$source"
+  printf 'observer_ready=%s\n' "$observer"
   printf 'ingress=%s\n' "$ingress"
   printf 'boot_lock_fd=%s\n' "$fd"
   printf 'last_backup=%s\n' "$(cat "$LAST_BACKUP_FILE" 2>/dev/null || echo none)"
@@ -483,6 +520,7 @@ rollback_canary() {
   section "ROLLBACK V151"
   disable_shadow_runtime_state
   source_patcher rollback "$backup/source"
+  clear_python_observer_ready || true
   pass SOURCE_ROLLBACK "restored guarded source backup"
   bash "$DEPLOY_MANAGER" rollback
   pass RUNTIME_ROLLBACK "restored pre-canary V150 runtime"

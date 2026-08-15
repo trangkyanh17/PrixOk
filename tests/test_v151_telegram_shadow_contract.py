@@ -16,6 +16,7 @@ def test_shadow_bridge_defaults_off_and_runs_before_production_groups():
     assert '_env_bool("ATRI_V150_TELEGRAM_SHADOW", False)' in source
     assert "/data/data/com.termux/files/home/.local/state/atri-v151-shadow/enabled" in source
     assert "/root/.local/state/atri-v151-shadow/enabled" in source
+    assert "/root/.local/state/atri-v151-shadow/observer-ready.json" in source
     assert "MessageHandler(_observe_message" in source
     assert "EditedMessageHandler(_observe_edited_message" in source
     assert "CallbackQueryHandler(_observe_callback)" in source
@@ -39,6 +40,18 @@ def test_shadow_bridge_has_no_telegram_outbound_api():
         assert marker not in source
 
 
+def test_shadow_observer_publishes_privacy_safe_readiness():
+    source = SHADOW.read_text(encoding="utf-8")
+    assert "def _publish_ready_marker()" in source
+    assert '"mode": "observe-only"' in source
+    assert '"group": _HANDLER_GROUP' in source
+    assert '"pid": os.getpid()' in source
+    assert "_publish_ready_marker()" in source
+    assert "chat_id" not in source[source.index("def _publish_ready_marker()"):source.index("def _shadow_url()")]
+    assert "user_id" not in source[source.index("def _publish_ready_marker()"):source.index("def _shadow_url()")]
+    assert '"text"' not in source[source.index("def _publish_ready_marker()"):source.index("def _shadow_url()")]
+
+
 def test_shadow_registration_and_env_propagation_are_explicit():
     main_source = MAIN.read_text(encoding="utf-8")
     watchdog_source = WATCHDOG.read_text(encoding="utf-8")
@@ -59,6 +72,11 @@ def test_canary_manager_is_narrow_and_has_guarded_rollback():
     assert "ATRI_V150_TELEGRAM_SHADOW=true" in canary
     assert "tmux send-keys -t prixok-bot C-c" in canary
     assert "AUTO ROLLBACK" in canary
+    assert "/root/.local/state/atri-v151-shadow/observer-ready.json" in canary
+    assert "wait_python_observer_ready" in canary
+    assert "Python shadow observer did not publish readiness after restart" in canary
+    assert "observer-ready sentinel is authoritative" in canary
+    assert "Python shadow enable marker missing after restart" not in canary
     assert not re.search(
         r"(?m)^\s*git\s+(?:pull|reset|checkout|clean)\b", canary
     )
