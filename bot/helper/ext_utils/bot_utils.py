@@ -262,7 +262,7 @@ async def sync_to_async(func, *args, wait=True, **kwargs):
 
 
 def async_to_sync(func, *args, wait=True, **kwargs):
-    future = run_coroutine_threadsafe(func(*args), bot_loop)
+    future = run_coroutine_threadsafe(func(*args, **kwargs), bot_loop)
     return future.result() if wait else future
 
 
