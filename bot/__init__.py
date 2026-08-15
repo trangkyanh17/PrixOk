@@ -123,3 +123,15 @@ try:
     install_atri_webapp_safety_guard()
 except Exception:
     LOGGER.exception("ATRI_WEBAPP_NETWORK_GUARD_V154_INSTALL_FAILED")
+
+# ATRI_XLSX_FORMULA_SAFETY_V1541_BOOT
+# Install before atri_ai imports the skill context by value. Raw spreadsheet
+# strings remain data; formulas require the explicit safe formula cell schema.
+try:
+    from bot.modules.atri_xlsx_formula_guard import (
+        install_atri_xlsx_formula_guard,
+    )
+
+    install_atri_xlsx_formula_guard()
+except Exception:
+    LOGGER.exception("ATRI_XLSX_FORMULA_SAFETY_V1541_INSTALL_FAILED")
