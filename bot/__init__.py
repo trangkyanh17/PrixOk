@@ -89,3 +89,13 @@ try:
     install_atri_ai_runtime_guard()
 except Exception:
     LOGGER.exception("ATRI_AI_RUNTIME_GUARD_V153_INSTALL_FAILED")
+
+# ATRI_SYSTEM_CONTRACT_GUARD_V154_BOOT
+# Cross-module Atri contracts must be installed before atri_ai imports helper
+# functions by value. The guard performs no network request during install.
+try:
+    from bot.modules.atri_system_guard import install_atri_system_guard
+
+    install_atri_system_guard()
+except Exception:
+    LOGGER.exception("ATRI_SYSTEM_CONTRACT_GUARD_V154_INSTALL_FAILED")
