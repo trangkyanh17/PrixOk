@@ -17,6 +17,7 @@ import httpx
 from bot.helper.ext_utils.network_utils import (
     NetworkTargetBlocked,
     fetch_public_http_text,
+    probe_public_http_url,
     validate_public_http_url,
 )
 
@@ -84,7 +85,12 @@ def _install_task_url_guard() -> None:
         result = await original_before_start(self)
         link = getattr(self, "link", "")
         if isinstance(link, str) and link.lower().startswith(("http://", "https://")):
-            await asyncio.to_thread(validate_public_http_url, link)
+            # Resolve the complete redirect chain under the V155 DNS + connected
+            # peer policy, then hand downstream downloaders only the final public
+            # URL. This prevents a checked original URL from being re-followed
+            # through an unsafe redirect chain by aria2/qBittorrent/yt-dlp.
+            probe = await probe_public_http_url(link)
+            self.link = probe.final_url
         return result
 
     guarded_before_start._atri_v155_guarded = True
