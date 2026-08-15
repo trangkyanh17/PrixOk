@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,7 @@ def _proc(
 
 def _tree(tmp_path: Path, *, legacy: bool = False, duplicate_bot: bool = False) -> Path:
     proc_root = tmp_path / "proc"
-    proc_root.mkdir()
+    proc_root.mkdir(parents=True)
     (proc_root / "meminfo").write_text(
         "MemAvailable: 1000000 kB\nSwapFree: 500000 kB\n", encoding="utf-8"
     )
@@ -82,6 +83,26 @@ def test_root_probe_detects_hidden_legacy_owner(tmp_path: Path) -> None:
     assert probe.list_legacy_pids(proc_root) == [9556]
 
 
+def test_identity_cli_error_has_no_stdout(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-proc"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "rewrite/v1564_root_proc_probe.py"),
+            "--proc-root",
+            str(missing),
+            "list-legacy",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "proc root unavailable" in result.stderr
+
+
 def test_canary_patch_only_replaces_process_visibility_layer() -> None:
     base = (ROOT / "rewrite/termux-v156-performance-canary.sh").read_text(encoding="utf-8")
     patched = v1564_canary_patch.patch_text(base)
@@ -92,6 +113,9 @@ def test_canary_patch_only_replaces_process_visibility_layer() -> None:
     assert "root_probe snapshot" in patched
     assert "root_probe soak" in patched
     assert "root_probe fd-clean" in patched
+    assert "__ROOT_PROBE_ERROR_LEGACY__" in patched
+    assert "__ROOT_PROBE_ERROR_V150_A__" in patched
+    assert "__ROOT_PROBE_ERROR_V150_B__" in patched
     assert "pgrep -f '[p]ython3 -m bot'" not in patched
     # Existing V156 transaction/preservation/rollback contract must survive.
     assert "v156_performance_patch.py" in patched
