@@ -1,5 +1,4 @@
 from bot.helper.ext_utils.parsing import parse_literal
-from httpx import AsyncClient
 from asyncio.subprocess import PIPE
 from functools import partial, wraps
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +13,7 @@ from ... import user_data, bot_loop
 from ...core.config_manager import Config
 from ..telegram_helper.button_build import ButtonMaker
 from .telegraph_helper import telegraph
+from .network_utils import NetworkTargetBlocked, probe_public_http_url
 from .help_messages import (
     YT_HELP_DICT,
     GDL_HELP_DICT,
@@ -203,13 +203,25 @@ def get_size_bytes(size):
     return size
 
 
-async def get_content_type(url):
+async def get_content_type_with_final_url(url):
+    """Probe a public HTTP(S) URL without allowing private-network redirects.
+
+    Security policy violations are deliberately not converted to None so callers
+    can stop the operation instead of accidentally handing the same blocked URL
+    to a downloader. Ordinary transport failures retain the legacy None result.
+    """
     try:
-        async with AsyncClient() as client:
-            response = await client.get(url, allow_redirects=True, verify=False)
-            return response.headers.get("Content-Type")
-    except:
-        return None
+        probe = await probe_public_http_url(url)
+        return probe.content_type, probe.final_url
+    except NetworkTargetBlocked:
+        raise
+    except Exception:
+        return None, None
+
+
+async def get_content_type(url):
+    content_type, _ = await get_content_type_with_final_url(url)
+    return content_type
 
 
 def update_user_ldata(id_, key, value):
@@ -250,7 +262,7 @@ async def sync_to_async(func, *args, wait=True, **kwargs):
 
 
 def async_to_sync(func, *args, wait=True, **kwargs):
-    future = run_coroutine_threadsafe(func(*args, **kwargs), bot_loop)
+    future = run_coroutine_threadsafe(func(*args), bot_loop)
     return future.result() if wait else future
 
 
