@@ -170,6 +170,18 @@ def _xlsx_probe(live_root: Path) -> dict[str, Any]:
     else:
         raise RuntimeError("network formula was not rejected")
 
+    for prefixed in (
+        "=_xlfn.WEBSERVICE(A1)",
+        '=_xlfn.RTD("prog.id",,"topic")',
+        "=_xlws.UNKNOWNFUNC(A1)",
+    ):
+        try:
+            guard._safe_formula(prefixed)
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError(f"prefixed function bypass was not rejected: {prefixed}")
+
     with tempfile.TemporaryDirectory(prefix="atri-v154-xlsx-") as raw_tmp:
         path = Path(raw_tmp) / "probe.xlsx"
         workbook = Workbook()
@@ -185,7 +197,12 @@ def _xlsx_probe(live_root: Path) -> dict[str, Any]:
                 raise RuntimeError("explicit formula did not reopen as formula")
         finally:
             reopened.close()
-    return {"raw_text": True, "explicit_formula": True, "network_block": True}
+    return {
+        "raw_text": True,
+        "explicit_formula": True,
+        "network_block": True,
+        "prefixed_function_block": True,
+    }
 
 
 def _webapp_probe(live_root: Path) -> dict[str, Any]:
@@ -267,6 +284,10 @@ def _artifact_probe(live_root: Path) -> dict[str, Any]:
     followup, followup_reason = guard._is_relevant(
         Index, connection, message("sửa đi"), "sửa đi"
     )
+    connection.execute("UPDATE artifacts SET active=0")
+    inactive, inactive_reason = guard._is_relevant(
+        Index, connection, message("sửa đi"), "sửa đi"
+    )
     connection.close()
     if unrelated or reason != "unrelated":
         raise RuntimeError("unrelated artifact query was not rejected")
@@ -274,7 +295,14 @@ def _artifact_probe(live_root: Path) -> dict[str, Any]:
         raise RuntimeError("two-token artifact match was not accepted")
     if not followup or followup_reason != "short_followup":
         raise RuntimeError("short repair follow-up was not accepted")
-    return {"unrelated_block": True, "chunk_match": True, "short_followup": True}
+    if inactive or inactive_reason != "no_artifact":
+        raise RuntimeError("inactive artifact history was implicitly resurrected")
+    return {
+        "unrelated_block": True,
+        "chunk_match": True,
+        "short_followup": True,
+        "inactive_history_block": True,
+    }
 
 
 def _sticker_probe(live_root: Path) -> dict[str, Any]:

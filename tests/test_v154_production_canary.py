@@ -161,6 +161,8 @@ def test_v154_isolated_smoke_probe_runs_without_bot_import():
     assert payload["archive"]["stream_limit"] is True
     assert payload["audio_tool_round"]["oversize_preflight"] is True
     assert payload["artifact_rag"]["unrelated_block"] is True
+    assert payload["artifact_rag"]["inactive_history_block"] is True
     assert payload["sticker"]["chat_scope"] is True
     assert payload["xlsx"]["network_block"] is True
+    assert payload["xlsx"]["prefixed_function_block"] is True
     assert payload["webapp"]["loopback_block"] is True

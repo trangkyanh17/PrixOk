@@ -66,9 +66,13 @@ def _exact_reply_artifact(index: Any, connection: Any, message: Any) -> bool:
 
 
 def _active_artifact(index: Any, connection: Any, message: Any):
+    # Only the explicitly active artifact may be selected implicitly. Historical
+    # inactive artifacts remain available through /use or an exact reply, but a
+    # short generic follow-up must never resurrect one after the active file was
+    # forgotten/deactivated.
     return connection.execute(
-        "SELECT * FROM artifacts WHERE chat_key=? "
-        "ORDER BY active DESC, created_at DESC, id DESC LIMIT 1",
+        "SELECT * FROM artifacts WHERE chat_key=? AND active=1 "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
         (index.chat_key_from_message(message),),
     ).fetchone()
 

@@ -70,7 +70,7 @@ jobs:
           bash ../termux-v152-parity-canary.sh --self-test
           bash ../termux-v153-ai-canary.sh --self-test
           bash ../termux-v154-production-canary.sh --self-test
-          python3 -m py_compile ../v151_shadow_patch.py ../v152_parity_patch.py ../v153_ai_guard_patch.py ../v153_ai_probe.py ../v154_production_patch.py ../v154_production_probe.py
+          python3 -m py_compile ../v151_shadow_patch.py ../v152_parity_patch.py ../v153_ai_guard_patch.py ../v153_ai_probe.py ../v154_production_patch.py ../v154_production_probe.py ../v154_package_guard.py
           bash -n ../termux-v150-production-watchdog.sh ../termux-v150-bot-launcher.sh ../termux-v150-boot-hook.sh ../termux-v151-shadow-canary.sh ../termux-v152-parity-canary.sh ../termux-v153-ai-canary.sh ../termux-v154-production-canary.sh
           grep -q 'boot_hook_lock_busy' ../termux-v150-boot-hook.sh
           grep -q '9>&-' ../termux-v150-boot-hook.sh
@@ -104,10 +104,14 @@ jobs:
           ! grep -En '^[[:space:]]*rm[[:space:]]+-rf[[:space:]]+/app([/[:space:]]|$)' ../termux-v153-ai-canary.sh
           grep -q 'v154_production_patch.py' ../termux-v154-production-canary.sh
           grep -q 'v154_production_probe.py' ../termux-v154-production-canary.sh
+          grep -q 'v154_package_guard.py' ../termux-v154-production-canary.sh
+          grep -q 'git status --porcelain=v1 --untracked-files=all' ../termux-v154-production-canary.sh
+          grep -q 'origin_head' ../termux-v154-production-canary.sh
           grep -q 'require_v153_baseline' ../termux-v154-production-canary.sh
           grep -q 'ATRI_SYSTEM_CONTRACT_GUARD_V154_INSTALLED' ../termux-v154-production-canary.sh
           grep -q 'ATRI_ARTIFACT_RELEVANCE_GUARD_V1542_INSTALLED' ../termux-v154-production-canary.sh
-          grep -q 'pip-new.txt' ../termux-v154-production-canary.sh
+          grep -q 'pip-before.json' ../termux-v154-production-canary.sh
+          grep -q 'pip-delta.json' ../termux-v154-production-canary.sh
           grep -q 'AUTO ROLLBACK' ../termux-v154-production-canary.sh
           ! grep -En '^[[:space:]]*git[[:space:]]+(pull|reset|checkout|clean)\b' ../termux-v154-production-canary.sh
           ! grep -En '^[[:space:]]*rm[[:space:]]+-rf[[:space:]]+/app([/[:space:]]|$)' ../termux-v154-production-canary.sh
