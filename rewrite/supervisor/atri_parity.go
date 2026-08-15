@@ -10,24 +10,24 @@ import (
 const atriParitySchemaVersion = 1
 
 type atriParityEvent struct {
-	Version            int               `json:"version"`
-	Stage              string            `json:"stage"`
-	RouteText          string            `json:"route_text,omitempty"`
-	AttachmentRoute    string            `json:"attachment_route,omitempty"`
-	ActualMode         string            `json:"actual_mode,omitempty"`
-	ForceGitHubMCP     bool              `json:"force_github_mcp,omitempty"`
-	Mode               string            `json:"mode,omitempty"`
-	RuntimeModel       string            `json:"runtime_model,omitempty"`
-	BaseModel          string            `json:"base_model,omitempty"`
-	ResolvedModel      string            `json:"resolved_model,omitempty"`
-	ThinkingAuto       bool              `json:"thinking_auto,omitempty"`
-	ThinkingLevels     map[string]string `json:"thinking_levels,omitempty"`
-	BaseThinking       string            `json:"base_thinking,omitempty"`
-	ProviderModel      string            `json:"provider_model,omitempty"`
-	ProviderThinking   string            `json:"provider_thinking,omitempty"`
-	ResolvedThinking   string            `json:"resolved_thinking,omitempty"`
-	ToolProfile        string            `json:"tool_profile,omitempty"`
-	ToolName           string            `json:"tool_name,omitempty"`
+	Version          int               `json:"version"`
+	Stage            string            `json:"stage"`
+	RouteText        string            `json:"route_text,omitempty"`
+	AttachmentRoute  string            `json:"attachment_route,omitempty"`
+	ActualMode       string            `json:"actual_mode,omitempty"`
+	ForceGitHubMCP   bool              `json:"force_github_mcp,omitempty"`
+	Mode             string            `json:"mode,omitempty"`
+	RuntimeModel     string            `json:"runtime_model,omitempty"`
+	BaseModel        string            `json:"base_model,omitempty"`
+	ResolvedModel    string            `json:"resolved_model,omitempty"`
+	ThinkingAuto     bool              `json:"thinking_auto,omitempty"`
+	ThinkingLevels   map[string]string `json:"thinking_levels,omitempty"`
+	BaseThinking     string            `json:"base_thinking,omitempty"`
+	ProviderModel    string            `json:"provider_model,omitempty"`
+	ProviderThinking string            `json:"provider_thinking,omitempty"`
+	ResolvedThinking string            `json:"resolved_thinking,omitempty"`
+	ToolProfile      string            `json:"tool_profile,omitempty"`
+	ToolName         string            `json:"tool_name,omitempty"`
 }
 
 type atriParityEngine struct {
@@ -323,25 +323,25 @@ var codeToolNames = map[string]struct{}{
 // google_places_search/google_route have executors but are not in
 // GOOGLE_TOOL_DECLARATIONS, so they intentionally remain invalid here.
 var toolsModeNames = map[string]struct{}{
-	"get_weather": {},
-	"search_delta_force_cn": {},
-	"get_delta_force_cn_history": {},
+	"get_weather":                    {},
+	"search_delta_force_cn":          {},
+	"get_delta_force_cn_history":     {},
 	"compare_delta_force_cn_seasons": {},
-	"google_youtube_search": {},
-	"google_safe_browsing": {},
-	"google_translate": {},
-	"google_books_search": {},
-	"google_drive_search": {},
-	"google_drive_read_text": {},
-	"google_calendar_events": {},
-	"google_gmail_search": {},
-	"google_gmail_read": {},
-	"google_tts_speak": {},
-	"google_geocode": {},
-	"google_vision_ocr": {},
-	"google_document_ai": {},
-	"google_sheets_read": {},
-	"google_capabilities": {},
+	"google_youtube_search":          {},
+	"google_safe_browsing":           {},
+	"google_translate":               {},
+	"google_books_search":            {},
+	"google_drive_search":            {},
+	"google_drive_read_text":         {},
+	"google_calendar_events":         {},
+	"google_gmail_search":            {},
+	"google_gmail_read":              {},
+	"google_tts_speak":               {},
+	"google_geocode":                 {},
+	"google_vision_ocr":              {},
+	"google_document_ai":             {},
+	"google_sheets_read":             {},
+	"google_capabilities":            {},
 }
 
 func validateObservedTool(mode, profile, name string) bool {
