@@ -172,11 +172,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm \
-            --entrypoint bash \
-            "prixok-ci:${GITHUB_SHA}" \
-            -lc '
-              set -euo pipefail
-              mltbenv/bin/pip install --no-cache-dir -r requirements-dev.txt
-              mltbenv/bin/python -m pytest -m "not slow"
-            '
+          set +e
+          output="$(
+            docker run --rm \
+              --entrypoint bash \
+              "prixok-ci:${GITHUB_SHA}" \
+              -lc '
+                set -euo pipefail
+                mltbenv/bin/pip install --no-cache-dir -r requirements-dev.txt
+                mltbenv/bin/python -m pytest -m "not slow"
+              ' 2>&1
+          )"
+          status=$?
+          set -e
+
+          printf '%s\n' "$output"
+
+          if (( status != 0 )); then
+            diagnostic="$(printf '%s\n' "$output" | tail -n 60)"
+            diagnostic="${diagnostic//'%'/'%25'}"
+            diagnostic="${diagnostic//$'\r'/'%0D'}"
+            diagnostic="${diagnostic//$'\n'/'%0A'}"
+            echo "::error title=Non-slow pytest failed::${diagnostic}"
+            exit "$status"
+          fi

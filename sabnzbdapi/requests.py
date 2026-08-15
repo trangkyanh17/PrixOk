@@ -15,7 +15,7 @@ class SabnzbdClient(JobFunctions):
         host: str,
         api_key: str,
         port: str = "8070",
-        VERIFY_CERTIFICATE: bool = False,
+        VERIFY_CERTIFICATE: bool = True,
         RETRIES: int = 10,
         HTTPX_REQUETS_ARGS: dict = None,
     ):
@@ -43,7 +43,7 @@ class SabnzbdClient(JobFunctions):
             base_url=self._base_url,
             transport=transport,
             timeout=Timeout(connect=60, read=60, write=60, pool=None),
-            follow_redirects=True,
+            follow_redirects=False,
             verify=self._VERIFY_CERTIFICATE,
             **self._HTTPX_REQUETS_ARGS,
         )
