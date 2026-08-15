@@ -196,7 +196,6 @@ def test_v156_canary_before_after_preservation_contract():
         "git status --porcelain=v1 --untracked-files=all",
     ):
         assert marker in source
-    assert "/app/bot/modules/atri_ai.py" not in source
 
 
 def test_v156_patcher_scope_is_only_global_executor_files():
@@ -205,3 +204,4 @@ def test_v156_patcher_scope_is_only_global_executor_files():
         "bot/helper/ext_utils/bot_utils.py",
         "bot/helper/ext_utils/runtime_tuning.py",
     }
+    assert all("atri_ai.py" not in rel for rel in patcher.MANAGED_RELS)
