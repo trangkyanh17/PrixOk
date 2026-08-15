@@ -9,6 +9,7 @@ func TestChooseAtriModeParity(t *testing.T) {
 	}{
 		{"hello Atri", "chat"},
 		{"thời tiết Hà Nội hôm nay", "tools"},
+		{"tho\u031Bi tie\u0302\u0301t Ha\u0300 No\u0323\u0302i", "tools"},
 		{"lịch của tôi hôm nay có gì", "tools"},
 		{"phiên bản Ubuntu mới nhất", "web"},
 		{"xem https://example.com này", "web"},
