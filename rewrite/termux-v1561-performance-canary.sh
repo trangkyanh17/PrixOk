@@ -1,0 +1,77 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -Eeuo pipefail
+
+DEBIAN_CLONE="${ATRI_V150_DEBIAN_CLONE:-/opt/prixok-v150}"
+HOST_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
+TMP_ROOT="${TMPDIR:-$HOME/.cache}"
+ROOTFS_DIR=""
+
+find_rootfs() {
+  local d
+  for d in \
+    "$HOST_PREFIX/var/lib/proot-distro/containers/debian/rootfs" \
+    "$HOST_PREFIX/var/lib/proot-distro/installed-rootfs/debian"; do
+    if [[ -f "$d$DEBIAN_CLONE/rewrite/termux-v156-performance-canary.sh" ]]; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ROOTFS_DIR="$(find_rootfs || true)"
+[[ -n "$ROOTFS_DIR" ]] || { echo "V156.1: Debian clone/rootfs not found" >&2; exit 1; }
+
+SOURCE="$ROOTFS_DIR$DEBIAN_CLONE/rewrite/termux-v156-performance-canary.sh"
+PROBE="$ROOTFS_DIR$DEBIAN_CLONE/rewrite/v156_bot_pid_probe.py"
+[[ -f "$SOURCE" ]] || { echo "V156.1: base V156 canary missing" >&2; exit 1; }
+[[ -f "$PROBE" ]] || { echo "V156.1: PID probe missing" >&2; exit 1; }
+
+mkdir -p "$TMP_ROOT"
+PATCHED="$(mktemp "$TMP_ROOT/atri-v1561-canary.XXXXXX.sh")"
+cleanup() { rm -f "$PATCHED"; }
+trap cleanup EXIT INT TERM
+
+patched=0
+skipping=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+  if (( skipping )); then
+    if [[ "$line" == "}" ]]; then
+      skipping=0
+    fi
+    continue
+  fi
+
+  if [[ "$line" == "production_bot_pid() {" ]]; then
+    ((patched+=1))
+    skipping=1
+    cat >>"$PATCHED" <<'EOF'
+production_bot_pid() {
+  local raw
+  raw="$(debian_run "python3 '$DEBIAN_CLONE/rewrite/v156_bot_pid_probe.py' --proc-root /proc" 2>/dev/null | tr -d '\r')"
+  [[ "$raw" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$raw"
+}
+EOF
+    continue
+  fi
+
+  printf '%s\n' "$line" >>"$PATCHED"
+done <"$SOURCE"
+
+if (( patched != 1 || skipping != 0 )); then
+  echo "V156.1: expected exactly one production_bot_pid() function in base canary" >&2
+  exit 1
+fi
+
+if grep -q "pgrep -f '\[p\]ython3 -m bot'" "$PATCHED"; then
+  echo "V156.1: legacy strict PID matcher survived patch" >&2
+  exit 1
+fi
+if ! grep -q "v156_bot_pid_probe.py" "$PATCHED"; then
+  echo "V156.1: semantic PID probe hook missing after patch" >&2
+  exit 1
+fi
+
+chmod 700 "$PATCHED"
+bash "$PATCHED" "$@"
