@@ -60,7 +60,12 @@ LOGGER.info(
     _ATRI_V133_AI_SHA256,
 )
 
+from .modules.atri_network_egress_guard import install_atri_early_network_guard
+
 Config.load()
+# MyJD/JDownloader can boot inside main(), so its redirect/proxy guard must be
+# installed before main() starts rather than waiting for Telegram handlers.
+install_atri_early_network_guard()
 
 
 async def main():
