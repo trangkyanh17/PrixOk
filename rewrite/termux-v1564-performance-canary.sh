@@ -52,7 +52,14 @@ grep -q 'root_probe soak' "$PATCHED"
 ! grep -q "pgrep -f '\[p\]ython3 -m bot'" "$PATCHED"
 
 if [[ "${1:-}" == "--self-test" ]]; then
-  python3 -m py_compile "$PATCHER" "$ROOT_PROBE"
+  python3 - "$PATCHER" "$ROOT_PROBE" <<'PY'
+from pathlib import Path
+import sys
+
+for raw in sys.argv[1:]:
+    path = Path(raw)
+    compile(path.read_text(encoding="utf-8"), str(path), "exec")
+PY
   python3 "$ROOT_PROBE" --help >/dev/null
   echo "v156.4 performance canary root-proc self-test: PASS"
   exit 0
