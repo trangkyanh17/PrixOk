@@ -34,6 +34,13 @@ xattr
 gallery-dl
 yt-dlp[default,curl-cffi]
 
+# ATRI_DOCUMENT_ATTACHMENT_RUNTIME_V154
+# These imports are runtime features, not dev-only test dependencies.
+python-docx
+openpyxl
+PyMuPDF
+PyYAML
+
 mcp>=2,<3
 uv
 sentry-sdk>=2,<3
