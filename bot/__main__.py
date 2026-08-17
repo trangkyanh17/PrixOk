@@ -126,6 +126,9 @@ from .modules.atri_capability_bootstrap import (
     install_capability_runtime,
 )
 from .modules.atri_response_engine import install_atri_natural_response_engine
+from .modules.atri_message_idempotency_v1672 import (
+    install_atri_message_idempotency_v1672,
+)
 
 add_aria2_callbacks()
 create_help_buttons()
@@ -138,6 +141,8 @@ install_capability_runtime()
 # V167 layers response planning/persona/naturalness over the proven Atri core
 # after V157 has finished patching routing and before Telegram registers handlers.
 install_atri_natural_response_engine()
+# V167.2 makes every Telegram update idempotent before handlers are registered.
+install_atri_message_idempotency_v1672()
 add_handlers()
 add_capability_runtime_handlers(TgClient.bot)
 install_atri_system_post_import_guard()
