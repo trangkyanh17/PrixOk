@@ -25,6 +25,24 @@ def test_v1671_semgrep_startup_is_failfast_and_retry_is_on_demand():
     assert "code_plugins._semgrep_worker = _semgrep_worker_failfast" in source
 
 
+def test_v16711_semgrep_live_session_teardown_keeps_reconnect_path():
+    source = Path("bot/modules/atri_runtime_hardening_v1671.py").read_text(
+        encoding="utf-8"
+    )
+
+    ready_init = source.index("session_ready = False")
+    ready_set = source.index("session_ready = True", ready_init)
+    teardown_guard = source.index("if session_ready:", ready_set)
+    reconnect_log = source.index(
+        "SEMGREP_MCP_WARM_RECONNECT_TEARDOWN",
+        teardown_guard,
+    )
+    retry = source.index("continue", reconnect_log)
+    failfast = source.index("SEMGREP_MCP_WARM_START_FAILED", retry)
+
+    assert ready_init < ready_set < teardown_guard < reconnect_log < retry < failfast
+
+
 def test_v1671_hardening_is_installed_before_semgrep_prewarm():
     source = Path("bot/__main__.py").read_text(encoding="utf-8")
 
