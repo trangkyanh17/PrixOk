@@ -57,8 +57,8 @@ _ATRI_V133_MAIN_SHA256 = _atri_v133_hashlib.sha256(
 LOGGER.info(
     "ATRI_PRODUCTION_WORKER_V133_READY pid=%s main_sha256=%s ai_sha256=%s",
     _atri_v133_os.getpid(),
-    _ATRI_V133_MAIN_SHA256,
     _ATRI_V133_AI_SHA256,
+    _ATRI_V133_MAIN_SHA256,
 )
 
 Config.load()
@@ -125,6 +125,7 @@ from .modules.atri_capability_bootstrap import (
     add_capability_runtime_handlers,
     install_capability_runtime,
 )
+from .modules.atri_response_engine import install_atri_natural_response_engine
 
 add_aria2_callbacks()
 create_help_buttons()
@@ -134,6 +135,9 @@ install_atri_network_egress_guard()
 # registration so routing, permissions, project context and job tracking are
 # effective on the first user message without changing atri_ai.py's guarded core.
 install_capability_runtime()
+# V167 layers response planning/persona/naturalness over the proven Atri core
+# after V157 has finished patching routing and before Telegram registers handlers.
+install_atri_natural_response_engine()
 add_handlers()
 add_capability_runtime_handlers(TgClient.bot)
 install_atri_system_post_import_guard()
