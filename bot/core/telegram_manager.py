@@ -1,10 +1,10 @@
 from pyrogram import Client, enums
-from pyrogram.errors import FloodWait
 from pyrogram.types import LinkPreviewOptions
-from asyncio import Lock, sleep
+from asyncio import Lock
 
 from .. import LOGGER
 from .config_manager import Config
+from .telegram_startup import start_bot_client
 
 
 class TgClient:
@@ -38,23 +38,7 @@ class TgClient:
             sleep_threshold=0,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
-
-        # Kurigram disconnects the client before re-raising a start failure, so
-        # retrying the same Client after Telegram's exact FloodWait is safe. Keep
-        # the worker, singleton flock and tmux session alive while waiting; do
-        # not turn a rate limit into a supervisor-driven authorization storm.
-        while True:
-            try:
-                await cls.bot.start()
-                break
-            except FloodWait as exc:
-                wait_seconds = max(1, int(exc.value))
-                LOGGER.warning(
-                    "TELEGRAM_BOT_START_FLOOD_WAIT seconds=%s action=wait-in-process",
-                    wait_seconds,
-                )
-                await sleep(wait_seconds + 1)
-
+        await start_bot_client(cls.bot, LOGGER)
         cls.NAME = cls.bot.me.username
 
     @classmethod
