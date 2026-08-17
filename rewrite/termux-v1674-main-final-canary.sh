@@ -97,7 +97,10 @@ wait_bot_ready(){
 }
 
 bot_lock_state(){
-  proot-distro login debian -- bash -lc 'p=/app/.atri-prixok-bot-v133.lock; [[ -e "$p" ]] || { echo MISSING; exit; }; exec 9<>"$p"; if flock -n 9; then flock -u 9; echo FREE; else echo HELD; fi' 2>/dev/null | tail -n1 | tr -d '\r'
+  local p="/app/.atri-prixok-bot-v133.lock"
+  [[ -e "$p" ]] || { echo MISSING; return 0; }
+  exec 9<>"$p"
+  if flock -n 9; then flock -u 9; echo FREE; else echo HELD; fi
 }
 wait_lock_released(){ local deadline=$((SECONDS+$1)) s; while ((SECONDS<deadline)); do s="$(bot_lock_state || true)"; [[ "$s" == FREE || "$s" == MISSING ]] && return 0; sleep 1; done; return 1; }
 legacy_watchdog_pids(){ host_run "pgrep -af '[a]tri-production-watchdog\.sh' 2>/dev/null || true" | awk 'NF{print $1}' | sort -n -u; }
@@ -125,6 +128,8 @@ section "ATRI V167.4 MAIN FINAL CANARY"
 echo "START=$(date)"; echo "REPORT=$REPORT"; echo "MODE=real-production-canary"; echo "FAIL_POLICY=keep-current-main-runtime-on-live-test-failure"; echo "NOTE=live source is read-only; bot lock is never deleted"
 
 section "1. EXACT MAIN"
+[[ -f /etc/debian_version ]] || fatal MAIN_SYNC "must run inside Debian PRoot"
+[[ "$ROOT_DIR" == "/app" ]] || fatal MAIN_SYNC "expected repository root=/app got=$ROOT_DIR"
 cd "$ROOT_DIR"; git fetch --quiet origin main || fatal MAIN_SYNC "git fetch origin main failed"
 branch="$(git branch --show-current 2>/dev/null || true)"; head="$(git rev-parse HEAD 2>/dev/null || true)"; origin_main="$(git rev-parse origin/main 2>/dev/null || true)"
 [[ "$branch" == "$EXPECTED_BRANCH" ]] || fatal MAIN_SYNC "expected main got=${branch:-unknown}"
