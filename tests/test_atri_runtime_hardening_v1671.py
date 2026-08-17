@@ -32,7 +32,12 @@ def test_v16711_semgrep_live_session_teardown_keeps_reconnect_path():
 
     ready_init = source.index("session_ready = False")
     ready_set = source.index("session_ready = True", ready_init)
-    teardown_guard = source.index("if session_ready:", ready_set)
+    reconnect_init = source.index("reconnect_requested = False", ready_init)
+    reconnect_set = source.index("reconnect_requested = True", ready_set)
+    teardown_guard = source.index(
+        "if session_ready and reconnect_requested:",
+        reconnect_set,
+    )
     reconnect_log = source.index(
         "SEMGREP_MCP_WARM_RECONNECT_TEARDOWN",
         teardown_guard,
@@ -40,7 +45,30 @@ def test_v16711_semgrep_live_session_teardown_keeps_reconnect_path():
     retry = source.index("continue", reconnect_log)
     failfast = source.index("SEMGREP_MCP_WARM_START_FAILED", retry)
 
-    assert ready_init < ready_set < teardown_guard < reconnect_log < retry < failfast
+    assert ready_init < reconnect_init < ready_set < reconnect_set
+    assert reconnect_set < teardown_guard < reconnect_log < retry < failfast
+
+
+def test_v16712_semgrep_idle_teardown_stops_instead_of_reconnecting():
+    source = Path("bot/modules/atri_runtime_hardening_v1671.py").read_text(
+        encoding="utf-8"
+    )
+
+    idle_init = source.index("idle_close_requested = False")
+    idle_set = source.index("idle_close_requested = True", idle_init)
+    idle_guard = source.index("if idle_close_requested:", idle_set)
+    idle_teardown_log = source.index(
+        "SEMGREP_MCP_WARM_IDLE_TEARDOWN_FAILED",
+        idle_guard,
+    )
+    idle_stop = source.index("return", idle_teardown_log)
+    reconnect_guard = source.index(
+        "if session_ready and reconnect_requested:",
+        idle_stop,
+    )
+
+    assert idle_init < idle_set < idle_guard < idle_teardown_log
+    assert idle_teardown_log < idle_stop < reconnect_guard
 
 
 def test_v1671_hardening_is_installed_before_semgrep_prewarm():
