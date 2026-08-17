@@ -2,10 +2,9 @@
 set -Eeuo pipefail
 
 # V167.4 live recovery verifier.
-# Run from the Termux host after the exact-main bot has already reached
+# Run from the Termux host after exact-main production already reached
 # Bot Started!/ATRI_PRODUCTION_WORKER_V133_ONLINE. It does not cut over source,
-# delete locks, or restart the watchdog before validation. It follows /app when
-# validating persistent Pyrogram storage because /app is a symlink in PRoot.
+# delete locks, or restart the watchdog before validation.
 
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 HOST_HOME="${HOME:-/data/data/com.termux/files/home}"
@@ -13,7 +12,7 @@ REPO="/app"
 WATCH_SESSION="atri-v150-watchdog"
 BOT_SESSION="prixok-bot"
 HOST_HEALTH="$HOST_HOME/atri-production-local-health.sh"
-MAIN_LIVE_LOG="$HOST_HOME/atri-v150-main-live.log"
+MAIN_LIVE_LOG="$HOST_HOME/.atri-v150-main-live.log"
 RECOVERY_TIMEOUT="${ATRI_V1674_RECOVERY_TIMEOUT:-240}"
 STABILITY_ROUNDS="${ATRI_V1674_TEST_ROUNDS:-10}"
 STABILITY_INTERVAL="${ATRI_V1674_TEST_INTERVAL:-6}"
@@ -69,7 +68,7 @@ wait_session(){
 wait_ready(){
   local timeout="$1" deadline=$((SECONDS+timeout)) pane flood last=0
   while ((SECONDS < deadline)); do
-    if ready; then return 0; fi
+    ready && return 0
     pane="$(capture "$BOT_SESSION")"
     flood="$(grep -E 'TELEGRAM_BOT_START_FLOOD_WAIT|FloodWait|FLOOD_WAIT|ImportBotAuthorization' <<<"$pane" | tail -n1 || true)"
     if ((SECONDS-last>=15)); then
@@ -177,6 +176,8 @@ fail(){
 if [[ "${1:-}" == "--self-test" ]]; then
   bash -n "$0"
   grep -q 'find -L /app' "$0"
+  grep -q '\.atri-v150-main-live\.log' "$0"
+  grep -q 'git status --porcelain -- bot rewrite' "$0"
   grep -q 'SUPERVISOR_START pid=' "$0"
   grep -q 'tmux kill-session -t "$BOT_SESSION"' "$0"
   grep -q 'kill -TERM "$old_sup"' "$0"
@@ -208,7 +209,8 @@ branch="$(debian "cd '$REPO' && git branch --show-current" | tail -n1 | tr -d '\
 head="$(debian "cd '$REPO' && git rev-parse HEAD" | tail -n1 | tr -d '\r')"
 remote="$(debian "cd '$REPO' && git rev-parse origin/main" | tail -n1 | tr -d '\r')"
 [[ "$branch" == main && "$head" == "$remote" ]] || fail "repo mismatch branch=$branch head=$head remote=$remote"
-debian "cd '$REPO' && git diff --quiet && git diff --cached --quiet" || fail 'tracked working tree dirty'
+critical_dirty="$(debian "cd '$REPO' && git status --porcelain -- bot rewrite" | tr -d '\r')"
+[[ -z "$critical_dirty" ]] || fail "critical bot/rewrite source dirty: $critical_dirty"
 has "$WATCH_SESSION" || fail 'V150 watchdog tmux missing'
 has "$BOT_SESSION" || fail 'bot tmux missing'
 ready || fail 'current bot is not Bot Started!/ONLINE'
