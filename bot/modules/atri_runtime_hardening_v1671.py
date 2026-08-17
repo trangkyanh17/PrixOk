@@ -26,6 +26,8 @@ def install_atri_runtime_hardening_v1671() -> None:
     async def _semgrep_worker_failfast() -> None:
         while True:
             session_ready = False
+            reconnect_requested = False
+            idle_close_requested = False
 
             try:
                 async with code_plugins._session("semgrep") as session:
@@ -39,11 +41,12 @@ def install_atri_runtime_hardening_v1671() -> None:
                                 timeout=code_plugins.SEMGREP_MCP_IDLE_SECONDS,
                             )
                         except TimeoutError:
+                            idle_close_requested = True
                             LOGGER.info(
                                 "SEMGREP_MCP_WARM_IDLE_CLOSE seconds=%s",
                                 code_plugins.SEMGREP_MCP_IDLE_SECONDS,
                             )
-                            return
+                            break
 
                         operation, payload, future = item
 
@@ -69,8 +72,7 @@ def install_atri_runtime_hardening_v1671() -> None:
                             if not future.done():
                                 future.set_exception(exc)
 
-                            # Preserve reconnect behavior for failures after
-                            # the MCP session has initialized successfully.
+                            reconnect_requested = True
                             LOGGER.warning(
                                 "SEMGREP_MCP_WARM_RECONNECT reason=%s: %s",
                                 type(exc).__name__,
@@ -81,14 +83,26 @@ def install_atri_runtime_hardening_v1671() -> None:
                             if not future.done():
                                 future.set_result(result)
 
+                    if idle_close_requested:
+                        return
+
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if session_ready:
+                if idle_close_requested:
+                    # The worker intentionally went idle. A cleanup failure
+                    # must not defeat SEMGREP_MCP_IDLE_SECONDS by spawning a
+                    # new Semgrep process forever.
+                    LOGGER.warning(
+                        "SEMGREP_MCP_WARM_IDLE_TEARDOWN_FAILED reason=%s: %s",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    return
+
+                if session_ready and reconnect_requested:
                     # A live session can fail again while its stdio/task-group
-                    # context is tearing down. That is a reconnect condition,
-                    # not an initialization failure, so keep queued work and
-                    # open a fresh Semgrep session.
+                    # context is tearing down. Keep queued work and reconnect.
                     LOGGER.warning(
                         "SEMGREP_MCP_WARM_RECONNECT_TEARDOWN reason=%s: %s",
                         type(exc).__name__,
@@ -96,6 +110,16 @@ def install_atri_runtime_hardening_v1671() -> None:
                     )
                     await asyncio.sleep(0.25)
                     continue
+
+                if session_ready:
+                    # No explicit reconnect request exists, so avoid turning
+                    # an unexpected teardown into an unbounded restart loop.
+                    LOGGER.warning(
+                        "SEMGREP_MCP_WARM_TEARDOWN_STOP reason=%s: %s",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    return
 
                 # Startup/prewarm is opportunistic. Do not retry once per
                 # second forever when uvx/Semgrep cannot initialize.
