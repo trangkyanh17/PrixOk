@@ -57,8 +57,8 @@ _ATRI_V133_MAIN_SHA256 = _atri_v133_hashlib.sha256(
 LOGGER.info(
     "ATRI_PRODUCTION_WORKER_V133_READY pid=%s main_sha256=%s ai_sha256=%s",
     _atri_v133_os.getpid(),
-    _ATRI_V133_AI_SHA256,
     _ATRI_V133_MAIN_SHA256,
+    _ATRI_V133_AI_SHA256,
 )
 
 Config.load()
