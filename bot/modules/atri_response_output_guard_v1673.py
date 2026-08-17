@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # ATRI_RESPONSE_OUTPUT_GUARD_V1673
 
+import fcntl
 import os
 import time
 from pathlib import Path
@@ -56,7 +57,46 @@ def _claim_path(identity: tuple[int, int, int]) -> Path:
     return OUTPUT_CLAIM_DIR / f"{chat_id}_{thread_id}_{message_id}.claim"
 
 
+def _mutex_path() -> Path:
+    return OUTPUT_CLAIM_DIR / ".claims.lock"
+
+
+def _open_claim_mutex() -> int:
+    fd = os.open(
+        _mutex_path(),
+        os.O_RDWR | os.O_CREAT,
+        0o600,
+    )
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def _close_claim_mutex(fd: int) -> None:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _safe_unlink_same_inode(path: Path, expected_stat: os.stat_result) -> None:
+    try:
+        current = path.stat()
+    except OSError:
+        return
+
+    if (
+        current.st_dev == expected_stat.st_dev
+        and current.st_ino == expected_stat.st_ino
+    ):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
 def _sweep_stale_claims(now: float) -> None:
+    """Remove expired claims while the global claim mutex is held."""
+
     global _LAST_SWEEP_AT
 
     if now - _LAST_SWEEP_AT < OUTPUT_SWEEP_INTERVAL_SECONDS:
@@ -74,8 +114,9 @@ def _sweep_stale_claims(now: float) -> None:
         if not path.name.endswith(".claim"):
             continue
         try:
-            if path.stat().st_mtime < stale_before:
-                path.unlink(missing_ok=True)
+            stat = path.stat()
+            if stat.st_mtime < stale_before:
+                _safe_unlink_same_inode(path, stat)
         except OSError:
             continue
 
@@ -83,12 +124,12 @@ def _sweep_stale_claims(now: float) -> None:
 def _claim_output_once(
     message: Any,
 ) -> tuple[bool, tuple[int, int, int] | None]:
-    """Claim the Telegram response surface for one source message.
+    """Atomically claim the Telegram response surface for one source message.
 
-    This is deliberately independent from the ingress V167.2 claim. Even if a
-    legacy callback, duplicate handler binding, or another worker bypasses the
-    ingress wrapper, only one response-state pipeline may emit thinking/final
-    media for the same Telegram message during the bounded TTL.
+    V167.2 protects ingress. V167.3 independently protects the final Telegram
+    output boundary. A short cross-process flock serializes stale replacement,
+    creation and cleanup so two workers cannot both reclaim the same expired
+    claim. Filesystem failures fail open rather than suppressing Atri replies.
     """
 
     identity = _message_identity(message)
@@ -104,12 +145,39 @@ def _claim_output_once(
         except OSError:
             pass
     except OSError:
-        # Fail open so a filesystem problem never makes Atri unavailable.
         return True, identity
 
-    path = _claim_path(identity)
+    try:
+        mutex_fd = _open_claim_mutex()
+    except OSError:
+        return True, identity
 
-    for _ in range(2):
+    try:
+        path = _claim_path(identity)
+        _sweep_stale_claims(now)
+
+        try:
+            existing = path.stat()
+        except FileNotFoundError:
+            existing = None
+        except OSError:
+            return True, identity
+
+        if existing is not None:
+            age = max(0.0, now - existing.st_mtime)
+            if age < OUTPUT_CLAIM_TTL_SECONDS:
+                return False, identity
+
+            # The global mutex guarantees no cooperating claimant can replace
+            # this path between the inode check and unlink.
+            _safe_unlink_same_inode(path, existing)
+
+            try:
+                if path.exists():
+                    return False, identity
+            except OSError:
+                return True, identity
+
         try:
             fd = os.open(
                 path,
@@ -117,35 +185,40 @@ def _claim_output_once(
                 0o600,
             )
         except FileExistsError:
-            try:
-                age = max(0.0, now - path.stat().st_mtime)
-            except OSError:
-                age = 0.0
-
-            if age >= OUTPUT_CLAIM_TTL_SECONDS:
-                try:
-                    path.unlink()
-                    continue
-                except OSError:
-                    pass
-
             return False, identity
         except OSError:
             return True, identity
-        else:
-            try:
-                payload = (
-                    f"pid={os.getpid()}\n"
-                    f"claimed_at={now:.6f}\n"
-                ).encode("utf-8")
-                os.write(fd, payload)
-            finally:
-                os.close(fd)
 
-            _sweep_stale_claims(now)
+        created_stat: os.stat_result | None = None
+        write_ok = False
+        try:
+            created_stat = os.fstat(fd)
+            payload = (
+                f"pid={os.getpid()}\n"
+                f"claimed_at={now:.6f}\n"
+            ).encode("utf-8")
+            os.write(fd, payload)
+            write_ok = True
+        except OSError:
+            write_ok = False
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                write_ok = False
+
+        if not write_ok:
+            if created_stat is not None:
+                _safe_unlink_same_inode(path, created_stat)
+            # Fail open: a broken claim store must not make Atri silent.
             return True, identity
 
-    return False, identity
+        return True, identity
+    finally:
+        try:
+            _close_claim_mutex(mutex_fd)
+        except OSError:
+            pass
 
 
 def _ensure_state_owner(state: Any, logger: Any) -> bool:
