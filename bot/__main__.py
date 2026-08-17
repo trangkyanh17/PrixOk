@@ -129,6 +129,9 @@ from .modules.atri_response_engine import install_atri_natural_response_engine
 from .modules.atri_message_idempotency_v1672 import (
     install_atri_message_idempotency_v1672,
 )
+from .modules.atri_response_output_guard_v1673 import (
+    install_atri_response_output_guard_v1673,
+)
 
 add_aria2_callbacks()
 create_help_buttons()
@@ -143,6 +146,9 @@ install_capability_runtime()
 install_atri_natural_response_engine()
 # V167.2 makes every Telegram update idempotent before handlers are registered.
 install_atri_message_idempotency_v1672()
+# V167.3 independently deduplicates thinking/final Telegram output so legacy or
+# bypassed ingress paths cannot emit multiple visual response pipelines.
+install_atri_response_output_guard_v1673()
 add_handlers()
 add_capability_runtime_handlers(TgClient.bot)
 install_atri_system_post_import_guard()
