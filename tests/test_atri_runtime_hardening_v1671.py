@@ -17,7 +17,7 @@ def test_v1674_bot_token_client_uses_persistent_storage():
     assert "workdir=\"/app\"" in bot_block
     assert "in_memory=False" in bot_block
     assert "in_memory=True" not in bot_block
-    assert "await cls.bot.start()" in bot_block
+    assert "await start_bot_client(cls.bot, LOGGER)" in bot_block
 
 
 def test_v1671_semgrep_startup_is_failfast_and_retry_is_on_demand():
