@@ -7,15 +7,17 @@ def _source() -> str:
     )
 
 
-def test_v1671_bot_token_client_uses_memory_storage():
+def test_v1674_bot_token_client_uses_persistent_storage():
     source = Path("bot/core/telegram_manager.py").read_text(encoding="utf-8")
     start = source.index("async def start_bot")
     end = source.index("async def start_user", start)
     bot_block = source[start:end]
 
     assert "bot_token=Config.BOT_TOKEN" in bot_block
-    assert "in_memory=True" in bot_block
-    assert "await cls.bot.start()" in bot_block
+    assert "workdir=\"/app\"" in bot_block
+    assert "in_memory=False" in bot_block
+    assert "in_memory=True" not in bot_block
+    assert "await start_bot_client(cls.bot, LOGGER)" in bot_block
 
 
 def test_v1671_semgrep_startup_is_failfast_and_retry_is_on_demand():

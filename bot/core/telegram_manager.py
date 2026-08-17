@@ -4,6 +4,7 @@ from asyncio import Lock
 
 from .. import LOGGER
 from .config_manager import Config
+from .telegram_startup import start_bot_client
 
 
 class TgClient:
@@ -26,7 +27,10 @@ class TgClient:
             proxy=Config.TG_PROXY,
             bot_token=Config.BOT_TOKEN,
             workdir="/app",
-            in_memory=True,
+            # V167.4: keep the authorized bot session on disk. V167.1 forced
+            # in-memory storage, which made every process restart call
+            # auth.ImportBotAuthorization again and amplified Telegram FloodWait.
+            in_memory=False,
             parse_mode=enums.ParseMode.HTML,
             max_concurrent_transmissions=10,
             max_message_cache_size=15000,
@@ -34,7 +38,7 @@ class TgClient:
             sleep_threshold=0,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
-        await cls.bot.start()
+        await start_bot_client(cls.bot, LOGGER)
         cls.NAME = cls.bot.me.username
 
     @classmethod
