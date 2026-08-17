@@ -25,8 +25,11 @@ def install_atri_runtime_hardening_v1671() -> None:
 
     async def _semgrep_worker_failfast() -> None:
         while True:
+            session_ready = False
+
             try:
                 async with code_plugins._session("semgrep") as session:
+                    session_ready = True
                     LOGGER.info("SEMGREP_MCP_WARM_READY")
 
                     while True:
@@ -66,8 +69,8 @@ def install_atri_runtime_hardening_v1671() -> None:
                             if not future.done():
                                 future.set_exception(exc)
 
-                            # Preserve the existing reconnect behavior for a
-                            # live session that later fails during an operation.
+                            # Preserve reconnect behavior for failures after
+                            # the MCP session has initialized successfully.
                             LOGGER.warning(
                                 "SEMGREP_MCP_WARM_RECONNECT reason=%s: %s",
                                 type(exc).__name__,
@@ -81,6 +84,19 @@ def install_atri_runtime_hardening_v1671() -> None:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                if session_ready:
+                    # A live session can fail again while its stdio/task-group
+                    # context is tearing down. That is a reconnect condition,
+                    # not an initialization failure, so keep queued work and
+                    # open a fresh Semgrep session.
+                    LOGGER.warning(
+                        "SEMGREP_MCP_WARM_RECONNECT_TEARDOWN reason=%s: %s",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    await asyncio.sleep(0.25)
+                    continue
+
                 # Startup/prewarm is opportunistic. Do not retry once per
                 # second forever when uvx/Semgrep cannot initialize.
                 LOGGER.warning(
