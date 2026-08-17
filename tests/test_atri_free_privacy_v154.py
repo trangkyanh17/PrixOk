@@ -21,7 +21,7 @@ def test_free_privacy_gate_blocks_private_and_secret_material():
         assert allowed is False, (text, reason)
 
 
-def test_free_privacy_gate_allows_bounded_public_task_only_in_chat_mode():
+def test_free_privacy_gate_allows_bounded_public_task_in_public_worker_modes():
     from bot.modules import atri_ai
 
     text = "Giải thích thuật toán quicksort và độ phức tạp của nó"
@@ -29,7 +29,10 @@ def test_free_privacy_gate_allows_bounded_public_task_only_in_chat_mode():
         True,
         "public_safe",
     )
-    assert atri_ai._atri_free_privacy_gate(text, "code")[0] is False
+    assert atri_ai._atri_free_privacy_gate(text, "code") == (
+        True,
+        "public_safe",
+    )
     assert atri_ai._atri_free_privacy_gate(text, "web")[0] is False
 
 
