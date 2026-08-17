@@ -59,7 +59,6 @@ class YoutubeDLHelper:
             "progress_hooks": [self._on_download_progress],
             "logger": MyLogger(self, self._listener),
             "usenetrc": True,
-            "cookiefile": "cookies.txt",
             "allow_multiple_video_streams": True,
             "allow_multiple_audio_streams": True,
             "noprogress": True,
@@ -81,6 +80,13 @@ class YoutubeDLHelper:
                 "extractor": lambda n: 3,
             },
         }
+
+        # YTDLP_OPTIONAL_COOKIEFILE_V163
+        # Do not force a missing cookies.txt on generic/direct media URLs.
+        if ospath.isfile("/app/cookies.txt"):
+            self.opts["cookiefile"] = "/app/cookies.txt"
+        elif ospath.isfile("cookies.txt"):
+            self.opts["cookiefile"] = "cookies.txt"
 
     @property
     def download_speed(self):
@@ -133,7 +139,9 @@ class YoutubeDLHelper:
         if not from_queue:
             await self._listener.on_download_start()
             if self._listener.multi <= 1 and not self._listener.is_rss:
-                await send_status_message(self._listener.message)
+                # ATRI_MD_SILENT_DOWNLOAD_STATUS_V1642
+                if not getattr(self._listener, "is_media_direct", False):
+                    await send_status_message(self._listener.message)
 
     def _on_download_error(self, error):
         self._listener.is_cancelled = True

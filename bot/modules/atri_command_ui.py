@@ -64,7 +64,8 @@ CATEGORY_META: dict[str, tuple[str, str]] = {
     "leech": ("📤 Leech", "Tải rồi gửi lên Telegram"),
     "cloud": ("🗂 Cloud & Search", "Drive, tìm file, torrent và NZB"),
     "tasks": ("⏱ Tác vụ", "Theo dõi, hủy và điều khiển tác vụ"),
-    "atri": ("🤖 Atri AI", "Chat, web, tools, code và tiện ích Atri"),
+    "tools": ("🧰 Công cụ", "Web, thời tiết, lịch, nhắc việc, nhạc và tiện ích miễn phí"),
+    "atri": ("🤖 Atri AI", "Chat, model/thinking, memory, skills, project và artifact"),
     "rose_mod": ("🛡 Rose • Quản trị", "Moderation và quản trị thành viên"),
     "rose_content": ("📝 Rose • Nội dung", "Rules, notes, filters, welcome và nội dung nhóm"),
     "rose_guard": ("🔒 Rose • Bảo vệ", "Locks, blocklist, flood, captcha và approvals"),
@@ -81,6 +82,7 @@ CATEGORY_ORDER = [
     "leech",
     "cloud",
     "tasks",
+    "tools",
     "atri",
     "rose_mod",
     "rose_content",
@@ -114,6 +116,13 @@ CLOUD_COMMANDS = {
 
 TASK_COMMANDS = {
     "cancel", "c", "cancelall", "forcestart", "fs", "sel",
+}
+
+TOOLS_COMMANDS = {
+    "websearch", "weather",
+    "today", "calendar", "holidays",
+    "remind", "reminders", "delremind",
+    "music", "ytmusic", "scmusic", "douyin",
 }
 
 ADMIN_COMMANDS = {
@@ -185,6 +194,18 @@ DESCRIPTIONS: dict[str, str] = {
     "status": "Xem trạng thái tác vụ đang chạy/chờ.",
     "usetting": "Mở cài đặt cá nhân.",
     "rss": "Quản lý nguồn RSS.",
+    "websearch": "Tìm kiếm web qua SearXNG.",
+    "weather": "Xem thời tiết theo địa điểm.",
+    "today": "Xem ngày và giờ hiện tại.",
+    "calendar": "Xem lịch tháng.",
+    "holidays": "Xem danh sách ngày lễ.",
+    "remind": "Tạo lời nhắc.",
+    "reminders": "Xem lời nhắc đang chờ.",
+    "delremind": "Xóa lời nhắc.",
+    "music": "Mở bộ chọn nguồn nhạc.",
+    "ytmusic": "Tìm/tải nhạc từ YouTube hoặc TikTok.",
+    "scmusic": "Tìm/tải nhạc từ SoundCloud và nguồn khác.",
+    "douyin": "Tải video Douyin.",
 
     "mirror": "Tải bằng aria2 rồi upload lên cloud.",
     "qbmirror": "Tải torrent/magnet bằng qBittorrent rồi upload.",
@@ -288,6 +309,13 @@ USAGE: dict[str, str] = {
 
     "ai": "/ai <câu_hỏi>",
     "atri": "/atri [on|off]",
+    "websearch": "/websearch <nội_dung_cần_tìm>",
+    "weather": "/weather <địa_điểm>",
+    "remind": "/remind <thời_gian> <nội_dung>",
+    "delremind": "/delremind <id>",
+    "ytmusic": "/ytmusic <từ_khóa|URL>",
+    "scmusic": "/scmusic <từ_khóa|URL>",
+    "douyin": "/douyin <URL>",
     "auth": "/auth <user_id|chat_id>",
     "unauth": "/unauth <user_id|chat_id>",
     "addsudo": "/addsudo <user_id>",
@@ -334,6 +362,15 @@ def _normalize_command(value: Any) -> list[str]:
         values = [value]
     elif isinstance(value, (list, tuple, set, frozenset)):
         values = [x for x in value if isinstance(x, str)]
+        # Some modules keep Telegram commands as (command, description) pairs.
+        # Discover the command name without treating descriptions as commands.
+        values.extend(
+            str(x[0])
+            for x in value
+            if isinstance(x, (list, tuple))
+            and x
+            and isinstance(x[0], str)
+        )
     else:
         return []
 
@@ -474,7 +511,12 @@ def _scan_source_commands() -> dict[str, set[str]]:
                     found[command].add(rel)
 
             if (
-                name in {"_matches_command", "matches_command"}
+                name in {
+                    "_matches_command",
+                    "matches_command",
+                    "_matches",
+                    "matches",
+                }
                 and len(node.args) >= 2
             ):
                 for command in resolve(node.args[1]):
@@ -523,6 +565,8 @@ def _category_for(
         return "cloud"
     if command in TASK_COMMANDS:
         return "tasks"
+    if command in TOOLS_COMMANDS:
+        return "tools"
     if command in ADMIN_COMMANDS:
         return "admin"
     if command in CORE_COMMANDS:
@@ -780,10 +824,40 @@ def _rows(
     ]
 
 
+# ATRI_ROLE_PRIVACY_V161
+# ATRI_UI_POLISH_V1614
+PUBLIC_CATEGORIES = (
+    "core",
+    "mirror",
+    "leech",
+    "cloud",
+    "tasks",
+    "tools",
+)
+
+
+def _is_owner(user_id: int) -> bool:
+    try:
+        return int(user_id) == int(getattr(Config, "OWNER_ID", 0) or 0)
+    except Exception:
+        return False
+
+
+def _visible_categories(user_id: int) -> tuple[str, ...]:
+    return tuple(CATEGORY_ORDER) if _is_owner(user_id) else PUBLIC_CATEGORIES
+
+
+def _command_visible(user_id: int, command: str) -> bool:
+    item = CATALOG.get(command)
+    if item is None:
+        return False
+    return _is_owner(user_id) or item.get("category") in PUBLIC_CATEGORIES
+
+
 def _main_keyboard(owner_id: int) -> InlineKeyboardMarkup:
     buttons: list[InlineKeyboardButton] = []
 
-    for key in CATEGORY_ORDER:
+    for key in _visible_categories(owner_id):
         commands = CATEGORIES.get(key, [])
         if not commands:
             continue
@@ -797,31 +871,40 @@ def _main_keyboard(owner_id: int) -> InlineKeyboardMarkup:
         )
 
     rows = _rows(buttons, 2)
-    rows.append(
-        [
-            InlineKeyboardButton(
-                "🔎 Tìm lệnh",
-                callback_data=_cb(owner_id, "searchhelp"),
-            ),
-            InlineKeyboardButton(
-                "📝 Notes",
-                callback_data=_cb(owner_id, "notes"),
-            ),
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                "🔄 Làm mới catalog",
-                callback_data=_cb(owner_id, "refresh"),
-            )
-        ]
-    )
+
+    if _is_owner(owner_id):
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "🔎 Tìm lệnh",
+                    callback_data=_cb(owner_id, "searchhelp"),
+                ),
+                InlineKeyboardButton(
+                    "📝 Notes",
+                    callback_data=_cb(owner_id, "notes"),
+                ),
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "🔄 Làm mới catalog",
+                    callback_data=_cb(owner_id, "refresh"),
+                )
+            ]
+        )
 
     return InlineKeyboardMarkup(rows)
 
 
-def _main_text() -> str:
+def _main_text(owner_id: int) -> str:
+    if not _is_owner(owner_id):
+        return (
+            "Atri • Command Center\n\n"
+            "6 nhóm lệnh công khai: Cơ bản, Mirror, Leech, "
+            "Cloud & Search, Tác vụ và Công cụ."
+        )
+
     total = len(CATALOG)
     active_categories = sum(
         1
@@ -844,6 +927,9 @@ def _category_view(
     key: str,
     page: int,
 ) -> tuple[str, InlineKeyboardMarkup]:
+    if key not in _visible_categories(owner_id):
+        return _main_text(owner_id), _main_keyboard(owner_id)
+
     commands = CATEGORIES.get(key, [])
     label, description = CATEGORY_META.get(
         key,
@@ -859,41 +945,27 @@ def _category_view(
     buttons = [
         InlineKeyboardButton(
             f"/{command}",
-            callback_data=_cb(
-                owner_id,
-                "cmd",
-                command,
-                key,
-                page,
-            ),
+            callback_data=_cb(owner_id, "cmd", command, key, page),
         )
         for command in subset
+        if _command_visible(owner_id, command)
     ]
 
     rows = _rows(buttons, 2)
-
     nav: list[InlineKeyboardButton] = []
 
     if page > 0:
         nav.append(
             InlineKeyboardButton(
                 "⬅️",
-                callback_data=_cb(
-                    owner_id,
-                    "cat",
-                    key,
-                    page - 1,
-                ),
+                callback_data=_cb(owner_id, "cat", key, page - 1),
             )
         )
 
     nav.append(
         InlineKeyboardButton(
             f"{page + 1}/{pages}",
-            callback_data=_cb(
-                owner_id,
-                "noop",
-            ),
+            callback_data=_cb(owner_id, "noop"),
         )
     )
 
@@ -901,12 +973,7 @@ def _category_view(
         nav.append(
             InlineKeyboardButton(
                 "➡️",
-                callback_data=_cb(
-                    owner_id,
-                    "cat",
-                    key,
-                    page + 1,
-                ),
+                callback_data=_cb(owner_id, "cat", key, page + 1),
             )
         )
 
@@ -937,32 +1004,12 @@ def _command_view(
 ) -> tuple[str, InlineKeyboardMarkup]:
     item = CATALOG.get(command)
 
-    if item is None:
-        return (
-            "Không tìm thấy lệnh này trong catalog hiện tại.",
-            InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "🏠 Command Center",
-                            callback_data=_cb(owner_id, "main"),
-                        )
-                    ]
-                ]
-            ),
-        )
+    if item is None or not _command_visible(owner_id, command):
+        return _main_text(owner_id), _main_keyboard(owner_id)
 
     aliases = item["aliases"]
-    aliases_text = (
-        ", ".join(f"/{x}" for x in aliases)
-        if aliases
-        else "Không"
-    )
-
-    source_text = ", ".join(
-        Path(x).name
-        for x in item["sources"][:4]
-    )
+    aliases_text = ", ".join(f"/{x}" for x in aliases) if aliases else "Không"
+    source_text = ", ".join(Path(x).name for x in item["sources"][:4])
 
     text = (
         f"/{item['name']}\n\n"
@@ -980,12 +1027,7 @@ def _command_view(
             [
                 InlineKeyboardButton(
                     "⬅️ Danh mục",
-                    callback_data=_cb(
-                        owner_id,
-                        "cat",
-                        back_key,
-                        back_page,
-                    ),
+                    callback_data=_cb(owner_id, "cat", back_key, back_page),
                 ),
                 InlineKeyboardButton(
                     "🏠 Menu",
@@ -994,7 +1036,6 @@ def _command_view(
             ]
         ]
     )
-
     return text, keyboard
 
 
@@ -1003,10 +1044,11 @@ def _search_results(
     query: str,
 ) -> tuple[str, InlineKeyboardMarkup]:
     needle = query.casefold().strip()
-
     matches: list[str] = []
 
     for command, item in CATALOG.items():
+        if not _command_visible(owner_id, command):
+            continue
         haystack = " ".join(
             [
                 command,
@@ -1019,7 +1061,6 @@ def _search_results(
                 )[0],
             ]
         ).casefold()
-
         if needle in haystack:
             matches.append(command)
 
@@ -1029,21 +1070,16 @@ def _search_results(
             _strip_suffix(x).casefold(),
         )
     )
-
     matches = matches[:SEARCH_LIMIT]
 
     if not matches:
         return (
             f"Không tìm thấy lệnh khớp với: {query}",
             InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "🏠 Command Center",
-                            callback_data=_cb(owner_id, "main"),
-                        )
-                    ]
-                ]
+                [[InlineKeyboardButton(
+                    "🏠 Command Center",
+                    callback_data=_cb(owner_id, "main"),
+                )]]
             ),
         )
 
@@ -1060,17 +1096,13 @@ def _search_results(
         )
         for command in matches
     ]
-
     rows = _rows(buttons, 2)
     rows.append(
-        [
-            InlineKeyboardButton(
-                "🏠 Command Center",
-                callback_data=_cb(owner_id, "main"),
-            )
-        ]
+        [InlineKeyboardButton(
+            "🏠 Command Center",
+            callback_data=_cb(owner_id, "main"),
+        )]
     )
-
     return (
         f"🔎 Kết quả cho: {query}\n"
         f"Tìm thấy {len(matches)} lệnh phù hợp.",
@@ -1199,15 +1231,13 @@ async def _edit(query, text: str, keyboard) -> None:
 
 async def command_center(_, message) -> None:
     owner_id = int(message.from_user.id)
-
     await message.reply_text(
-        _main_text(),
+        _main_text(owner_id),
         reply_markup=_main_keyboard(owner_id),
         quote=True,
         parse_mode=None,
         disable_web_page_preview=True,
     )
-
     message.stop_propagation()
 
 
@@ -1218,26 +1248,22 @@ async def command_search(_, message) -> None:
 
     if len(parts) < 2 or not parts[1].strip():
         await message.reply_text(
-            f"Dùng /{SEARCH_COMMAND} <từ_khóa>\n"
-            f"Ví dụ: /{SEARCH_COMMAND} boss",
+            _main_text(owner_id),
+            reply_markup=_main_keyboard(owner_id),
             quote=True,
             parse_mode=None,
+            disable_web_page_preview=True,
         )
         message.stop_propagation()
         return
 
-    text, keyboard = _search_results(
-        owner_id,
-        parts[1].strip(),
-    )
-
+    text, keyboard = _search_results(owner_id, parts[1].strip())
     await message.reply_text(
         text,
         reply_markup=keyboard,
         quote=True,
         parse_mode=None,
     )
-
     message.stop_propagation()
 
 
@@ -1248,46 +1274,36 @@ async def command_detail(_, message) -> None:
 
     if len(parts) < 2 or not parts[1].strip():
         await message.reply_text(
-            f"Dùng /{DETAIL_COMMAND} <tên_lệnh>\n"
-            f"Ví dụ: /{DETAIL_COMMAND} mirror",
+            _main_text(owner_id),
+            reply_markup=_main_keyboard(owner_id),
             quote=True,
             parse_mode=None,
+            disable_web_page_preview=True,
         )
         message.stop_propagation()
         return
 
     query = parts[1].strip().lstrip("/")
     suffix = str(getattr(Config, "CMD_SUFFIX", "") or "")
-
     candidates = [query]
-
     if suffix and not query.endswith(suffix):
         candidates.append(query + suffix)
 
-    command = next(
-        (x for x in candidates if x in CATALOG),
-        "",
-    )
-
+    command = next((x for x in candidates if x in CATALOG), "")
     if not command:
-        # Resolve aliases.
         for primary, item in CATALOG.items():
             if query in item["aliases"]:
                 command = primary
                 break
 
-    if not command:
-        text, keyboard = _search_results(
-            owner_id,
-            query,
-        )
+    if command and not _command_visible(owner_id, command):
+        text, keyboard = _main_text(owner_id), _main_keyboard(owner_id)
+    elif not command:
+        text, keyboard = _search_results(owner_id, query)
     else:
         item = CATALOG[command]
         text, keyboard = _command_view(
-            owner_id,
-            command,
-            item["category"],
-            0,
+            owner_id, command, item["category"], 0
         )
 
     await message.reply_text(
@@ -1296,7 +1312,6 @@ async def command_detail(_, message) -> None:
         quote=True,
         parse_mode=None,
     )
-
     message.stop_propagation()
 
 
@@ -1427,7 +1442,6 @@ async def clear_notes_command(_, message) -> None:
 
 async def command_center_callback(_, query) -> None:
     data = str(getattr(query, "data", "") or "")
-
     if not data.startswith("acui:"):
         return
 
@@ -1450,35 +1464,42 @@ async def command_center_callback(_, query) -> None:
         return
 
     action = parts[2]
-    await query.answer()
 
     if action == "noop":
+        await query.answer()
         return
 
+    if not _is_owner(owner_id) and action in {
+        "refresh", "searchhelp", "notes", "noteadd", "noteclear", "noteclear_yes"
+    }:
+        await query.answer("Mục này chỉ hiển thị cho Owner.", show_alert=True)
+        await _edit(query, _main_text(owner_id), _main_keyboard(owner_id))
+        return
+
+    if action == "cat" and len(parts) >= 4 and parts[3] not in _visible_categories(owner_id):
+        await query.answer("Danh mục này chỉ hiển thị cho Owner.", show_alert=True)
+        await _edit(query, _main_text(owner_id), _main_keyboard(owner_id))
+        return
+
+    if action == "cmd" and len(parts) >= 4 and not _command_visible(owner_id, parts[3]):
+        await query.answer("Lệnh này chỉ hiển thị cho Owner.", show_alert=True)
+        await _edit(query, _main_text(owner_id), _main_keyboard(owner_id))
+        return
+
+    await query.answer()
+
     if action == "main":
-        await _edit(
-            query,
-            _main_text(),
-            _main_keyboard(owner_id),
-        )
+        await _edit(query, _main_text(owner_id), _main_keyboard(owner_id))
         return
 
     if action == "refresh":
         global CATALOG, CATEGORIES
         CATALOG, CATEGORIES = _build_catalog()
-
         LOGGER.info(
             "ATRI_COMMAND_UI_REFRESH user=%s commands=%s categories=%s",
-            owner_id,
-            len(CATALOG),
-            len(CATEGORIES),
+            owner_id, len(CATALOG), len(CATEGORIES),
         )
-
-        await _edit(
-            query,
-            _main_text(),
-            _main_keyboard(owner_id),
-        )
+        await _edit(query, _main_text(owner_id), _main_keyboard(owner_id))
         return
 
     if action == "searchhelp":
@@ -1487,70 +1508,37 @@ async def command_center_callback(_, query) -> None:
             (
                 "🔎 Tìm lệnh\n\n"
                 f"Dùng /{SEARCH_COMMAND} <từ_khóa>\n"
-                f"Ví dụ:\n"
-                f"/{SEARCH_COMMAND} boss\n"
-                f"/{SEARCH_COMMAND} mirror\n"
-                f"/{SEARCH_COMMAND} ban\n\n"
-                f"Xem chi tiết trực tiếp:\n"
-                f"/{DETAIL_COMMAND} <tên_lệnh>"
+                f"Xem chi tiết: /{DETAIL_COMMAND} <tên_lệnh>"
             ),
-            InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "🏠 Command Center",
-                            callback_data=_cb(owner_id, "main"),
-                        )
-                    ]
-                ]
-            ),
+            InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🏠 Command Center", callback_data=_cb(owner_id, "main")
+            )]]),
         )
         return
 
     if action == "cat" and len(parts) >= 5:
         key = parts[3]
-
         try:
             page = int(parts[4])
         except Exception:
             page = 0
-
-        text, keyboard = _category_view(
-            owner_id,
-            key,
-            page,
-        )
-
+        text, keyboard = _category_view(owner_id, key, page)
         await _edit(query, text, keyboard)
         return
 
     if action == "cmd" and len(parts) >= 6:
         command = parts[3]
         key = parts[4]
-
         try:
             page = int(parts[5])
         except Exception:
             page = 0
-
-        text, keyboard = _command_view(
-            owner_id,
-            command,
-            key,
-            page,
-        )
-
+        text, keyboard = _command_view(owner_id, command, key, page)
         await _edit(query, text, keyboard)
         return
 
-    if action in {
-        "notes",
-        "noteadd",
-        "noteclear",
-        "noteclear_yes",
-    }:
+    if action in {"notes", "noteadd", "noteclear", "noteclear_yes"}:
         message = getattr(query, "message", None)
-
         if message is None or not _is_private(message):
             await query.answer(
                 "Notes cá nhân chỉ mở trong chat riêng với bot.",
@@ -1577,12 +1565,10 @@ async def command_center_callback(_, query) -> None:
 
     if action == "noteclear":
         total = await _db(_count_notes_sync, owner_id)
-
         if total <= 0:
             text, keyboard = await _notes_view(owner_id)
             await _edit(query, text, keyboard)
             return
-
         await _edit(
             query,
             f"Xóa toàn bộ {total} note cá nhân?",
@@ -1591,21 +1577,11 @@ async def command_center_callback(_, query) -> None:
         return
 
     if action == "noteclear_yes":
-        deleted = await _db(
-            _clear_notes_sync,
-            owner_id,
-        )
-
-        LOGGER.info(
-            "ATRI_NOTE_CLEAR user=%s deleted=%s",
-            owner_id,
-            deleted,
-        )
-
+        deleted = await _db(_clear_notes_sync, owner_id)
+        LOGGER.info("ATRI_NOTE_CLEAR user=%s deleted=%s", owner_id, deleted)
         await _edit(
             query,
-            f"🗑 Đã xóa {deleted} note.\n\n"
-            "Danh sách hiện đang trống.",
+            f"🗑 Đã xóa {deleted} note.\n\nDanh sách hiện đang trống.",
             _notes_keyboard(owner_id),
         )
 

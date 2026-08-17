@@ -20,8 +20,13 @@ class TelegraphHelper:
                 author_name=self._author_name,
                 author_url=self._author_url,
             )
+            LOGGER.info("Telegraph Account ready")
         except Exception as e:
-            LOGGER.error(f"Failed to create Telegraph Account: {e}")
+            LOGGER.exception(
+                "Failed to create Telegraph Account: %s (%r)",
+                type(e).__name__,
+                e,
+            )
 
     async def create_page(self, title, content):
         try:

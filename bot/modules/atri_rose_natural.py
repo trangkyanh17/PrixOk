@@ -9,6 +9,7 @@ from pyrogram.handlers import MessageHandler
 
 from bot import LOGGER
 from bot.modules.atri_ai import (
+    atri_accept_message,
     reply_after_external_action,
 )
 from bot.modules.atri_rose import (
@@ -1027,6 +1028,18 @@ async def atri_rose_natural_message(
         )
         or ""
     ).strip()
+
+    # ATRI_ROSE_DIRECT_INVOCATION_V161
+    if not await atri_accept_message(client, message):
+        return
+
+    bot_user = getattr(client, "me", None)
+    bot_username = str(getattr(bot_user, "username", "") or "").strip()
+    if bot_username:
+        text = re.sub(rf"@{re.escape(bot_username)}\b", "Atri", text, flags=re.IGNORECASE)
+    _, called_atri = _strip_atri_call(text)
+    if not called_atri:
+        text = "Atri " + text
 
     try:
         command_text, explicit_target = _extract_explicit_target(

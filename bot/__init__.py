@@ -1,6 +1,22 @@
 from uvloop import install
 
 install()
+
+# SENTRY_RUNTIME_INIT_V1
+from os import environ
+import sentry_sdk
+
+_sentry_dsn = environ.get("SENTRY_DSN", "").strip()
+if _sentry_dsn:
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        send_default_pii=False,
+        enable_logs=True,
+        traces_sample_rate=0.1,
+        environment=environ.get("SENTRY_ENVIRONMENT", "production"),
+        release=environ.get("SENTRY_RELEASE") or None,
+    )
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from asyncio import Lock, new_event_loop, set_event_loop
 from logging import (

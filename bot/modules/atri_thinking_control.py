@@ -176,6 +176,38 @@ def thinking_status_text() -> str:
     )
 
 
+# ATRI_THINKING_CANONICAL_V162
+def set_thinking_policy(value: str) -> dict[str, Any]:
+    """Set the same state that resolve_thinking() actually consumes."""
+    normalized = str(value or "").strip().casefold()
+    if normalized == "default":
+        normalized = "auto"
+
+    with _LOCK:
+        state = _load_locked()
+
+        if normalized == "auto":
+            state["auto"] = True
+            state["levels"] = dict(AUTO_DEFAULTS)
+        elif normalized in PRESETS:
+            state["auto"] = False
+            state["levels"] = dict(PRESETS[normalized])
+        elif normalized in LEVELS:
+            state["auto"] = False
+            state["levels"] = {mode: normalized for mode in AUTO_DEFAULTS}
+        else:
+            raise ValueError(
+                "Dùng: auto/default, eco, balanced, max, minimal, low, medium, high"
+            )
+
+        state = _sanitize(state)
+        _save_locked(state)
+        return {
+            "auto": bool(state["auto"]),
+            "levels": dict(_effective_levels(state)),
+        }
+
+
 def _thinking_keyboard_base(owner_id: int) -> InlineKeyboardMarkup:
     state = get_thinking_control_state()
     effective = _effective_levels(state)
@@ -412,6 +444,9 @@ def add_atri_thinking_handlers(client) -> None:
     LOGGER.info(
         "Atri Thinking Control registered state=%s",
         STATE_PATH,
+    )
+    LOGGER.info(
+        "ATRI_MODEL_STACK_V162_INSTALLED thinking=canonical router=capability-aware"
     )
 
 

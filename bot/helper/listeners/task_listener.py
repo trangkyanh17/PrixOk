@@ -318,10 +318,14 @@ class TaskListener(TaskConfig):
             tg = TelegramUploader(self, up_dir)
             async with task_dict_lock:
                 task_dict[self.mid] = TelegramStatus(self, tg, gid, "up")
-            await gather(
-                update_status_message(self.message.chat.id),
-                tg.upload(),
-            )
+            # ATRI_MD_SILENT_UPLOAD_STATUS_V1642
+            if getattr(self, "is_media_direct", False):
+                await tg.upload()
+            else:
+                await gather(
+                    update_status_message(self.message.chat.id),
+                    tg.upload(),
+                )
             del tg
         elif self.is_buzzheavier:
             LOGGER.info(f"BuzzHeavier Upload Name: {self.name}")
@@ -376,7 +380,8 @@ class TaskListener(TaskConfig):
             await database.rm_complete_task(self.message.link)
         msg = f"<b>Name: </b><code>{escape(self.name)}</code>\n\n<b>Size: </b>{get_readable_file_size(self.size)}"
         LOGGER.info(f"Task Done: {self.name}")
-        if self.is_leech:
+        # ATRI_MD_SILENT_COMPLETION_SUMMARY_V1642
+        if self.is_leech and not getattr(self, "is_media_direct", False):
             msg += f"\n<b>Total Files: </b>{folders}"
             if mime_type != 0:
                 msg += f"\n<b>Corrupted Files: </b>{mime_type}"
@@ -393,7 +398,7 @@ class TaskListener(TaskConfig):
                         fmsg = ""
                 if fmsg != "":
                     await send_message(self.message, msg + fmsg)
-        else:
+        elif not self.is_leech:
             msg += f"\n\n<b>Type: </b>{mime_type}"
             if mime_type == "Folder":
                 msg += f"\n<b>SubFolders: </b>{folders}"

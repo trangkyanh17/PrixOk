@@ -15,6 +15,7 @@ from ...ext_utils.files_utils import (
     get_mime_type,
     count_files_and_folders,
 )
+from ...ext_utils.status_utils import get_readable_file_size, get_readable_time
 
 LOGGER = getLogger(__name__)
 
@@ -27,7 +28,13 @@ class RcloneTransferHelper:
         self._eta = "-"
         self._percentage = "0%"
         self._speed = "0 B/s"
-        self._size = "0 B"
+        self._total_bytes = max(
+            0,
+            int(getattr(listener, "size", 0) or 0),
+        )
+        self._size = get_readable_file_size(
+            self._total_bytes
+        )
         self._is_download = False
         self._is_upload = False
         self._sa_count = 1
@@ -56,26 +63,140 @@ class RcloneTransferHelper:
     def size(self):
         return self._size
 
+    @staticmethod
+    def _progress_number(value) -> float:
+        try:
+            return max(0.0, float(value or 0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _apply_json_stats(self, stats) -> bool:
+        if not isinstance(stats, dict):
+            return False
+
+        transferred = self._progress_number(stats.get("bytes"))
+        total = self._progress_number(stats.get("totalBytes"))
+        speed = self._progress_number(stats.get("speed"))
+        eta = stats.get("eta")
+
+        active = stats.get("transferring")
+        if isinstance(active, list) and active:
+            active_bytes = sum(
+                self._progress_number(item.get("bytes"))
+                for item in active
+                if isinstance(item, dict)
+            )
+            active_total = sum(
+                self._progress_number(item.get("size"))
+                for item in active
+                if isinstance(item, dict)
+            )
+            active_speed = sum(
+                self._progress_number(
+                    item.get("speed")
+                    or item.get("speedAvg")
+                )
+                for item in active
+                if isinstance(item, dict)
+            )
+
+            if transferred <= 0 and active_bytes > 0:
+                transferred = active_bytes
+            if total <= 0 and active_total > 0:
+                total = active_total
+            if speed <= 0 and active_speed > 0:
+                speed = active_speed
+
+        if total <= 0:
+            total = float(self._total_bytes)
+        elif total > 0:
+            self._total_bytes = int(total)
+
+        self._transferred_size = get_readable_file_size(
+            transferred
+        )
+        if total > 0:
+            self._size = get_readable_file_size(total)
+            percentage = min(
+                100.0,
+                max(0.0, transferred * 100.0 / total),
+            )
+            self._percentage = (
+                f"{percentage:.1f}%"
+                if percentage % 1
+                else f"{int(percentage)}%"
+            )
+
+        self._speed = (
+            f"{get_readable_file_size(speed)}/s"
+            if speed > 0
+            else "0 B/s"
+        )
+
+        eta_seconds = self._progress_number(eta)
+        self._eta = (
+            get_readable_time(int(eta_seconds))
+            if eta_seconds > 0
+            else "-"
+        )
+        return True
+
     async def _progress(self):
         self._output_tail.clear()
-        while self._proc.returncode is None and not self._listener.is_cancelled:
+        while (
+            self._proc.returncode is None
+            and not self._listener.is_cancelled
+        ):
             try:
-                raw = await wait_for(self._proc.stdout.readline(), 65)
+                raw = await wait_for(
+                    self._proc.stdout.readline(),
+                    65,
+                )
             except TimeoutError:
-                LOGGER.warning("rclone produced no output for 65 seconds")
+                LOGGER.warning(
+                    "rclone produced no output for 65 seconds"
+                )
                 continue
+
             if not raw:
                 break
 
-            line = raw.decode(errors="replace").replace("\r", "").strip()
-            line = re_sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line)
+            line = (
+                raw.decode(errors="replace")
+                .replace("\r", "")
+                .strip()
+            )
+            line = re_sub(
+                r"\x1b\[[0-9;]*[A-Za-z]",
+                "",
+                line,
+            )
             if not line:
                 continue
-            self._output_tail.append(line)
+
+            try:
+                payload = loads(line)
+            except Exception:
+                payload = None
+
+            if isinstance(payload, dict):
+                message = str(payload.get("msg") or "").strip()
+                if message:
+                    self._output_tail.append(message)
+                else:
+                    self._output_tail.append(line)
+
+                if self._apply_json_stats(
+                    payload.get("stats")
+                ):
+                    continue
+            else:
+                self._output_tail.append(line)
 
             match = re_search(
-                r"Transferred:\s*([^/]+?)\s*/\s*([^,]+),\s*"
-                r"([\d.]+%)\s*,\s*([^,]+?/s)\s*,\s*ETA\s*(\S+)",
+                r"Transferred:\s*([^/]+?)\s*/\s*"
+                r"([^,]+),\s*([\d.]+%)\s*,\s*"
+                r"([^,]+?/s)\s*,\s*ETA\s*(\S+)",
                 line,
             )
             if match:
@@ -85,7 +206,10 @@ class RcloneTransferHelper:
                     self._percentage,
                     self._speed,
                     self._eta,
-                ) = (item.strip() for item in match.groups())
+                ) = (
+                    item.strip()
+                    for item in match.groups()
+                )
 
     def _process_error(self) -> str:
         return "\n".join(self._output_tail).strip()
@@ -246,6 +370,10 @@ class RcloneTransferHelper:
         if return_code == -9:
             return False
         elif return_code == 0:
+            if self._total_bytes > 0:
+                self._transferred_size = self._size
+                self._percentage = "100%"
+                self._eta = "0s"
             return True
         else:
             error = self._process_error()
@@ -468,6 +596,9 @@ class RcloneTransferHelper:
             "--stats",
             "1s",
             "--stats-one-line",
+            "--stats-log-level",
+            "NOTICE",
+            "--use-json-log",
             source,
             destination,
             "-L",

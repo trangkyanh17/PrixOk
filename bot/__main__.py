@@ -1,6 +1,7 @@
 from . import LOGGER, bot_loop
 from .core.telegram_manager import TgClient
 from .core.config_manager import Config
+from .modules.atri_network_egress_guard import install_atri_early_network_guard
 
 # ATRI_PRODUCTION_WORKER_SINGLETON_V133
 import fcntl as _atri_v133_fcntl
@@ -60,11 +61,8 @@ LOGGER.info(
     _ATRI_V133_AI_SHA256,
 )
 
-from .modules.atri_network_egress_guard import install_atri_early_network_guard
-
 Config.load()
-# MyJD/JDownloader can boot inside main(), so its redirect/proxy guard must be
-# installed before main() starts rather than waiting for Telegram handlers.
+# V155 MyJD guard must exist before main() can boot JDownloader.
 install_atri_early_network_guard()
 
 
@@ -130,8 +128,7 @@ from .modules.atri_capability_bootstrap import (
 
 add_aria2_callbacks()
 create_help_buttons()
-# V155 must install after core.handlers imports legacy modules but before their
-# Telegram handlers are registered, leaving no request-time unguarded window.
+# V155 public-egress guard must be active before request handlers.
 install_atri_network_egress_guard()
 # V157 patches the already-imported Atri handler/skill aliases before Telegram
 # registration so routing, permissions, project context and job tracking are

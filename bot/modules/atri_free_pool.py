@@ -11,6 +11,7 @@ from bot import LOGGER
 from .atri_provider_capabilities import (
     is_terminal_model_error,
     mark_model_unavailable,
+    model_status,
 )
 from .atri_provider_control import (
     naturalize_system_instruction,
@@ -63,14 +64,32 @@ _PROVIDER_DEFS: dict[str, dict[str, str]] = {
 }
 
 
-# ATRI_ACTIVE_TASK_ROUTER_V243_POOL
+# ATRI_MODEL_EXECUTOR_V162
 _PROVIDER_DEFS.update(
     {
-        "openrouter_gemma4": {
+        "openrouter_qwen3_coder": {
             "provider": "openrouter",
             "key_name": "OPENROUTER_API_KEY",
             "url": "https://openrouter.ai/api/v1/chat/completions",
-            "model": "google/gemma-4-26b-a4b-it:free",
+            "model": "qwen/qwen3-coder:free",
+        },
+        "openrouter_laguna_s": {
+            "provider": "openrouter",
+            "key_name": "OPENROUTER_API_KEY",
+            "url": "https://openrouter.ai/api/v1/chat/completions",
+            "model": "poolside/laguna-s-2.1:free",
+        },
+        "openrouter_laguna_xs": {
+            "provider": "openrouter",
+            "key_name": "OPENROUTER_API_KEY",
+            "url": "https://openrouter.ai/api/v1/chat/completions",
+            "model": "poolside/laguna-xs-2.1:free",
+        },
+        "openrouter_gemma31": {
+            "provider": "openrouter",
+            "key_name": "OPENROUTER_API_KEY",
+            "url": "https://openrouter.ai/api/v1/chat/completions",
+            "model": "google/gemma-4-31b-it:free",
         },
         "openrouter_north": {
             "provider": "openrouter",
@@ -84,6 +103,12 @@ _PROVIDER_DEFS.update(
             "url": "https://openrouter.ai/api/v1/chat/completions",
             "model": "nvidia/nemotron-3-super-120b-a12b:free",
         },
+        "openrouter_nemotron_ultra": {
+            "provider": "openrouter",
+            "key_name": "OPENROUTER_API_KEY",
+            "url": "https://openrouter.ai/api/v1/chat/completions",
+            "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        },
     }
 )
 
@@ -91,56 +116,70 @@ _ATRI_TASK_CHAINS: dict[str, tuple[str, ...]] = {
     "chat": (
         "groq_gptoss",
         "cerebras_gptoss",
-        "openrouter_gemma4",
         "openrouter_free",
     ),
+    # ATRI_ROUTER_REPAIR_V1624
+    # qwen/qwen3-coder:free returned terminal 404 on the live OpenRouter API.
+    # Keep automatic routing free-only: Laguna S is the coding primary.
     "coding": (
+        "openrouter_laguna_s",
+        "openrouter_north",
+        "openrouter_laguna_xs",
         "groq_gptoss",
         "cerebras_gptoss",
-        "openrouter_north",
     ),
     "coding_agentic": (
+        "openrouter_laguna_s",
         "openrouter_north",
+        "openrouter_laguna_xs",
         "groq_gptoss",
         "cerebras_gptoss",
     ),
     "research": (
+        # ATRI_RESEARCH_PRIMARY_REORDER_V1621122
         "groq_gptoss",
-        "openrouter_gemma4",
         "openrouter_nemotron_super",
+        "openrouter_gemma31",
+        "cerebras_gptoss",
     ),
     "research_long": (
+        "openrouter_nemotron_ultra",
         "openrouter_nemotron_super",
-        "openrouter_gemma4",
+        "openrouter_gemma31",
         "groq_gptoss",
     ),
 }
 
 _ATRI_TASK_FIXED_MODELS: dict[str, dict[str, str]] = {
     "chat": {
-        "groq_gptoss": "qwen/qwen3.6-27b",
+        "groq_gptoss": "openai/gpt-oss-120b",
         "cerebras_gptoss": "gpt-oss-120b",
-        "openrouter_gemma4": "google/gemma-4-26b-a4b-it:free",
         "openrouter_free": "openrouter/free",
     },
     "coding": {
+        "openrouter_laguna_s": "poolside/laguna-s-2.1:free",
+        "openrouter_north": "cohere/north-mini-code:free",
+        "openrouter_laguna_xs": "poolside/laguna-xs-2.1:free",
         "groq_gptoss": "qwen/qwen3.6-27b",
         "cerebras_gptoss": "gpt-oss-120b",
-        "openrouter_north": "cohere/north-mini-code:free",
     },
     "coding_agentic": {
+        "openrouter_laguna_s": "poolside/laguna-s-2.1:free",
         "openrouter_north": "cohere/north-mini-code:free",
+        "openrouter_laguna_xs": "poolside/laguna-xs-2.1:free",
         "groq_gptoss": "qwen/qwen3.6-27b",
         "cerebras_gptoss": "gpt-oss-120b",
     },
     "research": {
-        "groq_gptoss": "qwen/qwen3.6-27b",
-        "openrouter_gemma4": "google/gemma-4-26b-a4b-it:free",
         "openrouter_nemotron_super": "nvidia/nemotron-3-super-120b-a12b:free",
+        "openrouter_gemma31": "google/gemma-4-31b-it:free",
+        "groq_gptoss": "qwen/qwen3.6-27b",
+        "cerebras_gptoss": "gpt-oss-120b",
     },
     "research_long": {
+        "openrouter_nemotron_ultra": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "openrouter_nemotron_super": "nvidia/nemotron-3-super-120b-a12b:free",
-        "openrouter_gemma4": "google/gemma-4-26b-a4b-it:free",
+        "openrouter_gemma31": "google/gemma-4-31b-it:free",
         "groq_gptoss": "qwen/qwen3.6-27b",
     },
 }
@@ -466,7 +505,22 @@ async def _call_provider(
     text = _extract_response_text(data)
 
     if not text:
-        raise FreeProviderError("empty_text")
+        finish_reason = ""
+        reasoning_chars = 0
+        try:
+            choice = (data.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            finish_reason = str(choice.get("finish_reason") or "")
+            reasoning = message.get("reasoning")
+            if isinstance(reasoning, str):
+                reasoning_chars = len(reasoning)
+        except Exception:
+            pass
+        raise FreeProviderError(
+            "empty_text:"
+            f"finish={finish_reason or 'unknown'}:"
+            f"reasoning_chars={reasoning_chars}"
+        )
 
     return text
 
@@ -1073,8 +1127,16 @@ async def generate_free_chat(
     current_parts: list[dict[str, Any]],
     thinking_level: str = "medium",
     task_type: str = "chat",
+    exclude_models: set[str] | None = None,
 ) -> FreeReply | None:
     values = _config()
+
+    # ATRI_RESEARCH_PERFORMANCE_V16292
+    excluded_models = {
+        str(model or "").strip()
+        for model in (exclude_models or set())
+        if str(model or "").strip()
+    }
 
     if not _truthy(
         values.get("ATRI_FREE_POOL_ENABLED"),
@@ -1126,10 +1188,14 @@ async def generate_free_chat(
         chain = [manual_name]
     else:
         task_chain = list(_atri_task_chain(task_type))
-        if task_type == "coding_agentic":
-            chain = task_chain
-        else:
-            chain = _smart_order(task_chain, values)
+        # ATRI_TASK_SPECIALIST_ORDER_V162
+        # The old smart router moves Groq/Cerebras to the front. That is useful
+        # for generic chat, but defeats coding/research specialist priority.
+        chain = (
+            _smart_order(task_chain, values)
+            if task_type == "chat"
+            else task_chain
+        )
 
     LOGGER.info(
         "ATRI_TASK_ROUTER_ORDER task=%s provider_mode=%s order=%s",
@@ -1147,6 +1213,8 @@ async def generate_free_chat(
     )
     if provider_mode == "smart" and task_type == "chat":
         max_attempts = max(max_attempts, 4)
+    elif provider_mode == "smart":
+        max_attempts = max(max_attempts, 5)
     max_tokens = _dynamic_max_tokens(
         values,
         thinking_level,
@@ -1158,6 +1226,51 @@ async def generate_free_chat(
         5,
         60,
     )
+
+    research_hard_timeout = timeout_seconds
+    research_token_cap = max_tokens
+
+    if task_type == "research":
+        research_hard_timeout = min(
+            timeout_seconds,
+            _get_int(
+                values,
+                "ATRI_RESEARCH_HARD_TIMEOUT",
+                25,
+                8,
+                45,
+            ),
+        )
+        research_token_cap = min(
+            max_tokens,
+            _get_int(
+                values,
+                "ATRI_RESEARCH_MAX_TOKENS",
+                1024,
+                256,
+                2048,
+            ),
+        )
+        max_tokens = research_token_cap
+        LOGGER.info(
+            "ATRI_RESEARCH_BUDGET task=%s thinking=%s hard_timeout=%s max_tokens=%s",
+            task_type,
+            thinking_level,
+            research_hard_timeout,
+            research_token_cap,
+        )
+
+    elif task_type == "research_long":
+        research_hard_timeout = min(
+            timeout_seconds,
+            _get_int(
+                values,
+                "ATRI_RESEARCH_LONG_HARD_TIMEOUT",
+                35,
+                12,
+                60,
+            ),
+        )
 
     attempted = 0
     now = time.monotonic()
@@ -1187,6 +1300,24 @@ async def generate_free_chat(
                 spec["model"],
             )
 
+        # ATRI_DEAD_MODEL_SKIP_V162
+        if model_status(spec["provider"], spec["model"]) == "dead":
+            LOGGER.info(
+                "ATRI_FREE_PROVIDER_SKIP name=%s model=%s reason=audit_dead",
+                name,
+                spec["model"],
+            )
+            continue
+
+        if str(spec["model"]) in excluded_models:
+            LOGGER.info(
+                "ATRI_TASK_ROUTER_SKIP task=%s name=%s model=%s reason=excluded_previous_model",
+                task_type,
+                name,
+                spec["model"],
+            )
+            continue
+
         key = str(values.get(spec["key_name"], "")).strip()
         if not key:
             continue
@@ -1200,6 +1331,33 @@ async def generate_free_chat(
             thinking_level,
         )
 
+        # ATRI_RESEARCH_PROVIDER_THINKING_V16292
+        if (
+            task_type == "research"
+            and spec["provider"] in {"groq", "cerebras"}
+            and provider_thinking in {"medium", "high"}
+        ):
+            LOGGER.info(
+                "ATRI_RESEARCH_PROVIDER_THINKING provider=%s model=%s from=%s to=low",
+                spec["provider"],
+                spec["model"],
+                provider_thinking,
+            )
+            provider_thinking = "low"
+
+        # ATRI_PROVIDER_TOKEN_BUDGET_V1624
+        # Size completion from the actual provider-specific thinking level.
+        provider_max_tokens = max(
+            max_tokens,
+            _dynamic_max_tokens(values, provider_thinking),
+        )
+
+        if task_type == "research":
+            provider_max_tokens = min(
+                provider_max_tokens,
+                research_token_cap,
+            )
+
         attempted += 1
         started = time.monotonic()
 
@@ -1212,14 +1370,30 @@ async def generate_free_chat(
         )
 
         try:
-            text = await _call_provider(
+            _provider_call = _call_provider(
                 spec=spec,
                 api_key=key,
                 messages=messages,
                 thinking_level=provider_thinking,
-                max_tokens=max_tokens,
-                timeout_seconds=timeout_seconds,
+                max_tokens=provider_max_tokens,
+                timeout_seconds=min(
+                    timeout_seconds,
+                    research_hard_timeout,
+                ),
             )
+
+            if task_type in {"research", "research_long"}:
+                try:
+                    text = await asyncio.wait_for(
+                        _provider_call,
+                        timeout=float(research_hard_timeout),
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise FreeProviderError(
+                        f"hard_timeout:{research_hard_timeout}s"
+                    ) from exc
+            else:
+                text = await _provider_call
 
         except FreeProviderError as exc:
             status = exc.status_code

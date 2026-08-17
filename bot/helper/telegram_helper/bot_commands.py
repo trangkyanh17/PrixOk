@@ -8,6 +8,7 @@ class BotCommands:
     QbMirrorCommand = [f"qbmirror{i}", f"qm{i}"]
     JdMirrorCommand = [f"jdmirror{i}", f"jm{i}"]
     YtdlCommand = [f"ytdl{i}", f"y{i}"]
+    MediaDirectCommand = f"md{i}"
     GallerydlCommand = [f"gallerydl{i}", f"gdl{i}"]
     NzbMirrorCommand = [f"nzbmirror{i}", f"nm{i}"]
     LeechCommand = [f"leech{i}", f"l{i}"]

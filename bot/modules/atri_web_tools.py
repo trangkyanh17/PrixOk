@@ -9,7 +9,14 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from pyrogram.types import BotCommand
+from pyrogram.types import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+)
 
 from bot import LOGGER
 from bot.core.config_manager import Config
@@ -544,114 +551,32 @@ def _primary_command(value: Any) -> str:
     return ""
 
 
-def _menu_entries() -> list[tuple[str, str]]:
+def unified_bot_menu_entries() -> list[tuple[str, str]]:
+    # ATRI_TELEGRAM_COMMAND_MENU_V160
+    # Keep the Telegram slash menu intentionally small. Legacy commands remain
+    # registered by their original handlers and are reachable from /menu.
     suffix = _suffix()
-
-    entries: list[tuple[str, str]] = [
-        (
-            f"ai{suffix}",
-            "Hỏi Atri",
-        ),
-        (
-            f"atri{suffix}",
-            "Bật, tắt hoặc xem trạng thái Atri",
-        ),
-        (
-            f"resetai{suffix}",
-            "Xóa ngữ cảnh trò chuyện Atri",
-        ),
-        (
-            f"amodel{suffix}",
-            "Chọn model cho Atri",
-        ),
-        (
-            f"athink{suffix}",
-            "Chọn mức suy luận của Atri",
-        ),
-        (
-            f"websearch{suffix}",
-            "Tìm kiếm web, không dùng Gemini",
-        ),
-        (
-            f"weather{suffix}",
-            "Xem thời tiết, không dùng Gemini",
-        ),
-        (
-            f"stickerlearn{suffix}",
-            "Bật hoặc tắt học sticker",
-        ),
-        (
-            f"stickerreply{suffix}",
-            "Bật hoặc tắt gửi sticker",
-        ),
-        (
-            f"stickerchance{suffix}",
-            "Đặt xác suất gửi sticker",
-        ),
-        (
-            f"stickercooldown{suffix}",
-            "Đặt thời gian chờ sticker",
-        ),
-        (
-            f"stickerlimit{suffix}",
-            "Đặt giới hạn sticker",
-        ),
-        (
-            f"stickerstats{suffix}",
-            "Xem thống kê sticker",
-        ),
+    entries = [
+        (f"menu{suffix}", "Trung tâm điều khiển Atri"),
+        (f"ai{suffix}", "Hỏi Atri trực tiếp"),
+        (f"atri{suffix}", "Atri AI, model, thinking và provider"),
+        (f"transfer{suffix}", "Mirror và leech"),
+        (f"cloud{suffix}", "Cloud, Drive và tìm kiếm"),
+        (f"tasks{suffix}", "Theo dõi và điều khiển tác vụ"),
+        (f"tools{suffix}", "Web, thời tiết, lịch, nhắc việc và nhạc"),
+        (f"rose{suffix}", "Quản trị nhóm Atri Rose"),
+        (f"admin{suffix}", "Quản trị bot owner/sudo"),
+        (f"help{suffix}", "Hướng dẫn chi tiết"),
+    ]
+    return [
+        (command.casefold().lstrip("/"), description[:256])
+        for command, description in entries
+        if re.fullmatch(r"[a-z0-9_]{1,32}", command.casefold().lstrip("/"))
     ]
 
-    for attribute, value in vars(
-        BotCommands
-    ).items():
-        if attribute.startswith("_"):
-            continue
 
-        command = _primary_command(value)
-
-        if not command:
-            continue
-
-        description = _CORE_DESCRIPTIONS.get(
-            attribute,
-            f"Lệnh {command}",
-        )
-
-        entries.append(
-            (
-                command,
-                description,
-            )
-        )
-
-    unique: list[tuple[str, str]] = []
-    seen: set[str] = set()
-
-    for command, description in entries:
-        command = (
-            command.casefold().lstrip("/")
-        )
-
-        if not re.fullmatch(
-            r"[a-z0-9_]{1,32}",
-            command,
-        ):
-            continue
-
-        if command in seen:
-            continue
-
-        seen.add(command)
-
-        unique.append(
-            (
-                command,
-                description[:256],
-            )
-        )
-
-    return unique[:100]
+def _menu_entries() -> list[tuple[str, str]]:
+    return unified_bot_menu_entries()
 
 
 async def sync_bot_command_menu(
@@ -661,24 +586,35 @@ async def sync_bot_command_menu(
 
     try:
         commands = [
-            BotCommand(
-                command=command,
-                description=description,
-            )
-            for command, description
-            in _menu_entries()
+            BotCommand(command=command, description=description)
+            for command, description in _menu_entries()
         ]
 
-        await client.set_bot_commands(commands)
+        # ATRI_TELEGRAM_OWNER_MENU_V161
+        # Clear broad scopes first: regular users/groups get no slash-menu table.
+        for scope in (
+            BotCommandScopeDefault(),
+            BotCommandScopeAllPrivateChats(),
+            BotCommandScopeAllGroupChats(),
+            BotCommandScopeAllChatAdministrators(),
+        ):
+            await client.set_bot_commands([], scope=scope)
+
+        owner_id = int(getattr(Config, "OWNER_ID", 0) or 0)
+        if owner_id > 0:
+            await client.set_bot_commands(
+                commands,
+                scope=BotCommandScopeChat(chat_id=owner_id),
+            )
 
         LOGGER.info(
-            "Đã đồng bộ %s lệnh vào menu Telegram.",
-            len(commands),
+            "ATRI_TELEGRAM_MENU_V161 default=0 owner=%s owner_commands=%s",
+            owner_id,
+            len(commands) if owner_id > 0 else 0,
         )
     except Exception as exc:
         LOGGER.error(
-            "Không đồng bộ được menu lệnh "
-            "Telegram: %s",
+            "Không đồng bộ được menu lệnh Telegram V161: %s",
             exc,
             exc_info=True,
         )

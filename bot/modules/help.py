@@ -139,4 +139,18 @@ async def arg_usage(_, query):
 
 @new_task
 async def bot_help(_, message):
-    await send_message(message, MIRROR_HELP_TABLE)
+    # ATRI_COMMAND_CENTER_HELP_BUTTON_V1
+    buttons = ButtonMaker()
+    user = getattr(message, "from_user", None)
+
+    if user is not None:
+        buttons.data_button(
+            "📋 Command Center",
+            f"acui:{int(user.id)}:main",
+        )
+
+    await send_message(
+        message,
+        MIRROR_HELP_TABLE,
+        buttons.build_menu(),
+    )

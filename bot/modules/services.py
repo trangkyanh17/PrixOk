@@ -14,6 +14,15 @@ async def start(_, message):
         "Repo", "https://www.github.com/anasty17/mirror-leech-telegram-bot"
     )
     buttons.url_button("Code Owner", "https://t.me/anas_tayyar")
+
+    # ATRI_COMMAND_CENTER_START_BUTTON_V1
+    user = getattr(message, "from_user", None)
+    if user is not None:
+        buttons.data_button(
+            "📋 Command Center",
+            f"acui:{int(user.id)}:main",
+        )
+
     reply_markup = buttons.build_menu(2)
     if await CustomFilters.authorized(_, message):
         start_string = f"""

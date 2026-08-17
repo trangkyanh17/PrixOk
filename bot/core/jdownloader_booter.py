@@ -9,9 +9,10 @@ from .. import LOGGER
 from ..helper.ext_utils.bot_utils import cmd_exec, new_task
 from .telegram_manager import TgClient
 from .config_manager import Config
-from myjd import MyJdApi
+from myjd import MyJdApi, MYJDException
 
 
+# ATRI_MYJD_BASEEXCEPTION_RETRY_V1
 class JDownloader(MyJdApi):
     def __init__(self):
         super().__init__()
@@ -92,7 +93,7 @@ class JDownloader(MyJdApi):
                 break
             try:
                 await wait_for(self.device.ping(), timeout=3)
-            except Exception:
+            except (Exception, MYJDException):
                 await sleep(2)
                 continue
             self.is_connected = True
@@ -109,10 +110,47 @@ class JDownloader(MyJdApi):
 
         if stdout:
             LOGGER.info(f"JDownloader output:\n{stdout[-4000:]}")
-        if stderr:
-            LOGGER.error(f"JDownloader error:\n{stderr[-4000:]}")
 
-        if code != -9:
+        # JDownloader updater normally terminates the original JVM with code 0
+        # and starts a new "-afterupdate" JVM. Its shutdown log may be written
+        # to stderr even though this is not an error.
+        if code == 0:
+            if stderr:
+                LOGGER.info(
+                    "JDownloader updater/shutdown output:\n%s",
+                    stderr[-4000:],
+                )
+
+            LOGGER.info(
+                "JDownloader exited cleanly, waiting for post-update instance..."
+            )
+
+            for _ in range(45):
+                try:
+                    await wait_for(self.device.ping(), timeout=3)
+                except (Exception, MYJDException):
+                    await sleep(2)
+                    continue
+
+                self.is_connected = True
+                self.error = ""
+                LOGGER.info("JDownloader post-update instance is ready")
+                break
+
+            if not self.is_connected:
+                self.error = (
+                    "JDownloader exited cleanly but post-update API "
+                    "did not become ready within 90 seconds"
+                )
+                LOGGER.warning(self.error)
+
+        elif code == -9:
+            if stderr:
+                LOGGER.info(f"JDownloader terminated output:\n{stderr[-4000:]}")
+
+        else:
+            if stderr:
+                LOGGER.error(f"JDownloader error:\n{stderr[-4000:]}")
             self.error = f"JDownloader exited with code {code}"
             LOGGER.error(
                 f"{self.error}. Automatic restart disabled to prevent a loop."

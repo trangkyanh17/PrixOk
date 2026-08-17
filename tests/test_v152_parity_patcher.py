@@ -30,7 +30,7 @@ def make_live_tree(tmp_path: Path) -> Path:
     return live
 
 
-def test_apply_real_atri_ai_then_rollback_exactly(
+def test_apply_integrated_atri_ai_then_rollback_exactly(
     tmp_path: Path, parity_enable_file: Path
 ):
     live = make_live_tree(tmp_path)
@@ -38,9 +38,11 @@ def test_apply_real_atri_ai_then_rollback_exactly(
     original = ai.read_bytes()
     backup = tmp_path / "backup"
 
+    # V152 parity hooks are now part of the repository baseline. The patcher
+    # must recognize that state instead of trying to inject the hooks again.
     result = patcher.apply(ROOT, live, backup)
     assert result["applied"] is True
-    assert result["already_hooked"] is False
+    assert result["already_hooked"] is True
     assert parity_enable_file.is_file()
     patched = ai.read_text(encoding="utf-8")
     assert patcher.marker_state(patched) == (1, 1, 1, 1)
@@ -59,19 +61,20 @@ def test_apply_real_atri_ai_then_rollback_exactly(
     assert not parity_enable_file.exists()
 
 
-def test_apply_refuses_missing_anchor_without_mutation(
+def test_apply_refuses_partial_integrated_hooks_without_mutation(
     tmp_path: Path, parity_enable_file: Path
 ):
     live = make_live_tree(tmp_path)
     ai = live / "bot" / "modules" / "atri_ai.py"
     original = ai.read_text(encoding="utf-8").replace(
-        patcher.TOOL_OLD,
-        "# tool anchor intentionally changed\n",
+        "# ATRI_V152_DECISION_PARITY_TOOL_BOUNDARY\n",
+        "",
         1,
     )
     ai.write_text(original, encoding="utf-8")
+    assert patcher.marker_state(original) == (1, 1, 1, 0)
 
-    with pytest.raises(RuntimeError, match="tool boundary anchor"):
+    with pytest.raises(RuntimeError, match="partial V152 parity hooks"):
         patcher.apply(ROOT, live, tmp_path / "backup")
 
     assert ai.read_text(encoding="utf-8") == original
