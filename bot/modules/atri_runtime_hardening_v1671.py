@@ -8,12 +8,12 @@ _INSTALLED = False
 
 
 def install_atri_runtime_hardening_v1671() -> None:
-    """Install production-proven V167.1 runtime guards.
+    """Install production-proven V167.1 Semgrep runtime guards.
 
-    The bot-token Pyrogram session is configured in-memory in telegram_manager.
-    This hook makes Semgrep MCP startup fail fast instead of retrying forever
-    when its stdio server cannot initialize. A later real request can create a
-    fresh worker through the guarded request path.
+    V167.4 supersedes the old V167.1 in-memory bot-session policy: the Telegram
+    bot now keeps its authorized session on disk and handles startup FloodWait
+    inside the same worker. This hook remains responsible only for Semgrep MCP
+    fail-fast/reconnect behavior.
     """
 
     global _INSTALLED
