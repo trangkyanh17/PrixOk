@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -45,12 +47,16 @@ class _State:
         self.source_message = _Message()
 
 
+def _configure(module, tmp_path, ttl=600):
+    module.OUTPUT_CLAIM_DIR = tmp_path / "output-claims"
+    module.OUTPUT_CLAIM_TTL_SECONDS = ttl
+    module.OUTPUT_SWEEP_INTERVAL_SECONDS = max(30, ttl)
+    module._LAST_SWEEP_AT = 0.0
+
+
 def test_v1673_output_claim_is_atomic_and_message_scoped(tmp_path):
     module = _load_module()
-    module.OUTPUT_CLAIM_DIR = tmp_path / "output-claims"
-    module.OUTPUT_CLAIM_TTL_SECONDS = 600
-    module.OUTPUT_SWEEP_INTERVAL_SECONDS = 120
-    module._LAST_SWEEP_AT = 0.0
+    _configure(module, tmp_path)
 
     first, identity = module._claim_output_once(_Message())
     assert first is True
@@ -67,9 +73,7 @@ def test_v1673_output_claim_is_atomic_and_message_scoped(tmp_path):
 
 def test_v1673_state_owner_is_stable_across_thinking_and_final(tmp_path):
     module = _load_module()
-    module.OUTPUT_CLAIM_DIR = tmp_path / "output-claims"
-    module.OUTPUT_CLAIM_TTL_SECONDS = 600
-    module._LAST_SWEEP_AT = 0.0
+    _configure(module, tmp_path)
     logger = _Logger()
 
     owner = _State()
@@ -87,10 +91,7 @@ def test_v1673_state_owner_is_stable_across_thinking_and_final(tmp_path):
 
 def test_v1673_stale_output_claim_can_be_reclaimed(tmp_path):
     module = _load_module()
-    module.OUTPUT_CLAIM_DIR = tmp_path / "output-claims"
-    module.OUTPUT_CLAIM_TTL_SECONDS = 30
-    module.OUTPUT_SWEEP_INTERVAL_SECONDS = 30
-    module._LAST_SWEEP_AT = 0.0
+    _configure(module, tmp_path, ttl=30)
 
     first, identity = module._claim_output_once(_Message())
     assert first is True
@@ -104,6 +105,53 @@ def test_v1673_stale_output_claim_can_be_reclaimed(tmp_path):
     assert reclaimed is True
 
 
+def test_v1673_concurrent_stale_reclaim_has_exactly_one_winner(tmp_path):
+    module = _load_module()
+    _configure(module, tmp_path, ttl=30)
+
+    first, identity = module._claim_output_once(_Message())
+    assert first is True
+    assert identity is not None
+
+    claim = module._claim_path(identity)
+    old = max(1, int(claim.stat().st_mtime) - 120)
+    os.utime(claim, (old, old))
+
+    barrier = threading.Barrier(3)
+
+    def contender():
+        barrier.wait(timeout=5)
+        return module._claim_output_once(_Message())[0]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(contender) for _ in range(2)]
+        barrier.wait(timeout=5)
+        results = [future.result(timeout=5) for future in futures]
+
+    assert sorted(results) == [False, True]
+
+
+def test_v1673_failed_claim_write_fails_open_and_removes_partial(tmp_path, monkeypatch):
+    module = _load_module()
+    _configure(module, tmp_path)
+
+    real_write = module.os.write
+
+    def fail_write(fd, payload):
+        raise OSError("simulated claim write failure")
+
+    monkeypatch.setattr(module.os, "write", fail_write)
+    accepted, identity = module._claim_output_once(_Message())
+
+    assert accepted is True
+    assert identity is not None
+    assert module._claim_path(identity).exists() is False
+
+    monkeypatch.setattr(module.os, "write", real_write)
+    accepted_again, _ = module._claim_output_once(_Message())
+    assert accepted_again is True
+
+
 def test_v1673_install_order_and_output_boundary_contract():
     main = Path("bot/__main__.py").read_text(encoding="utf-8")
     source = Path(
@@ -115,7 +163,8 @@ def test_v1673_install_order_and_output_boundary_contract():
     handlers = main.index("add_handlers()", output)
 
     assert ingress < output < handlers
-    assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL" in source
+    assert "fcntl.flock(fd, fcntl.LOCK_EX)" in source
+    assert "_safe_unlink_same_inode" in source
     assert "cls.show_thinking = show_thinking_guarded" in source
     assert "cls.finalize = finalize_guarded" in source
     assert "cls.finalize_error = finalize_error_guarded" in source
