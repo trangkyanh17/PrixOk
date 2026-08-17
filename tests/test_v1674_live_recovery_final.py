@@ -26,6 +26,18 @@ def test_live_recovery_follows_app_symlink_for_persistent_session():
     assert "persistent session not found through symlink-safe find -L /app" in text
 
 
+def test_live_recovery_uses_the_real_exact_main_watchdog_log():
+    text = source()
+    assert 'MAIN_LIVE_LOG="$HOST_HOME/.atri-v150-main-live.log"' in text
+    assert "SUPERVISOR_START pid=[0-9]+" in text
+
+
+def test_live_recovery_allows_runtime_generated_config_dirt_but_not_bot_source_dirt():
+    text = source()
+    assert "git status --porcelain -- bot rewrite" in text
+    assert "git diff --quiet && git diff --cached --quiet" not in text
+
+
 def test_live_recovery_is_not_another_source_cutover():
     text = source()
     assert not re.search(r"git\s+(pull|reset|checkout|clean)\b", text)
@@ -36,9 +48,8 @@ def test_live_recovery_is_not_another_source_cutover():
 
 def test_live_recovery_exercises_bot_and_supervisor_recovery_once():
     text = source()
-    assert 'tmux kill-session -t "$BOT_SESSION"' in text
-    assert 'kill -TERM "$old_sup"' in text
-    assert "SUPERVISOR_START pid=" in text
+    assert text.count('tmux kill-session -t "$BOT_SESSION"') == 2  # self-test marker + live action
+    assert text.count('kill -TERM "$old_sup"') == 2  # self-test marker + live action
     assert "BOT_SESSION_RECOVERY=" in text
     assert "SUPERVISOR_RECOVERY=" in text
     assert "ATRI_V1674_LIVE_RECOVERY=PASS" in text
