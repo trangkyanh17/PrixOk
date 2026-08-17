@@ -26,6 +26,7 @@ class TgClient:
             proxy=Config.TG_PROXY,
             bot_token=Config.BOT_TOKEN,
             workdir="/app",
+            in_memory=True,
             parse_mode=enums.ParseMode.HTML,
             max_concurrent_transmissions=10,
             max_message_cache_size=15000,

@@ -143,6 +143,13 @@ add_capability_runtime_handlers(TgClient.bot)
 install_atri_system_post_import_guard()
 add_v150_shadow_handlers(TgClient.bot)
 
+# V167.1 installs production-proven runtime guards before MCP prewarm starts.
+from .modules.atri_runtime_hardening_v1671 import (
+    install_atri_runtime_hardening_v1671,
+)
+
+install_atri_runtime_hardening_v1671()
+
 # Warm Semgrep MCP in the background during bot startup so users do not
 # pay uvx/MCP initialization latency on their first Semgrep request.
 from .modules.atri_tools.code_plugins import (
