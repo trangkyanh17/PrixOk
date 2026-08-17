@@ -16,7 +16,16 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import service_account
 
 from bot import LOGGER
+from bot.modules.atri_trace import (
+    begin_trace as _atri_trace_begin_v16261,
+    end_trace as _atri_trace_end_v16261,
+    install_trace_logging as _atri_trace_install_v16261,
+)
 from bot.core.config_manager import Config
+
+# ATRI_TRACE_OBSERVABILITY_V16261
+_atri_trace_install_v16261(LOGGER)
+LOGGER.info("ATRI_TRACE_OBSERVABILITY_V16261_INSTALLED")
 
 from bot.modules.atri_web_router import (
     choose_atri_mode,
@@ -55,10 +64,18 @@ from bot.modules.atri_runtime import (
     get_runtime_state,
     get_runtime_thinking,
     set_runtime_model,
-    set_runtime_thinking,
 )
 
 from bot.modules.atri_free_pool import generate_free_chat
+# ATRI_VISUAL_RESPONSE_STATES_V165
+from bot.modules.atri_response_states import AtriResponseState
+
+from bot.modules.atri_v152_parity import (
+    publish_route_decision as _v152_publish_route_decision,
+    publish_tool_observation as _v152_publish_tool_observation,
+    publish_vertex_plan as _v152_publish_vertex_plan,
+    tool_profile_for_mode as _v152_tool_profile_for_mode,
+)
 
 from bot.modules.atri_provider_control import (
     provider_status_text,
@@ -68,6 +85,7 @@ from bot.modules.atri_provider_control import (
 
 from bot.modules.atri_thinking_control import (
     resolve_thinking,
+    set_thinking_policy,
     thinking_keyboard,
     thinking_status_text,
 )
@@ -629,26 +647,68 @@ _GROUNDING_REDIRECT_FRAGMENT = (
 )
 
 
+# ATRI_TELEGRAM_PLAIN_REPLY_CLEANUP_V16531
 def _clean_public_answer(text: str) -> str:
-    """Hide automatic research metadata while preserving the actual answer."""
+    """Return stable Telegram plain text without visible Markdown syntax."""
     value = str(text or "").strip()
     if not value:
         return ""
 
-    # Remove an automatically generated source section from its heading onward.
     match = _RESEARCH_SOURCE_HEADING_RE.search(value)
     if match:
         value = value[:match.start()].rstrip()
 
     clean_lines: list[str] = []
-    for line in value.splitlines():
+    for raw_line in value.splitlines():
+        line = raw_line.rstrip()
         folded = line.casefold()
+
         if _GROUNDING_REDIRECT_FRAGMENT in folded:
             continue
+
+        if re.match(
+            r"^[ \t]*(?:`{3,}|~{3,})(?:[A-Za-z0-9_+.-]+)?[ \t]*$",
+            line,
+        ):
+            continue
+
+        if re.match(
+            r"^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$",
+            line,
+        ):
+            continue
+
+        line = re.sub(r"^[ \t]*#{1,6}[ \t]+", "", line)
+        line = re.sub(r"^[ \t]*>[ \t]?", "", line)
+        line = re.sub(r"^([ \t]*)[*+][ \t]+", r"\1- ", line)
         clean_lines.append(line)
 
     value = "\n".join(clean_lines).strip()
+
+    value = re.sub(
+        r"!\[([^\]]*)\]\((https?://[^\s)]+)(?:\s+\"[^\"]*\")?\)",
+        lambda m: (
+            f"{m.group(1).strip()} ({m.group(2)})"
+            if m.group(1).strip()
+            else m.group(2)
+        ),
+        value,
+    )
+    value = re.sub(
+        r"\[([^\]]+)\]\((https?://[^\s)]+)(?:\s+\"[^\"]*\")?\)",
+        lambda m: f"{m.group(1).strip()} ({m.group(2)})",
+        value,
+    )
+
+    value = value.replace("`", "")
+    value = re.sub(r"\*\*([^\n*]+?)\*\*", r"\1", value)
+    value = re.sub(r"__([^\n_]+?)__", r"\1", value)
+    value = re.sub(r"~~([^\n~]+?)~~", r"\1", value)
+    value = re.sub(r"(?<!\*)\*([^\n*]+?)\*(?!\*)", r"\1", value)
+    value = re.sub(r"\*{2,}", "", value)
+    value = re.sub(r"(?m)^[ \t]*#{1,6}[ \t]+", "", value)
     value = re.sub(r"(?m)^[ \t]*[-•*][ \t]*$", "", value)
+    value = "\n".join(line.rstrip() for line in value.splitlines())
     value = re.sub(r"\n{3,}", "\n\n", value)
     return value.strip()
 
@@ -700,16 +760,48 @@ async def _vertex_generate_vertex(
         "GOOGLE_CLOUD_PROJECT"
     )
     location = _setting("VERTEX_LOCATION", "global")
-    model = get_runtime_model()
-    if mode == "code":
-        model = "gemini-3.6-flash"
+    runtime_model_v152 = get_runtime_model()
+    base_model_v152 = (
+        "gemini-3.6-flash"
+        if mode == "code"
+        else runtime_model_v152
+    )
+    model = base_model_v152
     # ATRI_THINKING_CONTROL_V2
-    thinking_level = resolve_thinking(mode)
+    base_thinking_v152 = resolve_thinking(mode)
+    thinking_level = base_thinking_v152
     # ATRI_PROVIDER_VERTEX_CONTROL_V1
     model = resolve_provider_model("vertex", model)
     thinking_level = resolve_provider_thinking(
         "vertex",
         thinking_level,
+    )
+
+    # ATRI_V152_DECISION_PARITY_PLAN
+    from bot.modules.atri_provider_control import (
+        provider_control_state as _v152_provider_control_state,
+    )
+    from bot.modules.atri_thinking_control import (
+        get_thinking_control_state as _v152_get_thinking_control_state,
+    )
+
+    _v152_thinking_state = _v152_get_thinking_control_state()
+    _v152_provider_state = _v152_provider_control_state()
+    _v152_vertex_state = dict(
+        (_v152_provider_state.get("providers") or {}).get("vertex") or {}
+    )
+    _v152_publish_vertex_plan(
+        mode=mode,
+        runtime_model=runtime_model_v152,
+        base_model=base_model_v152,
+        resolved_model=model,
+        thinking_auto=bool(_v152_thinking_state.get("auto", True)),
+        thinking_levels=dict(_v152_thinking_state.get("levels") or {}),
+        base_thinking=base_thinking_v152,
+        provider_model=str(_v152_vertex_state.get("model") or "auto"),
+        provider_thinking=str(_v152_vertex_state.get("thinking") or "auto"),
+        resolved_thinking=thinking_level,
+        tool_profile=_v152_tool_profile_for_mode(mode),
     )
 
     adaptive_thinking = _setting(
@@ -1524,6 +1616,13 @@ async def _vertex_generate_vertex(
             name = str(function_call.get("name") or "").strip()
             arguments = function_call.get("args") or {}
 
+            # ATRI_V152_DECISION_PARITY_TOOL_BOUNDARY
+            _v152_publish_tool_observation(
+                mode=mode,
+                tool_profile=_v152_tool_profile_for_mode(mode),
+                tool_name=name,
+            )
+
             if not isinstance(arguments, dict):
                 arguments = {}
 
@@ -1741,6 +1840,7 @@ async def _vertex_generate_vertex(
 
 
 # ATRI_FREE_POOL_WRAPPER_V2
+# ATRI_MODEL_ROUTER_V162
 
 # ATRI_ACTIVE_TASK_ROUTER_V243_AI
 def _atri_free_privacy_gate(
@@ -1752,8 +1852,10 @@ def _atri_free_privacy_gate(
     raw = str(text or "")
     folded = raw.casefold()
 
-    if str(mode or "").casefold() != "chat":
-        return False, "mode_not_chat"
+    # ATRI_PUBLIC_WORKER_PRIVACY_V162
+    normalized_mode = str(mode or "").casefold()
+    if normalized_mode not in {"chat", "code"}:
+        return False, "mode_not_public_worker"
 
     if not raw.strip():
         return False, "empty"
@@ -1940,6 +2042,65 @@ _ATRI_WORKER_TASKS_V25 = frozenset(
         "research_long",
     }
 )
+
+
+# ATRI_VERTEX_OUTAGE_FALLBACK_V162
+async def _atri_public_chat_outage_fallback(
+    *,
+    raw_text: str,
+    current_parts: list[dict[str, Any]],
+    message,
+    error: VertexRequestError,
+) -> str:
+    status = getattr(error, "status_code", None)
+    reason = str(getattr(error, "reason", "") or "").upper()
+    if status not in {429, 500, 502, 503, 504} and reason != "NETWORK_ERROR":
+        return ""
+
+    if (
+        message is None
+        or getattr(message, "reply_to_message", None) is not None
+        or len(current_parts) != 1
+        or not isinstance(current_parts[0], dict)
+        or set(current_parts[0]).difference({"text"})
+        or not isinstance(current_parts[0].get("text"), str)
+    ):
+        return ""
+
+    allowed, gate_reason = _atri_free_privacy_gate(raw_text, "chat")
+    if not allowed:
+        LOGGER.info(
+            "ATRI_VERTEX_FALLBACK_SKIP reason=%s",
+            gate_reason,
+        )
+        return ""
+
+    try:
+        reply = await generate_free_chat(
+            system_instruction=(
+                "Bạn là fallback response engine của Atri khi Vertex tạm lỗi. "
+                "Chỉ trả lời yêu cầu hiện tại bằng ngôn ngữ tự nhiên của người dùng. "
+                "Không tuyên bố đã dùng tool, bộ nhớ, tài khoản hay dữ liệu riêng tư. "
+                "Không nhắc tới cơ chế fallback hoặc provider trừ khi được hỏi."
+            ),
+            history=[],
+            current_parts=[{"text": raw_text}],
+            thinking_level=resolve_thinking("chat"),
+            task_type="chat",
+        )
+    except Exception:
+        LOGGER.exception("ATRI_VERTEX_PUBLIC_FALLBACK_FAILED")
+        return ""
+
+    text = str(getattr(reply, "text", "") or "").strip() if reply else ""
+    if text:
+        LOGGER.warning(
+            "ATRI_VERTEX_PUBLIC_FALLBACK_USED provider=%s model=%s status=%s",
+            str(getattr(reply, "provider", "") or ""),
+            str(getattr(reply, "model", "") or ""),
+            status or reason or "network",
+        )
+    return text
 
 
 def _atri_worker_system_instruction(task_type: str) -> str:
@@ -2152,6 +2313,25 @@ def _atri_supervisor_verification_context(
         + "\n</VERIFICATION_FEEDBACK>\n"
         "[END ATRI INTERNAL VERIFICATION V25.1]\n"
     )
+
+# ATRI_WORKER_THINKING_V16292
+def _atri_worker_thinking_v1629(task_type: str) -> str:
+    task = str(task_type or "chat").strip().casefold()
+
+    if task in {"coding", "coding_agentic"}:
+        return resolve_thinking("code")
+
+    if task == "research":
+        level = resolve_thinking("web")
+        # Public research worker is only a specialist draft. Vertex still
+        # verifies/finalizes at the configured Vertex thinking policy.
+        return "medium" if level == "high" else level
+
+    if task == "research_long":
+        return resolve_thinking("web")
+
+    return resolve_thinking("chat")
+
 
 async def _vertex_generate(
     *,
@@ -2431,8 +2611,9 @@ async def _vertex_generate(
 
     if (
         allow_free_pool
-        and mode == "chat"
+        and mode in {"chat", "code"}
         and free_text_only
+        and not force_github_mcp
         and message is not None
         and getattr(message, "reply_to_message", None) is None
     ):
@@ -2487,6 +2668,8 @@ async def _vertex_generate(
         )
 
     free_task = _atri_free_task_type(free_raw_text)
+    if mode == "code" and free_task == "chat":
+        free_task = "coding"
 
     # ATRI_SKILL_MODEL_HINT_ROUTER_V12
     # Skill model hints may refine a public-safe task after the global
@@ -2559,7 +2742,9 @@ async def _vertex_generate(
             ),
             history=[],
             current_parts=[{"text": free_raw_text}],
-            thinking_level=resolve_thinking("chat"),
+            thinking_level=_atri_worker_thinking_v1629(
+                free_task
+            ),
             task_type=free_task,
         )
     except Exception:
@@ -2658,8 +2843,9 @@ async def _vertex_generate(
         )
 
         LOGGER.info(
-            "ATRI_WORKER_RETRY task=%s attempt=2 max_retries=1",
+            "ATRI_WORKER_RETRY task=%s attempt=2 max_retries=1 excluded_model=%s",
             free_task,
+            worker_model,
         )
 
         try:
@@ -2672,8 +2858,11 @@ async def _vertex_generate(
                 ),
                 history=[],
                 current_parts=[{"text": retry_prompt}],
-                thinking_level=resolve_thinking("chat"),
+                thinking_level=_atri_worker_thinking_v1629(
+                    free_task
+                ),
                 task_type=free_task,
+                exclude_models={worker_model},
             )
         except Exception:
             LOGGER.exception(
@@ -2928,6 +3117,10 @@ class _AtriProgressiveReply:
         self.last_text = ""
         self.has_real_partial = False
         self.lock = asyncio.Lock()
+        self.visual_state = AtriResponseState(
+            self.source_message,
+            enabled=self.enabled,
+        )
 
     def _elapsed_ms(self) -> int:
         return int((time.monotonic() - self.started_at) * 1000)
@@ -2948,6 +3141,13 @@ class _AtriProgressiveReply:
     ) -> None:
         if not self.enabled:
             return
+        if self.visual_state is not None:
+            visual_message = await self.visual_state.show_thinking()
+            if visual_message is not None:
+                self.sent_message = visual_message
+            self.stage = max(self.stage, int(stage))
+            return
+
 
         stage = int(stage)
         real_partial = _clean_public_answer(partial_text)
@@ -3012,6 +3212,23 @@ class _AtriProgressiveReply:
                     stage,
                     exc_info=True,
                 )
+
+    async def finalize_error(self, status_code=None) -> None:
+        if self.visual_state is not None:
+            await self.visual_state.finalize_error(status_code)
+            return
+
+        try:
+            code = int(status_code)
+        except Exception:
+            code = 500
+
+        if code < 100 or code > 599:
+            code = 500
+
+        await self.finalize(
+            f"Em không ổn rồi ({code})"
+        )
 
     async def finalize(self, text: str) -> None:
         # ATRI_ATTACHMENT_PROGRESSIVE_FINALIZER_V143
@@ -3093,6 +3310,13 @@ class _AtriProgressiveReply:
                     + type(_atri_document_exc_v132).__name__
                     + "."
                 ).strip()
+        # ATRI_VISUAL_FINALIZER_V165
+        if self.visual_state is not None:
+            await self.visual_state.finalize(
+                _clean_public_answer(text)
+            )
+            return
+
         clean_text = _clean_public_answer(text)
         chunks = _split_reply_chunks(clean_text)
         if not chunks:
@@ -3137,6 +3361,15 @@ class _AtriProgressiveReply:
 
 async def _handle_control(client, message, command: str, argument: str) -> bool:
     key = _chat_key(message)
+
+    # ATRI_OWNER_CONTROL_PRIVACY_V161
+    _control_user = getattr(message, "from_user", None)
+    _control_uid = int(getattr(_control_user, "id", 0) or 0)
+    _control_owner = int(getattr(Config, "OWNER_ID", 0) or 0)
+    if any(_matches_command(command, _name) for _name in ("amodel", "athink")) and _control_uid != _control_owner:
+        return True
+    if (_matches_command(command, "atri") and argument.strip().casefold() not in {"on", "off"} and _control_uid != _control_owner):
+        return True
 
     # STICKER_CONTROL_ENTRY
     for sticker_command in (
@@ -3183,8 +3416,8 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
             await message.reply_text(
                 "Cấu hình Atri hiện tại\n"
                 f"Model: {state['model']}\n"
-                f"Thinking: {state['thinking']}\n"
-                "\nPreset: pro, 3flash, flash, 36flash, 35flash, lite, 31lite",
+                + thinking_status_text()
+                + "\n\nModel: flash/36flash, 35flash, lite",
                 quote=True,
                 parse_mode=None,
             )
@@ -3203,8 +3436,8 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
         await message.reply_text(
             "Đã chuyển model Atri\n"
             f"Model: {state['model']}\n"
-            f"Thinking: {state['thinking']}\n"
-            "Áp dụng từ yêu cầu tiếp theo.",
+            + thinking_status_text()
+            + "\nÁp dụng từ yêu cầu tiếp theo.",
             quote=True,
             parse_mode=None,
         )
@@ -3214,23 +3447,17 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
         requested = argument.strip().casefold()
 
         if not requested:
-            state = get_runtime_state()
-            allowed = ", ".join(
-                state["allowed_thinking"]
-            )
             await message.reply_text(
-                "Thinking hiện tại\n"
-                f"Model: {state['model']}\n"
-                f"Thinking: {state['thinking']}\n"
-                f"Hỗ trợ: {allowed}\n"
-                "Có thể dùng: /athink default",
+                "Thinking Atri\n"
+                + thinking_status_text()
+                + "\n\nDùng: /athink auto|eco|balanced|max|minimal|low|medium|high",
                 quote=True,
                 parse_mode=None,
             )
             return True
 
         try:
-            state = set_runtime_thinking(requested)
+            set_thinking_policy(requested)
         except Exception as exc:
             await message.reply_text(
                 f"Không thể đổi thinking: {exc}",
@@ -3240,10 +3467,9 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
             return True
 
         await message.reply_text(
-            "Đã cập nhật thinking\n"
-            f"Model: {state['model']}\n"
-            f"Thinking: {state['thinking']}\n"
-            "Áp dụng từ yêu cầu tiếp theo.",
+            "Đã cập nhật Thinking\n"
+            + thinking_status_text()
+            + "\nÁp dụng từ yêu cầu tiếp theo.",
             quote=True,
             parse_mode=None,
         )
@@ -3421,31 +3647,52 @@ async def _handle_control(client, message, command: str, argument: str) -> bool:
     return False
 
 
-async def _should_reply(client, message, text: str, command: str) -> bool:
-    if _matches_command(command, "ai"):
-        return True
-
-    if command.startswith("/"):
+# ATRI_DIRECT_INVOCATION_GATE_V161
+async def atri_accept_message(client, message) -> bool:
+    # Cheap gate: no model/tool/media processing happens here.
+    user = getattr(message, "from_user", None)
+    if user is None or bool(getattr(user, "is_bot", False)):
         return False
-
+    user_id = int(getattr(user, "id", 0) or 0)
+    owner_id = int(getattr(Config, "OWNER_ID", 0) or 0)
+    text = str(getattr(message, "text", "") or getattr(message, "caption", "") or "").strip()
+    command = _command_name(text) if text.startswith("/") else ""
+    if command:
+        if any(_matches_command(command, name) for name in ("ai", "amodel", "athink")):
+            return user_id > 0 and user_id == owner_id
+        if _matches_command(command, "atri"):
+            argument = _command_argument(text).strip().casefold()
+            if argument in {"on", "off"}:
+                return True
+            return user_id > 0 and user_id == owner_id
+        if any(_matches_command(command, name) for name in (
+            "resetai", "remember", "memstat", "forgetall",
+            "stickerlearn", "stickerreply", "stickerchance",
+            "stickercooldown", "stickerlimit", "stickerstats",
+        )):
+            return True
+        return False
     if _is_private(message):
         return True
-
-    lowered = text.casefold()
-    if "atri" in lowered:
+    import re as _re
+    folded = text.casefold()
+    if _re.search(r"(?<!\w)atri(?!\w)", folded, flags=_re.IGNORECASE):
         return True
-
     bot_user = getattr(client, "me", None)
-    username = str(getattr(bot_user, "username", "") or "").casefold()
-    if username and f"@{username}" in lowered:
+    username = str(getattr(bot_user, "username", "") or "").strip().casefold()
+    if username and f"@{username}" in folded:
         return True
-
     reply = getattr(message, "reply_to_message", None)
     reply_user = getattr(reply, "from_user", None)
-    if reply_user and bot_user and int(reply_user.id) == int(bot_user.id):
-        return True
-
+    if reply_user is not None and bot_user is not None:
+        try:
+            if int(reply_user.id) == int(bot_user.id): return True
+        except Exception:
+            pass
     return False
+
+async def _should_reply(client, message, text: str, command: str) -> bool:
+    return await atri_accept_message(client, message)
 
 
 def _build_prompt(message, text: str, command: str) -> str:
@@ -3540,17 +3787,12 @@ async def reply_after_external_action(
 
 
 
-async def atri_message(
+async def _atri_message_untraced_v16261(
     client,
     message,
     *,
     force_reply: bool = False,
 ) -> None:
-    # ATRI_STICKER_NATURAL_REPLY_V147
-    sticker_message_v147 = getattr(message, "sticker", None) is not None
-    if sticker_message_v147:
-        await learn_sticker_from_message(message)
-
     user = getattr(message, "from_user", None)
     if user is None or getattr(user, "is_bot", False):
         return
@@ -3560,6 +3802,15 @@ async def atri_message(
         or getattr(message, "caption", "")
         or ""
     ).strip()
+
+    # ATRI_DIRECT_INVOCATION_EARLY_V161
+    if not force_reply and not await atri_accept_message(client, message):
+        return
+
+    # ATRI_STICKER_NATURAL_REPLY_V147
+    sticker_message_v147 = getattr(message, "sticker", None) is not None
+    if sticker_message_v147:
+        await learn_sticker_from_message(message)
 
     # ATRI_GOOGLE_SPEECH_INPUT_V1
     audio_part = None
@@ -3640,7 +3891,6 @@ async def atri_message(
 
     if (
         not force_reply
-        and not sticker_message_v147
         and not await _should_reply(
             client,
             message,
@@ -3756,6 +4006,14 @@ async def atri_message(
             )
         )
 
+        # ATRI_V152_DECISION_PARITY_ROUTE
+        _v152_publish_route_decision(
+            route_text=route_text,
+            attachment_route=attachment_route_v143,
+            actual_mode=route_mode,
+            force_github_mcp=force_github_mcp,
+        )
+
         if force_github_mcp:
             LOGGER.info(
                 "ATRI_EXPLICIT_GITHUB_MCP_REQUIRED"
@@ -3772,12 +4030,12 @@ async def atri_message(
         request_started = time.monotonic()
         progressive_reply = _AtriProgressiveReply(
             message,
-            enabled=(route_mode in {"web", "tools", "code"}),
+            enabled=True,
             started_at=request_started,
         )
-        progressive_delay_task = asyncio.create_task(
-            progressive_reply.delayed_stage(1, delay=4.0)
-        )
+        # ATRI_VISUAL_THINKING_IMMEDIATE_V165
+        await progressive_reply.update_stage(1, "")
+        progressive_delay_task = asyncio.create_task(asyncio.sleep(0))
 
         try:
             async with _vertex_slots:
@@ -3791,7 +4049,7 @@ async def atri_message(
                         message=message,
                         progress_callback=progressive_reply.update_stage,
                         force_github_mcp=force_github_mcp,
-                        allow_free_pool=(route_mode == "chat"),
+                        allow_free_pool=(route_mode in {"chat", "code"}),
                     )
                 except VertexRequestError as route_exc:
                     if route_mode == "web" and route_exc.status_code == 400:
@@ -3807,6 +4065,15 @@ async def atri_message(
                             message=message,
                             progress_callback=None,
                         )
+                    elif route_mode == "chat":
+                        response_text = await _atri_public_chat_outage_fallback(
+                            raw_text=raw_text.strip(),
+                            current_parts=current_parts,
+                            message=message,
+                            error=route_exc,
+                        )
+                        if not response_text:
+                            raise
                     else:
                         raise
         except Exception as exc:
@@ -3840,7 +4107,8 @@ async def atri_message(
             else:
                 reply_text = "Em gặp lỗi khi kết nối Vertex AI. Kiểm tra log bot." + reference
 
-            await progressive_reply.finalize(reply_text)
+            # ATRI_VISUAL_ERROR_CODE_ONLY_V165
+            await progressive_reply.finalize_error(status_code)
             LOGGER.info(
                 "ATRI_REQUEST_FAILED mode=%s elapsed_ms=%s",
                 route_mode,
@@ -3898,3 +4166,22 @@ async def atri_message(
         message,
         reason="ai_reply",
     )
+
+# ATRI_TRACE_REQUEST_WRAPPER_V16261
+async def atri_message(
+    client,
+    message,
+    *,
+    force_reply: bool = False,
+) -> None:
+    _trace_token = _atri_trace_begin_v16261(message)
+    try:
+        LOGGER.info("ATRI_TRACE_REQUEST_BEGIN force=%s", int(bool(force_reply)))
+        return await _atri_message_untraced_v16261(
+            client,
+            message,
+            force_reply=force_reply,
+        )
+    finally:
+        LOGGER.info("ATRI_TRACE_REQUEST_END")
+        _atri_trace_end_v16261(_trace_token)

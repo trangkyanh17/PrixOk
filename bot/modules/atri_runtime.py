@@ -14,14 +14,7 @@ CONFIG_PATH = Path(os.getenv("ATRI_CONFIG_PATH", "/app/config.py"))
 _CONFIG_LOCK = Lock()
 
 MODEL_SPECS: dict[str, dict[str, Any]] = {
-    "gemini-3-flash-preview": {
-        "default": "high",
-        "allowed": ("minimal", "low", "medium", "high"),
-    },
-    "gemini-3.1-pro-preview": {
-        "default": "high",
-        "allowed": ("low", "medium", "high"),
-    },
+    # ATRI_MODEL_STACK_V162
     "gemini-3.6-flash": {
         "default": "medium",
         "allowed": ("minimal", "low", "medium", "high"),
@@ -34,29 +27,24 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
         "default": "minimal",
         "allowed": ("minimal", "low", "medium", "high"),
     },
-    "gemini-3.1-flash-lite": {
-        "default": "minimal",
-        "allowed": ("minimal", "low", "medium", "high"),
-    },
 }
 
+# Keep legacy aliases accepted, but migrate them onto current production models.
 MODEL_ALIASES = {
-    "3flash": "gemini-3-flash-preview",
-    "3.0flash": "gemini-3-flash-preview",
-    "flash3": "gemini-3-flash-preview",
-
-    "pro": "gemini-3.1-pro-preview",
-
     "flash": "gemini-3.6-flash",
     "36flash": "gemini-3.6-flash",
     "3.6flash": "gemini-3.6-flash",
-
+    "3flash": "gemini-3.6-flash",
+    "3.0flash": "gemini-3.6-flash",
+    "flash3": "gemini-3.6-flash",
     "35flash": "gemini-3.5-flash",
     "3.5flash": "gemini-3.5-flash",
-
     "lite": "gemini-3.5-flash-lite",
-    "31lite": "gemini-3.1-flash-lite",
+    "35lite": "gemini-3.5-flash-lite",
+    "3.5lite": "gemini-3.5-flash-lite",
+    "31lite": "gemini-3.5-flash-lite",
 }
+
 
 
 def _resolve_model(value: str) -> str:

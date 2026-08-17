@@ -1,3 +1,4 @@
+from html import escape as html_escape
 from PIL import Image
 from aioshutil import rmtree
 from asyncio import sleep
@@ -137,6 +138,49 @@ class TelegramUploader:
         return True
 
     async def _prepare_file(self, file_, dirpath):
+        # ATRI_MD_SOURCE_CAPTION_V1642
+        if getattr(self._listener, "is_media_direct", False):
+            from ...ext_utils.status_utils import get_readable_file_size
+
+            source_label = str(
+                getattr(
+                    self._listener,
+                    "media_direct_source_label",
+                    "Source",
+                )
+                or "Source"
+            )
+            source_url = str(
+                getattr(
+                    self._listener,
+                    "media_direct_source_url",
+                    "",
+                )
+                or ""
+            )
+
+            safe_label = html_escape(source_label)
+            safe_url = html_escape(source_url, quote=True)
+
+            try:
+                media_size = await aiopath.getsize(self._up_path)
+            except OSError:
+                media_size = 0
+
+            size_text = get_readable_file_size(media_size)
+
+            if safe_url:
+                return (
+                    f'From: <a href="{safe_url}">'
+                    f"{safe_label}</a>\n"
+                    f"Size: {size_text}"
+                )
+
+            return (
+                f"From: {safe_label}\n"
+                f"Size: {size_text}"
+            )
+
         if self._lprefix:
             cap_mono = f"{self._lprefix} <code>{file_}</code>"
             self._lprefix = re_sub("<.*?>", "", self._lprefix)

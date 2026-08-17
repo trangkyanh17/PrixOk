@@ -2,23 +2,41 @@ from pyrogram import filters
 from pyrogram.filters import command, regex
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler, EditedMessageHandler
 
+from bot import LOGGER
+
 from ..modules import *
-from ..modules.atri_ai import atri_message
+from ..modules.atri_ai import atri_accept_message, atri_message
 from ..modules.atri_skills import add_atri_skills_handlers
 from ..modules.atri_thinking_control import add_atri_thinking_handlers
 from ..modules.atri_provider_control import add_atri_provider_control_handlers
 from ..modules.atri_command_ui import add_atri_command_ui_handlers
+from ..modules.atri_unified_menu import add_atri_unified_menu_handlers
 from ..modules.atri_rose import add_atri_rose_handlers
 from ..modules.atri_rose_natural import add_atri_rose_natural_handlers
 from ..modules.atri_web_tools import atri_tools_message, sync_bot_command_menu
 from ..modules.atri_free_tools import atri_free_tools_message, start_free_tools
+from ..modules.atri_media_auto import add_atri_media_auto_handlers
+from ..modules.atri_media_direct import media_direct
 from ..helper.telegram_helper.bot_commands import BotCommands
 from ..helper.telegram_helper.filters import CustomFilters
 from .telegram_manager import TgClient
 
 
+async def _atri_public_interaction_filter(_, client, message):
+    return await atri_accept_message(client, message)
+
+
+ATRI_PUBLIC_INTERACTION_V161 = filters.create(
+    _atri_public_interaction_filter,
+    name="AtriPublicInteractionV161",
+)
+
+
 def add_handlers():
+    # ATRI_UNIVERSAL_MEDIA_HANDLER_V163
+    add_atri_media_auto_handlers(TgClient.bot)
     add_atri_skills_handlers(TgClient.bot)
+    add_atri_unified_menu_handlers(TgClient.bot)
     add_atri_command_ui_handlers(TgClient.bot)
     add_atri_thinking_handlers(TgClient.bot)
     add_atri_provider_control_handlers(TgClient.bot)
@@ -327,6 +345,17 @@ def add_handlers():
     TgClient.bot.add_handler(
         CallbackQueryHandler(edit_user_settings, filters=regex("^userset"))
     )
+    # ATRI_MEDIA_DIRECT_HANDLER_V164
+    TgClient.bot.add_handler(
+        MessageHandler(
+            media_direct,
+            filters=command(
+                BotCommands.MediaDirectCommand,
+                case_sensitive=True,
+            )
+            & CustomFilters.authorized,
+        )
+    )
     TgClient.bot.add_handler(
         MessageHandler(
             ytdl,
@@ -403,10 +432,14 @@ def add_handlers():
                     | filters.audio
                     | filters.voice
                 )
-                & CustomFilters.authorized
+                & ATRI_PUBLIC_INTERACTION_V161
             ),
         ),
         group=20,
+    )
+    LOGGER.info(
+        "ATRI_GROUP_INVOCATION_V161_INSTALLED "
+        "all_users=1 group_trigger=name|mention|reply media=1"
     )
     from bot import bot_loop
 

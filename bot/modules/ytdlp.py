@@ -21,9 +21,8 @@ from ..helper.ext_utils.links_utils import is_url
 from ..helper.ext_utils.status_utils import get_readable_file_size, get_readable_time
 from ..helper.listeners.task_listener import TaskListener
 from ..helper.mirror_leech_utils.download_utils.yt_dlp_download import YoutubeDLHelper
-from ..helper.mirror_leech_utils.download_utils.cobalt_resolver import (
-    is_tiktok_url,
-    resolve_tiktok_url,
+from ..helper.mirror_leech_utils.download_utils.universal_media_resolver import (
+    resolve_media,
 )
 from ..helper.telegram_helper.button_build import ButtonMaker
 from ..helper.telegram_helper.message_utils import (
@@ -427,43 +426,34 @@ class YtDlp(TaskListener):
         if "mdisk.me" in self.link:
             self.name, self.link = await _mdisk(self.link, self.name)
 
-        # COBALT_TIKTOK_ROUTE_V1
-        # TikTok được giải qua Cobalt trước khi yt-dlp
-        # lấy metadata hoặc bắt đầu download.
-        if is_tiktok_url(self.link):
-            original_tiktok_url = self.link
 
-            try:
-                cobalt_url, cobalt_name = (
-                    await resolve_tiktok_url(
-                        original_tiktok_url
-                    )
-                )
-            except Exception as e:
-                LOGGER.error(
-                    "Cobalt TikTok resolver failed: %s",
-                    e,
-                )
-                await send_message(
-                    self.message,
-                    f"{self.tag} Cobalt TikTok lỗi: {e}",
-                )
-                await self.remove_from_same_dir()
-                return
+        # YTDLP_NATIVE_TIKTOK_V162133
+        # Original URLs now go directly through native yt-dlp.
+        # TikTok compatibility remains cookies + Chrome impersonation.
+        # ATRI_UNIVERSAL_MEDIA_YTDL_V163
+        # Social-media URLs are resolved before yt-dlp metadata extraction.
+        # yt-dlp remains the generic final fallback.
+        try:
+            media_resolution = await resolve_media(self.link)
+        except Exception as e:
+            LOGGER.warning(
+                "Universal media resolver failed; falling back to yt-dlp: %s",
+                e,
+            )
+            media_resolution = None
 
-            self.link = cobalt_url
-
-            if not self.name:
-                self.name = cobalt_name
-
-            # Cobalt đã chọn chất lượng tối đa.
-            # Bỏ menu chất lượng riêng cho TikTok.
+        if (
+            media_resolution is not None
+            and media_resolution.resolved_url
+            and media_resolution.resolved_url != self.link
+        ):
+            self.link = media_resolution.resolved_url
             qual = "best"
-
             LOGGER.info(
-                "TikTok routed through Cobalt: %s -> %s",
-                original_tiktok_url,
-                self.link,
+                "Universal media route: platform=%s backend=%s direct=%s",
+                media_resolution.platform,
+                media_resolution.backend,
+                int(media_resolution.direct),
             )
 
         try:

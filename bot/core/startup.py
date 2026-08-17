@@ -254,7 +254,10 @@ async def load_configurations():
 
     await (
         await create_subprocess_shell(
-            "chmod 600 .netrc && cp .netrc /root/.netrc && chmod +x aria-nox-nzb.sh && ./aria-nox-nzb.sh"
+            "chmod 600 .netrc && cp .netrc /root/.netrc && "
+            'if [ "${PRIXOK_EXTERNAL_ENGINES:-0}" != "1" ]; then '
+            "chmod +x aria-nox-nzb.sh && ./aria-nox-nzb.sh; "
+            "else echo 'External download engines enabled; skipping aria-nox-nzb.sh'; fi"
         )
     ).wait()
 

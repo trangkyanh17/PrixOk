@@ -1334,17 +1334,20 @@ COMMANDS = (
 
 
 async def merge_menu(client) -> None:
+    # ATRI_TELEGRAM_OWNER_MENU_V161
+    # Re-apply the scoped owner-only menu after free-tools startup.
     await asyncio.sleep(8)
     try:
-        current = await client.get_bot_commands()
-        merged = {str(item.command).casefold(): str(item.description) for item in current}
-        for command, description in COMMANDS:
-            merged[f'{command}{suffix()}'.casefold()] = description
-        menu = [BotCommand(command, description[:256]) for command, description in merged.items() if re.fullmatch(r'[a-z0-9_]{1,32}', command)][:100]
-        await client.set_bot_commands(menu)
-        LOGGER.info('Đã thêm nhóm lệnh miễn phí vào menu Telegram (%s lệnh).', len(menu))
+        from bot.modules.atri_web_tools import sync_bot_command_menu
+
+        await sync_bot_command_menu(client)
+        LOGGER.info("ATRI_TELEGRAM_MENU_V161_REAPPLY=PASS")
     except Exception as exc:
-        LOGGER.error('Không cập nhật được menu lệnh miễn phí: %s', exc, exc_info=True)
+        LOGGER.error(
+            "Không cập nhật được menu lệnh V161: %s",
+            exc,
+            exc_info=True,
+        )
 
 
 async def start_free_tools(client) -> None:

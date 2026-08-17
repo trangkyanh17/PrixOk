@@ -18,6 +18,7 @@ from .atri_provider_request import (
 
 
 # ATRI_PROVIDER_CAPABILITIES_V231
+# ATRI_MODEL_ROUTER_DISCOVERY_V159_PILOT
 STATE_PATH = Path(
     os.environ.get(
         "ATRI_PROVIDER_CAPABILITIES_STATE_PATH",
@@ -31,28 +32,41 @@ VERTEX_KEY_PATH = Path(
     )
 )
 
+# ATRI_VERTEX_LATEST_CANARY_V1622
+# Audit-only alias. It is deliberately kept outside CANDIDATE_CHOICES so it
+# cannot be selected or routed as a production model. The audit records the
+# concrete modelVersion returned by Vertex instead of guessing future names.
+VERTEX_CANARY_ALIASES: tuple[str, ...] = (
+    "gemini-flash-latest",
+)
+
 CANDIDATE_CHOICES: dict[str, tuple[tuple[str, str], ...]] = {
+    # ATRI_MODEL_REGISTRY_V162
     "cerebras": (
         ("gpt-oss-120b", "OSS120B"),
         ("zai-glm-4.7", "GLM4.7-P"),
     ),
     "groq": (
-        ("qwen/qwen3.6-27b", "QWEN3.6"),
         ("openai/gpt-oss-120b", "OSS120B"),
+        ("qwen/qwen3.6-27b", "QWEN3.6"),
         ("openai/gpt-oss-20b", "OSS20B"),
     ),
     "openrouter": (
         ("openrouter/free", "FREE"),
+        ("poolside/laguna-s-2.1:free", "LAGUNA-S"),
+        ("poolside/laguna-xs-2.1:free", "LAGUNA-XS"),
         ("cohere/north-mini-code:free", "NORTH"),
         ("nvidia/nemotron-3-super-120b-a12b:free", "NEMO3S"),
-        ("google/gemma-4-26b-a4b-it:free", "GEMMA4"),
-        ("openai/gpt-oss-20b:free", "OSS20B"),
         ("nvidia/nemotron-3-ultra-550b-a55b:free", "NEMO3U"),
+        ("google/gemma-4-31b-it:free", "GEMMA4-31"),
+        ("google/gemma-4-26b-a4b-it:free", "GEMMA4-26"),
+        ("openai/gpt-oss-20b:free", "OSS20B"),
     ),
     "vertex": (
         ("auto", "AUTO"),
-        ("gemini-3-flash-preview", "3FLASH"),
-        ("gemini-3.1-flash-lite", "3.1LITE"),
+        ("gemini-3.6-flash", "3.6FLASH"),
+        ("gemini-3.5-flash", "3.5FLASH"),
+        ("gemini-3.5-flash-lite", "3.5LITE"),
     ),
 }
 _DEFAULT_THINKING = (
@@ -64,35 +78,27 @@ _DEFAULT_THINKING = (
 )
 
 THINKING_BY_MODEL: dict[tuple[str, str], tuple[str, ...]] = {
-    ("cerebras", "gpt-oss-120b"): (
-        "auto",
-        "low",
-        "medium",
-        "high",
-    ),
+    ("cerebras", "gpt-oss-120b"): ("auto", "low", "medium", "high"),
     ("cerebras", "zai-glm-4.7"): _DEFAULT_THINKING,
     ("groq", "qwen/qwen3.6-27b"): _DEFAULT_THINKING,
-    ("groq", "openai/gpt-oss-120b"): (
-        "auto",
-        "low",
-        "medium",
-        "high",
-    ),
-    ("groq", "openai/gpt-oss-20b"): (
-        "auto",
-        "low",
-        "medium",
-        "high",
-    ),
+    ("groq", "openai/gpt-oss-120b"): ("auto", "low", "medium", "high"),
+    ("groq", "openai/gpt-oss-20b"): ("auto", "low", "medium", "high"),
     ("openrouter", "openrouter/free"): ("auto",),
+    # ATRI_QWEN3_CODER_FREE_RETIRED_V1624
+    # Free Qwen3-Coder returned terminal 404 on live OpenRouter.
+    # The paid slug is deliberately not auto-routed.
+    ("openrouter", "poolside/laguna-s-2.1:free"): ("auto",),
+    ("openrouter", "poolside/laguna-xs-2.1:free"): ("auto",),
     ("openrouter", "cohere/north-mini-code:free"): _DEFAULT_THINKING,
     ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"): _DEFAULT_THINKING,
+    ("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"): _DEFAULT_THINKING,
+    ("openrouter", "google/gemma-4-31b-it:free"): _DEFAULT_THINKING,
     ("openrouter", "google/gemma-4-26b-a4b-it:free"): _DEFAULT_THINKING,
     ("openrouter", "openai/gpt-oss-20b:free"): _DEFAULT_THINKING,
-    ("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"): _DEFAULT_THINKING,
     ("vertex", "auto"): _DEFAULT_THINKING,
-    ("vertex", "gemini-3-flash-preview"): _DEFAULT_THINKING,
-    ("vertex", "gemini-3.1-flash-lite"): _DEFAULT_THINKING,
+    ("vertex", "gemini-3.6-flash"): _DEFAULT_THINKING,
+    ("vertex", "gemini-3.5-flash"): _DEFAULT_THINKING,
+    ("vertex", "gemini-3.5-flash-lite"): _DEFAULT_THINKING,
 }
 
 
@@ -207,35 +213,69 @@ MODEL_METADATA: dict[tuple[str, str], dict[str, Any]] = {
     },
 }
 
+# ATRI_MODEL_METADATA_V162
+MODEL_METADATA.update({
+    ("openrouter", "poolside/laguna-s-2.1:free"): {
+        "tier": "free", "stability": "free_endpoint", "privacy": "public_only_strict",
+        "context": 262144, "capabilities": ("chat", "reasoning", "tools", "coding", "agent"),
+        "thinking_adapter": "provider_default",
+    },
+    ("openrouter", "poolside/laguna-xs-2.1:free"): {
+        "tier": "free", "stability": "free_endpoint", "privacy": "public_only_strict",
+        "context": 262144, "max_output": 32768,
+        "capabilities": ("chat", "reasoning", "tools", "coding", "agent"),
+        "thinking_adapter": "provider_default",
+    },
+    ("openrouter", "google/gemma-4-31b-it:free"): {
+        "tier": "free", "stability": "free_endpoint", "privacy": "public_only",
+        "context": 262144, "max_output": 32768,
+        "capabilities": ("chat", "reasoning", "tools", "json", "vision", "file_analysis"),
+    },
+    ("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"): {
+        "tier": "free", "stability": "free_endpoint", "privacy": "public_only_strict",
+        "context": 1048576,
+        "capabilities": ("chat", "reasoning", "research", "long_context", "agent"),
+    },
+})
+
 TASK_MODEL_ORDER: dict[str, tuple[tuple[str, str], ...]] = {
+    # Vertex remains the primary user-facing chat engine. These are worker /
+    # outage fallback orders for public-safe requests.
     "chat": (
-        ("groq", "qwen/qwen3.6-27b"),
+        ("groq", "openai/gpt-oss-120b"),
         ("cerebras", "gpt-oss-120b"),
-        ("openrouter", "google/gemma-4-26b-a4b-it:free"),
         ("openrouter", "openrouter/free"),
     ),
     "coding": (
+        ("openrouter", "poolside/laguna-s-2.1:free"),
+        ("openrouter", "cohere/north-mini-code:free"),
+        ("openrouter", "poolside/laguna-xs-2.1:free"),
         ("groq", "qwen/qwen3.6-27b"),
         ("cerebras", "gpt-oss-120b"),
-        ("openrouter", "cohere/north-mini-code:free"),
     ),
     "coding_agentic": (
+        ("openrouter", "poolside/laguna-s-2.1:free"),
         ("openrouter", "cohere/north-mini-code:free"),
+        ("openrouter", "poolside/laguna-xs-2.1:free"),
         ("groq", "qwen/qwen3.6-27b"),
         ("cerebras", "gpt-oss-120b"),
     ),
-    "tools": (
-        ("vertex", "auto"),
-    ),
+    "tools": (("vertex", "auto"),),
     "research": (
-        ("groq", "qwen/qwen3.6-27b"),
-        ("openrouter", "google/gemma-4-26b-a4b-it:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
+        ("openrouter", "google/gemma-4-31b-it:free"),
+        ("groq", "qwen/qwen3.6-27b"),
+        ("cerebras", "gpt-oss-120b"),
     ),
     "research_long": (
+        ("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"),
         ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
-        ("openrouter", "google/gemma-4-26b-a4b-it:free"),
+        ("openrouter", "google/gemma-4-31b-it:free"),
         ("groq", "qwen/qwen3.6-27b"),
+    ),
+    "vision": (
+        ("vertex", "auto"),
+        ("openrouter", "google/gemma-4-31b-it:free"),
     ),
 }
 
@@ -280,7 +320,9 @@ def _blank_state() -> dict[str, Any]:
         "last_audit_at": 0,
         "models": {},
         "discovered": {},
+        "canary": {},
         "alert_snapshot": {},
+        "catalog": {},
     }
 
 
@@ -300,8 +342,13 @@ def _load_state() -> dict[str, Any]:
         state["models"] = {}
     if not isinstance(state.get("discovered"), dict):
         state["discovered"] = {}
+    if not isinstance(state.get("canary"), dict):
+        state["canary"] = {}
     if not isinstance(state.get("alert_snapshot"), dict):
         state["alert_snapshot"] = {}
+
+    if not isinstance(state.get("catalog"), dict):
+        state["catalog"] = {}
 
     return state
 
@@ -627,6 +674,19 @@ async def _discover_openai_models(
         )
 
         _STATE.setdefault("discovered", {})[provider] = models
+        if provider == "openrouter":
+            catalog: dict[str, Any] = {}
+            for item in items:
+                if not isinstance(item, dict) or not item.get("id"):
+                    continue
+                model_id = str(item.get("id"))
+                catalog[model_id] = {
+                    "context_length": item.get("context_length"),
+                    "supported_parameters": item.get("supported_parameters", []),
+                    "pricing": item.get("pricing", {}),
+                    "created": item.get("created"),
+                }
+            _STATE.setdefault("catalog", {})[provider] = catalog
         return {
             "status": "ok",
             "reason": "models_discovered",
@@ -761,7 +821,7 @@ async def _probe_vertex_model(
                     ],
                     "generationConfig": {
                         "maxOutputTokens": 16,
-                        "temperature": 0,
+                        "thinkingConfig": {"thinkingLevel": "minimal"},
                     },
                 },
             )
@@ -771,17 +831,64 @@ async def _probe_vertex_model(
             response.text[:700],
         )
 
+        model_version = ""
+        if response.is_success:
+            try:
+                body = response.json()
+            except Exception:
+                body = {}
+            if isinstance(body, dict):
+                model_version = str(
+                    body.get("modelVersion")
+                    or body.get("model_version")
+                    or ""
+                ).strip()
+
         return {
             "status": status,
             "reason": reason,
             "http_status": response.status_code,
+            "model_version": model_version,
         }
     except Exception as exc:
         return {
             "status": "unknown",
             "reason": type(exc).__name__,
             "http_status": None,
+            "model_version": "",
         }
+
+
+def _classify_vertex_canary(
+    alias: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    record = dict(result)
+    resolved = str(record.get("model_version") or "").strip()
+    known_stable = (
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+    )
+
+    if str(record.get("status")) != "ok":
+        promotion_state = "unavailable"
+    elif not resolved:
+        promotion_state = "unresolved"
+    elif any(resolved.startswith(model) for model in known_stable):
+        promotion_state = "known_stable_alias"
+    elif resolved.startswith("gemini-"):
+        promotion_state = "canary_pending"
+    else:
+        promotion_state = "unknown_target"
+
+    record.update({
+        "alias": alias,
+        "resolved_model": resolved,
+        "promotion_state": promotion_state,
+        "checked_at": int(time.time()),
+    })
+    return record
 
 
 async def audit_capabilities(
@@ -956,6 +1063,22 @@ async def audit_capabilities(
 
                 provider_report["models"][model] = result
 
+            canary_results: dict[str, Any] = {}
+            for alias in VERTEX_CANARY_ALIASES:
+                raw_canary = await _probe_vertex_model(
+                    client,
+                    token=token,
+                    project=project,
+                    model=alias,
+                    semaphore=semaphore,
+                )
+                canary_results[alias] = _classify_vertex_canary(
+                    alias,
+                    raw_canary,
+                )
+
+            _STATE.setdefault("canary", {})["vertex"] = canary_results
+            provider_report["canary"] = canary_results
             report["vertex"] = provider_report
 
         tasks = [
