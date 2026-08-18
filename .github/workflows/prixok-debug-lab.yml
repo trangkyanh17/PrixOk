@@ -3,13 +3,15 @@ name: PrixOk Atri Mirror Exhaustive Lab
 on:
   push:
     branches: [debug/prixok-atri-mirror-retest]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: prixok-atri-mirror-${{ github.ref }}
+  group: prixok-atri-mirror-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
