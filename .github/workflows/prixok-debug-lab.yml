@@ -1,26 +1,30 @@
-name: PrixOk Debug Lab
+name: PrixOk Exhaustive Debug Lab
 
 on:
   push:
     branches:
       - debug/prixok-runtime-lab
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: prixok-debug-lab-${{ github.ref }}
+  group: prixok-exhaustive-debug-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  source-and-runtime-lab:
-    name: source-and-runtime-lab
+  repository-integrity:
+    name: repository-integrity
+    if: github.event_name != 'pull_request' || github.head_ref == 'debug/prixok-runtime-lab'
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 30
 
     steps:
-      - name: Check out repository
+      - name: Check out full repository
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -28,183 +32,464 @@ jobs:
       - name: Set up Python 3.13
         uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: '3.13'
 
-      - name: Prepare debug artifacts
+      - name: Prepare audit tools and artifacts
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p debug-artifacts
+          mkdir -p debug-artifacts/repository
+          python -m pip install --disable-pip-version-check --quiet pyyaml ruff
           {
             echo "repo=${GITHUB_REPOSITORY}"
             echo "ref=${GITHUB_REF}"
             echo "sha=${GITHUB_SHA}"
+            echo "event=${GITHUB_EVENT_NAME}"
             echo "runner=${RUNNER_OS}"
             python --version
+            git --version
             docker --version
-            git status --short --branch
-          } > debug-artifacts/environment.txt
+            shellcheck --version | head -n 1 || true
+            echo "tracked_files=$(git ls-files | wc -l)"
+          } | tee debug-artifacts/repository/environment.txt
+          git ls-files > debug-artifacts/repository/tracked-files.txt
 
-      - name: Source sanity
+      - name: Reject merge-conflict debris and whitespace corruption
         shell: bash
         run: |
           set -euo pipefail
-          python -m compileall -q bot scripts tests
-          while IFS= read -r -d '' file; do
-            bash -n "$file"
-          done < <(
-            find . -type f -name '*.sh' -not -path './.git/*' -print0
-          )
+          git diff --check HEAD^ HEAD 2>&1 | tee debug-artifacts/repository/git-diff-check.txt
+          if git grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- ':!*.patch' ':!*.diff' > debug-artifacts/repository/conflict-markers.txt; then
+            echo 'ERROR: merge conflict markers found'
+            cat debug-artifacts/repository/conflict-markers.txt
+            exit 1
+          fi
 
-      - name: Build handler registration inventory
+      - name: Compile every tracked Python file
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY' > debug-artifacts/handler-registration-inventory.txt
-          import ast
+          python - <<'PY' | tee debug-artifacts/repository/python-compile.txt
+          import py_compile
+          import subprocess
           from pathlib import Path
 
-          roots = [Path("bot")]
-          interesting = {
-              "ping",
-              "bot_help",
-              "unified_menu_command",
-              "unified_menu_callback",
-              "atri_message",
-          }
-
-          for root in roots:
-              for path in sorted(root.rglob("*.py")):
-                  try:
-                      text = path.read_text(encoding="utf-8")
-                      tree = ast.parse(text, filename=str(path))
-                  except Exception as exc:
-                      print(f"PARSE_ERROR\t{path}\t{exc}")
-                      continue
-
-                  for node in ast.walk(tree):
-                      if not isinstance(node, ast.Call):
-                          continue
-
-                      func = node.func
-                      name = None
-                      if isinstance(func, ast.Attribute):
-                          name = func.attr
-                      elif isinstance(func, ast.Name):
-                          name = func.id
-
-                      if name == "add_handler" or (
-                          isinstance(name, str)
-                          and name.startswith("add_")
-                          and name.endswith("_handlers")
-                      ):
-                          print(
-                              f"REGISTER\t{path}:{getattr(node, 'lineno', 0)}\t{name}"
-                          )
-
-                  for node in ast.walk(tree):
-                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                          if node.name in interesting:
-                              print(
-                                  f"CALLBACK_DEF\t{path}:{node.lineno}\t{node.name}"
-                              )
+          files = subprocess.check_output(
+              ['git', 'ls-files', '*.py'], text=True
+          ).splitlines()
+          failures = []
+          for name in files:
+              path = Path(name)
+              try:
+                  py_compile.compile(str(path), doraise=True)
+                  print(f'PASS\t{name}')
+              except Exception as exc:
+                  failures.append((name, repr(exc)))
+                  print(f'FAIL\t{name}\t{exc}')
+          print(f'PYTHON_FILES={len(files)}')
+          print(f'PYTHON_COMPILE_FAILURES={len(failures)}')
+          if failures:
+              raise SystemExit(1)
           PY
 
-          {
-            echo
-            echo "===== DIRECT SOURCE REFERENCES ====="
-            grep -RInE \
-              'add_handler|add_handlers|add_atri_.*handlers|BotCommands\.(Ping|Help)|unified_menu_(command|callback)|bot_help|def ping\b' \
-              bot 2>/dev/null || true
-          } >> debug-artifacts/handler-registration-inventory.txt
-
-      - name: Build production Docker image
-        run: docker build --tag "prixok-debug:${GITHUB_SHA}" .
-
-      - name: Run targeted and full non-slow tests in production image
+      - name: Python fatal static analysis over entire repository
         shell: bash
         run: |
           set -euo pipefail
-          host_artifacts="$(pwd)/debug-artifacts"
+          mapfile -t pyfiles < <(git ls-files '*.py')
+          if (( ${#pyfiles[@]} )); then
+            ruff check --output-format=full --select E9,F63,F7,F82 "${pyfiles[@]}" 2>&1 \
+              | tee debug-artifacts/repository/ruff-fatal.txt
+          fi
 
+      - name: Validate every tracked shell script
+        shell: bash
+        run: |
+          set -euo pipefail
+          failures=0
+          : > debug-artifacts/repository/bash-syntax.txt
+          while IFS= read -r file; do
+            echo "===== $file =====" | tee -a debug-artifacts/repository/bash-syntax.txt
+            if ! bash -n "$file" 2>&1 | tee -a debug-artifacts/repository/bash-syntax.txt; then
+              failures=$((failures + 1))
+            fi
+          done < <(git ls-files '*.sh')
+          echo "BASH_SYNTAX_FAILURES=$failures" | tee -a debug-artifacts/repository/bash-syntax.txt
+          test "$failures" -eq 0
+
+      - name: ShellCheck fatal defects over every tracked shell script
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t shfiles < <(git ls-files '*.sh')
+          if (( ${#shfiles[@]} )); then
+            shellcheck -S error "${shfiles[@]}" 2>&1 \
+              | tee debug-artifacts/repository/shellcheck-errors.txt
+          fi
+
+      - name: Parse every tracked JSON TOML YAML and XML file
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee debug-artifacts/repository/structured-data.txt
+          import json
+          import subprocess
+          import tomllib
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          import yaml
+
+          tracked = subprocess.check_output(['git', 'ls-files'], text=True).splitlines()
+          failures = []
+          checked = 0
+          for name in tracked:
+              path = Path(name)
+              suffix = path.suffix.lower()
+              if suffix not in {'.json', '.toml', '.yml', '.yaml', '.xml'}:
+                  continue
+              checked += 1
+              try:
+                  if suffix == '.json':
+                      json.loads(path.read_text(encoding='utf-8'))
+                  elif suffix == '.toml':
+                      tomllib.loads(path.read_text(encoding='utf-8'))
+                  elif suffix in {'.yml', '.yaml'}:
+                      list(yaml.safe_load_all(path.read_text(encoding='utf-8')))
+                  else:
+                      ET.parse(path)
+                  print(f'PASS\t{name}')
+              except Exception as exc:
+                  failures.append((name, repr(exc)))
+                  print(f'FAIL\t{name}\t{exc}')
+          print(f'STRUCTURED_FILES={checked}')
+          print(f'STRUCTURED_FAILURES={len(failures)}')
+          if failures:
+              raise SystemExit(1)
+          PY
+
+      - name: Build handler registration and startup topology inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' > debug-artifacts/repository/handler-topology.txt
+          import ast
+          import subprocess
+          from collections import Counter
+          from pathlib import Path
+
+          files = [Path(x) for x in subprocess.check_output(
+              ['git', 'ls-files', 'bot/**/*.py', 'bot/*.py'], text=True
+          ).splitlines()]
+          registrations = []
+          callbacks = Counter()
+          startups = []
+          for path in files:
+              try:
+                  tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+              except Exception as exc:
+                  print(f'PARSE_ERROR\t{path}\t{exc}')
+                  continue
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                      callbacks[node.name] += 1
+                  if not isinstance(node, ast.Call):
+                      continue
+                  func = node.func
+                  name = func.attr if isinstance(func, ast.Attribute) else (
+                      func.id if isinstance(func, ast.Name) else ''
+                  )
+                  if name == 'add_handler' or (name.startswith('add_') and name.endswith('_handlers')):
+                      registrations.append((str(path), getattr(node, 'lineno', 0), name))
+                  if name in {'start', 'run', 'run_until_complete', 'add_handlers'}:
+                      startups.append((str(path), getattr(node, 'lineno', 0), name))
+          print('===== REGISTRATIONS =====')
+          for row in registrations:
+              print('\t'.join(map(str, row)))
+          print('===== STARTUP CALLS =====')
+          for row in startups:
+              print('\t'.join(map(str, row)))
+          print('===== IMPORTANT CALLBACK DEFINITIONS =====')
+          for name in ('ping', 'bot_help', 'unified_menu_command', 'unified_menu_callback', 'atri_message'):
+              print(f'{name}={callbacks[name]}')
+          print(f'REGISTRATION_CALLS={len(registrations)}')
+          print(f'STARTUP_CALLS={len(startups)}')
+          PY
+
+      - name: Upload repository audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prixok-repository-audit-${{ github.run_id }}
+          path: debug-artifacts/repository/
+          if-no-files-found: error
+          retention-days: 14
+
+  production-python:
+    name: production-python-exhaustive
+    if: github.event_name != 'pull_request' || github.head_ref == 'debug/prixok-runtime-lab'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Build exact production Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p debug-artifacts/python
+          docker build --tag "prixok-exhaustive:${GITHUB_SHA}" . 2>&1 \
+            | tee debug-artifacts/python/docker-build.txt
+
+      - name: Exhaustive tests plus forced-order and concurrency stress
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_artifacts="$(pwd)/debug-artifacts/python"
           set +e
           docker run --rm \
             --volume "${host_artifacts}:/ci-artifacts" \
             --entrypoint bash \
-            "prixok-debug:${GITHUB_SHA}" \
-            -s 2>&1 <<'DOCKER_TEST' | tee debug-artifacts/docker-test-console.txt
-          set -euo pipefail
+            "prixok-exhaustive:${GITHUB_SHA}" \
+            -s 2>&1 <<'DOCKER_TEST' | tee debug-artifacts/python/docker-console.txt
+          set -u
+          failures=0
 
-          deps="$(mktemp -d /tmp/prixok-debug-deps.XXXXXX)"
-          cache="$(mktemp -d /tmp/prixok-debug-pip.XXXXXX)"
-
+          deps="$(mktemp -d /tmp/prixok-exhaustive-deps.XXXXXX)"
+          cache="$(mktemp -d /tmp/prixok-exhaustive-pip.XXXXXX)"
           PIP_CACHE_DIR="$cache" \
             mltbenv/bin/python -m pip install \
-              --disable-pip-version-check \
-              --no-input \
-              --no-compile \
-              --only-binary=:all: \
-              --target "$deps" \
-              -r requirements-lifecycle.txt
-
+              --disable-pip-version-check --no-input --no-compile \
+              --only-binary=:all: --target "$deps" \
+              -r requirements-lifecycle.txt pytest-xdist pytest-randomly
           export PYTHONPATH="$deps"
           export PYTHONNOUSERSITE=1
           export PYTHONDONTWRITEBYTECODE=1
 
-          mltbenv/bin/python -m pytest --collect-only -q \
-            > /ci-artifacts/pytest-collect.txt
+          run_probe() {
+            name="$1"
+            shift
+            echo "===== $name ====="
+            set +e
+            "$@" 2>&1 | tee "/ci-artifacts/${name}.txt"
+            status=${PIPESTATUS[0]}
+            set -e
+            if (( status != 0 )); then
+              echo "PROBE_FAIL name=$name status=$status"
+              failures=$((failures + 1))
+            else
+              echo "PROBE_PASS name=$name"
+            fi
+          }
 
-          targeted=(
-            tests/test_atri_message_idempotency_v1672.py
-            tests/test_atri_response_output_guard_v1673.py
-            tests/test_atri_telegram_lifecycle_v1674.py
-            tests/test_atri_final_lifecycle.py
-            tests/test_v1674_live_recovery_final.py
-          )
+          run_probe pip-check mltbenv/bin/python -m pip check
+          run_probe collect-all mltbenv/bin/python -m pytest --collect-only -q
 
-          while IFS= read -r file; do
-            targeted+=("$file")
-          done < <(
-            find tests -maxdepth 2 -type f \
+          # Three complete serial passes with different random order and hash seeds.
+          for round in 1 2 3; do
+            seed=$((9182026 + round))
+            export PYTHONHASHSEED="$seed"
+            run_probe "pytest-all-round-${round}" \
+              timeout 45m mltbenv/bin/python -m pytest -q \
+              --randomly-seed="$seed"
+          done
+
+          # Deliberately stress test isolation/shared-state assumptions.
+          export PYTHONHASHSEED=random
+          run_probe pytest-parallel-chaos \
+            timeout 35m mltbenv/bin/python -m pytest -q -n auto \
+            --dist=loadscope --randomly-seed=9182099
+
+          # Repeatedly hammer duplicate/dispatch/handler/lifecycle tests.
+          mapfile -t stress_files < <(
+            find tests -type f \
               \( -name '*duplicate*.py' \
                  -o -name '*dispatch*.py' \
                  -o -name '*handler*.py' \
-                 -o -path 'tests/debug/*.py' \) \
-              | sort -u
+                 -o -name '*lifecycle*.py' \
+                 -o -name '*idempotency*.py' \) | sort -u
           )
+          if (( ${#stress_files[@]} )); then
+            for round in $(seq 1 12); do
+              seed=$((9200000 + round))
+              export PYTHONHASHSEED="$seed"
+              run_probe "telegram-runtime-stress-${round}" \
+                timeout 12m mltbenv/bin/python -m pytest -q \
+                --randomly-seed="$seed" "${stress_files[@]}"
+            done
+          fi
 
-          mapfile -t targeted < <(printf '%s\n' "${targeted[@]}" | awk '!seen[$0]++')
-
-          echo "===== TARGETED TEST FILES =====" \
-            | tee /ci-artifacts/targeted-tests.txt
-          printf '%s\n' "${targeted[@]}" \
-            | tee -a /ci-artifacts/targeted-tests.txt
-
-          mltbenv/bin/python -m pytest -q "${targeted[@]}" \
-            2>&1 | tee /ci-artifacts/pytest-targeted.txt
-
-          mltbenv/bin/python -m pytest -m "not slow" -q \
-            2>&1 | tee /ci-artifacts/pytest-full-nonslow.txt
+          echo "TOTAL_PROBE_FAILURES=$failures" | tee /ci-artifacts/final-summary.txt
+          if (( failures != 0 )); then
+            exit 1
+          fi
           DOCKER_TEST
           status=${PIPESTATUS[0]}
           set -e
           exit "$status"
 
-      - name: Record Docker metadata
+      - name: Record image metadata
         if: always()
         shell: bash
         run: |
-          {
-            docker image inspect "prixok-debug:${GITHUB_SHA}" \
-              --format 'id={{.Id}} created={{.Created}} size={{.Size}}' \
-              2>/dev/null || true
-          } > debug-artifacts/docker-image.txt
+          docker image inspect "prixok-exhaustive:${GITHUB_SHA}" \
+            --format 'id={{.Id}} created={{.Created}} size={{.Size}}' \
+            > debug-artifacts/python/docker-image.txt 2>&1 || true
 
-      - name: Upload debug lab artifacts
+      - name: Upload Python and Docker artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prixok-debug-lab-${{ github.run_id }}
-          path: debug-artifacts/
-          if-no-files-found: warn
-          retention-days: 7
+          name: prixok-python-exhaustive-${{ github.run_id }}
+          path: debug-artifacts/python/
+          if-no-files-found: error
+          retention-days: 14
+
+  rewrite-and-platforms:
+    name: rewrite-rust-go-node-termux
+    if: github.event_name != 'pull_request' || github.head_ref == 'debug/prixok-runtime-lab'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Prepare artifacts
+        shell: bash
+        run: mkdir -p debug-artifacts/platforms
+
+      - name: Rust exhaustive checks
+        if: hashFiles('rewrite/Cargo.toml') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          (
+            cd rewrite
+            cargo fmt --all -- --check
+            cargo check --locked --workspace --all-targets
+            cargo clippy --locked --workspace --all-targets -- -D warnings
+            cargo test --locked --workspace --all-targets
+            cargo build --locked --workspace --release
+          ) 2>&1 | tee debug-artifacts/platforms/rust.txt
+
+      - name: Set up Go
+        if: hashFiles('rewrite/supervisor/go.mod') != ''
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Go exhaustive checks and race detector
+        if: hashFiles('rewrite/supervisor/go.mod') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd rewrite/supervisor
+            test -z "$(gofmt -l .)"
+            go vet ./...
+            go test -count=1 ./...
+            go test -race -count=3 ./...
+            go build -trimpath -ldflags='-s -w' -o /tmp/atri-supervisor .
+            CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
+              go build -trimpath -ldflags='-s -w' -o /tmp/atri-supervisor-android-arm64 .
+          ) 2>&1 | tee debug-artifacts/platforms/go.txt
+
+      - name: Set up Node 22
+        if: hashFiles('rewrite/web/package-lock.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Node web clean install build and tests
+        if: hashFiles('rewrite/web/package-lock.json') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd rewrite/web
+            npm ci --ignore-scripts --no-audit --no-fund
+            npm run build
+            if node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.test?0:1)"; then
+              npm test -- --runInBand || npm test
+            fi
+          ) 2>&1 | tee debug-artifacts/platforms/node.txt
+
+      - name: Termux recovery launcher and watchdog self-tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          failures=0
+          : > debug-artifacts/platforms/termux-self-tests.txt
+          candidates=(
+            rewrite/termux-all-in-one.sh
+            rewrite/termux-production-canary.sh
+            rewrite/termux-production-topology.sh
+            rewrite/termux-production-recovery-host.sh
+            rewrite/termux-v150-persistence-host.sh
+            rewrite/termux-v150-pre-reboot-check.sh
+            rewrite/termux-v150-deploy.sh
+            rewrite/termux-v150-production-watchdog.sh
+            rewrite/termux-v150-bot-launcher.sh
+            rewrite/termux-v150-boot-hook.sh
+            rewrite/termux-v151-shadow-canary.sh
+            rewrite/termux-v152-parity-canary.sh
+            rewrite/termux-v153-ai-canary.sh
+            rewrite/termux-v154-production-canary.sh
+            rewrite/termux-atri-final-recovery.sh
+            rewrite/termux-v1674-main-final-canary.sh
+            rewrite/termux-v1674-live-recovery-final.sh
+          )
+          for file in "${candidates[@]}"; do
+            [[ -f "$file" ]] || continue
+            echo "===== $file --self-test =====" | tee -a debug-artifacts/platforms/termux-self-tests.txt
+            set +e
+            bash "$file" --self-test 2>&1 | tee -a debug-artifacts/platforms/termux-self-tests.txt
+            rc=${PIPESTATUS[0]}
+            set -e
+            if (( rc != 0 )); then failures=$((failures + 1)); fi
+          done
+          echo "TERMUX_SELF_TEST_FAILURES=$failures" | tee -a debug-artifacts/platforms/termux-self-tests.txt
+          test "$failures" -eq 0
+
+      - name: Upload platform artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prixok-platforms-${{ github.run_id }}
+          path: debug-artifacts/platforms/
+          if-no-files-found: error
+          retention-days: 14
+
+  final-gate:
+    name: exhaustive-final-gate
+    if: always() && (github.event_name != 'pull_request' || github.head_ref == 'debug/prixok-runtime-lab')
+    needs:
+      - repository-integrity
+      - production-python
+      - rewrite-and-platforms
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every exhaustive job to pass
+        shell: bash
+        env:
+          REPOSITORY_RESULT: ${{ needs.repository-integrity.result }}
+          PYTHON_RESULT: ${{ needs.production-python.result }}
+          PLATFORMS_RESULT: ${{ needs.rewrite-and-platforms.result }}
+        run: |
+          set -euo pipefail
+          printf 'repository-integrity=%s\n' "$REPOSITORY_RESULT"
+          printf 'production-python=%s\n' "$PYTHON_RESULT"
+          printf 'rewrite-and-platforms=%s\n' "$PLATFORMS_RESULT"
+          test "$REPOSITORY_RESULT" = success
+          test "$PYTHON_RESULT" = success
+          test "$PLATFORMS_RESULT" = success
+          echo 'PRIXOK_EXHAUSTIVE_DEBUG_LAB=PASS'
