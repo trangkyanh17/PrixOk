@@ -11,6 +11,9 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from bot import LOGGER
 from bot.core.config_manager import Config
 from . import atri_command_ui as command_ui
+from .atri_update_idempotency_v1684 import (
+    claim_telegram_update_once,
+)
 
 
 # ATRI_UNIFIED_COMMAND_CENTER_V160
@@ -77,6 +80,9 @@ SUBHUBS: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {
 }
 
 PAGE_SIZE = 10
+_HANDLER_REGISTRATION_MARKER = (
+    "_atri_unified_menu_handlers_registered_v1684"
+)
 
 
 def _owner_id(query_or_message) -> int:
@@ -305,6 +311,19 @@ async def _edit(query, text: str, keyboard: InlineKeyboardMarkup) -> None:
 
 
 async def unified_menu_command(_, message) -> None:
+    accepted, identity = claim_telegram_update_once(
+        message,
+        route="unified-menu-command",
+    )
+    if not accepted:
+        LOGGER.warning(
+            "ATRI_UNIFIED_MENU_DUPLICATE_DROPPED_V1684 "
+            "route=command identity=%s",
+            identity,
+        )
+        message.stop_propagation()
+        return
+
     owner_id = _owner_id(message)
     raw = str(getattr(message, "text", "") or "").strip()
     command = raw.split(maxsplit=1)[0].lstrip("/").split("@", 1)[0]
@@ -334,6 +353,18 @@ async def unified_menu_command(_, message) -> None:
 
 
 async def unified_menu_callback(_, query) -> None:
+    accepted, identity = claim_telegram_update_once(
+        query,
+        route="unified-menu-callback",
+    )
+    if not accepted:
+        LOGGER.warning(
+            "ATRI_UNIFIED_MENU_DUPLICATE_DROPPED_V1684 "
+            "route=callback identity=%s",
+            identity,
+        )
+        return
+
     data = str(getattr(query, "data", "") or "")
     parts = data.split(":")
     if len(parts) < 3:
@@ -399,22 +430,56 @@ async def unified_menu_callback(_, query) -> None:
         return
 
 
-def add_atri_unified_menu_handlers(client) -> None:
-    client.add_handler(
-        MessageHandler(
-            unified_menu_command,
-            filters=filters.command(list(HUB_COMMANDS)),
-        ),
-        group=-21,
-    )
-    client.add_handler(
-        CallbackQueryHandler(
-            unified_menu_callback,
-            filters=filters.regex(r"^aucm:"),
-        ),
-        group=-21,
-    )
+def add_atri_unified_menu_handlers(client) -> bool:
+    if getattr(client, _HANDLER_REGISTRATION_MARKER, False):
+        LOGGER.info(
+            "Atri Unified Command Center V168.4 registration skipped "
+            "reason=already-registered"
+        )
+        return False
+
+    registered_handlers = []
+    setattr(client, _HANDLER_REGISTRATION_MARKER, True)
+    try:
+        for handler in (
+            MessageHandler(
+                unified_menu_command,
+                filters=filters.command(list(HUB_COMMANDS)),
+            ),
+            CallbackQueryHandler(
+                unified_menu_callback,
+                filters=filters.regex(r"^aucm:"),
+            ),
+        ):
+            client.add_handler(handler, group=-21)
+            registered_handlers.append((handler, -21))
+    except BaseException:
+        rollback_failed = False
+        for handler, group in reversed(registered_handlers):
+            try:
+                client.remove_handler(handler, group=group)
+            except BaseException as rollback_error:
+                rollback_failed = True
+                LOGGER.error(
+                    "Atri Unified Command Center V168.4 rollback failed "
+                    "handler=%s group=%s error=%s",
+                    type(handler).__name__,
+                    group,
+                    rollback_error,
+                )
+
+        if rollback_failed:
+            LOGGER.error(
+                "Atri Unified Command Center V168.4 marker retained "
+                "reason=partial-registration-rollback-failed"
+            )
+        else:
+            delattr(client, _HANDLER_REGISTRATION_MARKER)
+        raise
+
     LOGGER.info(
-        "Atri Unified Command Center V161 registered hubs=%s public=6 owner_full=1",
+        "Atri Unified Command Center V168.4 registered "
+        "hubs=%s public=6 owner_full=1",
         ",".join(HUB_COMMANDS),
     )
+    return True

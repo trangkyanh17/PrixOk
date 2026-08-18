@@ -1,0 +1,261 @@
+name: PrixOk Atri Mirror Exhaustive Lab
+
+on:
+  push:
+    branches: [debug/prixok-atri-mirror-retest]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prixok-atri-mirror-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-command-audit:
+    name: source-command-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Compile and inspect every tracked Python and shell source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/source
+          python -m pip install --quiet ruff pyyaml
+          git ls-files > artifacts/source/tracked-files.txt
+          mapfile -t py < <(git ls-files '*.py')
+          python -m py_compile "${py[@]}"
+          ruff check --select E9,F63,F7,F82 --output-format=full "${py[@]}" | tee artifacts/source/ruff.txt
+          mapfile -t sh < <(git ls-files '*.sh')
+          for file in "${sh[@]}"; do bash -n "$file"; done
+          python - <<'PY' | tee artifacts/source/command-inventory.txt
+          import ast, pathlib
+          root=pathlib.Path('.')
+          registrations=[]
+          command_calls=[]
+          for path in sorted((root/'bot').rglob('*.py')):
+              tree=ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+              for node in ast.walk(tree):
+                  if not isinstance(node, ast.Call):
+                      continue
+                  fn=node.func
+                  name=fn.id if isinstance(fn,ast.Name) else fn.attr if isinstance(fn,ast.Attribute) else ''
+                  if name=='command': command_calls.append((str(path),node.lineno,ast.unparse(node.args[0]) if node.args else '<missing>'))
+                  if name=='add_handler': registrations.append((str(path),node.lineno,ast.unparse(node.args[0]) if node.args else '<missing>'))
+          print('COMMAND_CALLS',len(command_calls))
+          for row in command_calls: print('CMD',*row,sep='\t')
+          print('HANDLER_REGISTRATIONS',len(registrations))
+          for row in registrations: print('REG',*row,sep='\t')
+          if len(command_calls) < 30 or len(registrations) < 30:
+              raise SystemExit('command surface unexpectedly small')
+          PY
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-command-audit-${{ github.run_id }}
+          path: artifacts/source/
+          if-no-files-found: error
+          retention-days: 14
+
+  command-contract:
+    name: command-contract-pass-${{ matrix.pass }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        pass: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t prixok-command:${GITHUB_SHA}-${{ matrix.pass }} .
+      - name: Force command registration and route failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/command-${{ matrix.pass }}
+          cat >/tmp/run.sh <<'EOF'
+          set -Eeuo pipefail
+          deps="$(mktemp -d /tmp/prixok-deps.XXXXXX)"
+          mltbenv/bin/python -m pip install --quiet --disable-pip-version-check --target "$deps" -r requirements-lifecycle.txt pytest-randomly pytest-xdist
+          export PYTHONPATH="$deps" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
+          seed="$TEST_SEED"
+          mltbenv/bin/python -m pytest -q --randomly-seed="$seed" \
+            tests/test_command_surface_exhaustive_v1687.py \
+            tests/test_registration_reentrancy_v1687.py | tee /ci/targeted.txt
+          for round in $(seq 1 20); do
+            mltbenv/bin/python -m pytest -q \
+              tests/test_registration_reentrancy_v1687.py \
+              --randomly-seed="$((seed+round))" >> /ci/replay-stress.txt
+          done
+          mltbenv/bin/python -m pytest -q -n auto --dist=loadscope \
+            tests/test_command_surface_exhaustive_v1687.py \
+            tests/test_registration_reentrancy_v1687.py \
+            --randomly-seed="$((seed+999))" | tee /ci/parallel.txt
+          EOF
+          export TEST_SEED=$((168700 + ${{ matrix.pass }}))
+          docker run --rm -e TEST_SEED \
+            -v "$(pwd)/artifacts/command-${{ matrix.pass }}:/ci" \
+            --entrypoint bash prixok-command:${GITHUB_SHA}-${{ matrix.pass }} -s < /tmp/run.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: command-contract-${{ matrix.pass }}-${{ github.run_id }}
+          path: artifacts/command-${{ matrix.pass }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  atri:
+    name: atri-pass-${{ matrix.pass }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        pass: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t prixok-atri:${GITHUB_SHA}-${{ matrix.pass }} .
+      - name: Atri exhaustive sequential plus parallel stress
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/atri-${{ matrix.pass }}
+          cat >/tmp/run.sh <<'EOF'
+          set -Eeuo pipefail
+          deps="$(mktemp -d /tmp/prixok-deps.XXXXXX)"
+          mltbenv/bin/python -m pip install --quiet --disable-pip-version-check --target "$deps" -r requirements-lifecycle.txt pytest-randomly pytest-xdist
+          export PYTHONPATH="$deps" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
+          mapfile -t files < <(find tests -maxdepth 1 -type f \( -name 'test_atri*.py' -o -name '*capability*.py' -o -name '*provider*.py' -o -name '*artifact*.py' -o -name '*media*.py' -o -name '*document*.py' -o -name '*skill*.py' \) | sort -u)
+          files+=(tests/test_command_surface_exhaustive_v1687.py tests/test_registration_reentrancy_v1687.py)
+          printf '%s\n' "${files[@]}" | sort -u > /ci/files.txt
+          mapfile -t files < /ci/files.txt
+          test ${#files[@]} -gt 5
+          mltbenv/bin/python -m pytest -q --randomly-seed="$TEST_SEED" "${files[@]}" | tee /ci/sequential.txt
+          mltbenv/bin/python -m pytest -q -n auto --dist=loadscope --randomly-seed="$((TEST_SEED+500))" "${files[@]}" | tee /ci/parallel.txt
+          EOF
+          export TEST_SEED=$((268700 + ${{ matrix.pass }}))
+          docker run --rm -e TEST_SEED \
+            -v "$(pwd)/artifacts/atri-${{ matrix.pass }}:/ci" \
+            --entrypoint bash prixok-atri:${GITHUB_SHA}-${{ matrix.pass }} -s < /tmp/run.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atri-${{ matrix.pass }}-${{ github.run_id }}
+          path: artifacts/atri-${{ matrix.pass }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  mirror:
+    name: mirror-pass-${{ matrix.pass }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        pass: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t prixok-mirror:${GITHUB_SHA}-${{ matrix.pass }} .
+      - name: Mirror and leech exhaustive sequential plus parallel stress
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/mirror-${{ matrix.pass }}
+          cat >/tmp/run.sh <<'EOF'
+          set -Eeuo pipefail
+          deps="$(mktemp -d /tmp/prixok-deps.XXXXXX)"
+          mltbenv/bin/python -m pip install --quiet --disable-pip-version-check --target "$deps" -r requirements-lifecycle.txt pytest-randomly pytest-xdist
+          export PYTHONPATH="$deps" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
+          mapfile -t files < <(grep -lE 'mirror|leech|aria2|qbit|torrent|gdrive|rclone|gofile|upload|download|ytdl|gallery|nzb' tests/test_*.py | sort -u || true)
+          files+=(tests/test_command_surface_exhaustive_v1687.py tests/test_registration_reentrancy_v1687.py)
+          printf '%s\n' "${files[@]}" | sort -u > /ci/files.txt
+          mapfile -t files < /ci/files.txt
+          test ${#files[@]} -gt 2
+          mltbenv/bin/python -m pytest -q --randomly-seed="$TEST_SEED" "${files[@]}" | tee /ci/sequential.txt
+          mltbenv/bin/python -m pytest -q -n auto --dist=loadscope --randomly-seed="$((TEST_SEED+500))" "${files[@]}" | tee /ci/parallel.txt
+          EOF
+          export TEST_SEED=$((368700 + ${{ matrix.pass }}))
+          docker run --rm -e TEST_SEED \
+            -v "$(pwd)/artifacts/mirror-${{ matrix.pass }}:/ci" \
+            --entrypoint bash prixok-mirror:${GITHUB_SHA}-${{ matrix.pass }} -s < /tmp/run.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirror-${{ matrix.pass }}-${{ github.run_id }}
+          path: artifacts/mirror-${{ matrix.pass }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  full-source:
+    name: full-source-pass-${{ matrix.pass }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        pass: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t prixok-full:${GITHUB_SHA}-${{ matrix.pass }} .
+      - name: Run every test in independent random order
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/full-${{ matrix.pass }}
+          cat >/tmp/run.sh <<'EOF'
+          set -Eeuo pipefail
+          deps="$(mktemp -d /tmp/prixok-deps.XXXXXX)"
+          mltbenv/bin/python -m pip install --quiet --disable-pip-version-check --target "$deps" -r requirements-lifecycle.txt pytest-randomly
+          export PYTHONPATH="$deps" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
+          mltbenv/bin/python -m pytest --collect-only -q | tee /ci/collect.txt
+          mltbenv/bin/python -m pytest -q --randomly-seed="$TEST_SEED" | tee /ci/pytest.txt
+          EOF
+          export TEST_SEED=$((468700 + ${{ matrix.pass }}))
+          docker run --rm -e TEST_SEED \
+            -v "$(pwd)/artifacts/full-${{ matrix.pass }}:/ci" \
+            --entrypoint bash prixok-full:${GITHUB_SHA}-${{ matrix.pass }} -s < /tmp/run.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-source-${{ matrix.pass }}-${{ github.run_id }}
+          path: artifacts/full-${{ matrix.pass }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+  final-gate:
+    name: atri-mirror-triple-pass-gate
+    if: always()
+    needs: [source-command-audit, command-contract, atri, mirror, full-source]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every domain and all three passes
+        shell: bash
+        env:
+          SOURCE: ${{ needs.source-command-audit.result }}
+          COMMAND: ${{ needs.command-contract.result }}
+          ATRI: ${{ needs.atri.result }}
+          MIRROR: ${{ needs.mirror.result }}
+          FULL: ${{ needs.full-source.result }}
+        run: |
+          set -euo pipefail
+          printf 'source=%s command=%s atri=%s mirror=%s full=%s\n' "$SOURCE" "$COMMAND" "$ATRI" "$MIRROR" "$FULL"
+          test "$SOURCE" = success
+          test "$COMMAND" = success
+          test "$ATRI" = success
+          test "$MIRROR" = success
+          test "$FULL" = success
+          echo 'PRIXOK_ATRI_MIRROR_EXHAUSTIVE_TRIPLE_PASS=PASS'
