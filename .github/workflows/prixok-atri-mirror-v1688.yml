@@ -33,7 +33,8 @@ jobs:
           mapfile -t py < <(git ls-files '*.py')
           python -m py_compile "${py[@]}"
           ruff check --select E9,F63,F7,F82 --output-format=full "${py[@]}" | tee artifacts/source/ruff.txt
-          python - <<'PY' | tee artifacts/source/command-source-report.txt
+          python tools/command_source_audit_v1688.py > artifacts/source/command-callback-source.json
+          python - <<'PY' | tee artifacts/source/command-registration-report.txt
           import ast
           from pathlib import Path
 
@@ -94,11 +95,13 @@ jobs:
           mltbenv/bin/python -m pytest -q --randomly-seed="$seed" \
             tests/test_command_surface_exhaustive_v1688.py \
             tests/test_registration_reentrancy_v1688.py \
-            tests/test_atri_command_catalog_triple_v1688.py | tee /ci/targeted.txt
+            tests/test_atri_command_catalog_triple_v1688.py \
+            tests/test_mirror_command_triple_invocation_v1688.py | tee /ci/targeted.txt
           for round in 1 2 3; do
             mltbenv/bin/python -m pytest -q --randomly-seed="$((seed+round))" \
               tests/test_command_surface_exhaustive_v1688.py \
-              tests/test_registration_reentrancy_v1688.py >> /ci/repeat.txt
+              tests/test_registration_reentrancy_v1688.py \
+              tests/test_mirror_command_triple_invocation_v1688.py >> /ci/repeat.txt
           done
           EOF
           export TEST_SEED=$((168800 + ${{ matrix.pass }}))
@@ -176,7 +179,7 @@ jobs:
           mltbenv/bin/python -m pip install --quiet --disable-pip-version-check --target "$deps" -r requirements-lifecycle.txt pytest-randomly
           export PYTHONPATH="$deps" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
           mapfile -t files < <(grep -lE 'mirror|leech|aria2|qbit|torrent|gdrive|rclone|gofile|upload|download|ytdl|gallery|nzb' tests/test_*.py | sort -u || true)
-          files+=(tests/test_gofile_uploader_v1688.py tests/test_command_surface_exhaustive_v1688.py tests/test_registration_reentrancy_v1688.py)
+          files+=(tests/test_gofile_uploader_v1688.py tests/test_command_surface_exhaustive_v1688.py tests/test_registration_reentrancy_v1688.py tests/test_mirror_command_triple_invocation_v1688.py)
           printf '%s\n' "${files[@]}" | sort -u > /ci/files.txt
           mapfile -t files < /ci/files.txt
           mltbenv/bin/python -m pytest -q --randomly-seed="$TEST_SEED" "${files[@]}" | tee /ci/pytest.txt
