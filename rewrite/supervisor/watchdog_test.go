@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -150,6 +153,41 @@ func TestWatchdogLockProbeFailureFailsClosed(t *testing.T) {
 	if !strings.Contains(joined, "BOT_LOCK_PROBE_UNKNOWN rc=20") ||
 		!strings.Contains(joined, "BOT_SESSION_MISSING_LOCK_UNKNOWN") {
 		t.Fatalf("logs=%v", *logs)
+	}
+}
+
+func TestWatchdogLockProbeDistinguishesHeldAndFreeRealFlock(t *testing.T) {
+	lockPath := t.TempDir() + "/production.lock"
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+
+	config := testWatchdogConfig()
+	config.BotLockPath = lockPath
+	watchdog := newWatchdog(config, &fakeWatchdogRunner{}, nil, nil)
+	probe := watchdog.botLockProbeCommand()
+	if len(probe.Args) != 8 || probe.Args[3] != "bash" || probe.Args[4] != "-lc" {
+		t.Fatalf("unexpected probe command: %+v", probe)
+	}
+	runProbe := func() error {
+		return exec.Command(probe.Args[3], probe.Args[4:]...).Run()
+	}
+
+	if err := runProbe(); err != nil {
+		t.Fatalf("held lock was not reported as held: %v", err)
+	}
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	err = runProbe()
+	exitError, ok := err.(*exec.ExitError)
+	if !ok || exitError.ExitCode() != botLockFreeExitCode {
+		t.Fatalf("free lock exit=%v want=%d", err, botLockFreeExitCode)
 	}
 }
 
