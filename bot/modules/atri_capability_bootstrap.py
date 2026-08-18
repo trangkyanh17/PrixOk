@@ -10,6 +10,7 @@ from bot import LOGGER
 from . import atri_capability_engine as engine
 
 _INSTALLED = False
+_CAPABILITY_HANDLER_MARKER = "_atri_capability_handlers_registered_v1686"
 
 
 def _extend_vertex_skill_context(activation: dict[str, Any]) -> str:
@@ -120,5 +121,26 @@ def install_capability_runtime() -> None:
     LOGGER.info("ATRI_CAPABILITY_BOOTSTRAP_V157_INSTALLED")
 
 
-def add_capability_runtime_handlers(client: Any) -> None:
-    engine.add_capability_handlers(client)
+def add_capability_runtime_handlers(client: Any) -> bool:
+    if client is None:
+        raise RuntimeError("Telegram bot client is not initialized")
+    if getattr(client, _CAPABILITY_HANDLER_MARKER, False):
+        LOGGER.warning(
+            "ATRI_CAPABILITY_HANDLER_DUPLICATE_REGISTRATION_BLOCKED_V1686 client_id=%s",
+            id(client),
+        )
+        return False
+
+    # Set before registration. If registration fails part-way through, retaining
+    # the marker is safer than retrying in-process and duplicating handlers that
+    # were already added before the failure.
+    setattr(client, _CAPABILITY_HANDLER_MARKER, True)
+    try:
+        engine.add_capability_handlers(client)
+    except Exception:
+        LOGGER.exception(
+            "ATRI_CAPABILITY_HANDLER_REGISTRATION_FAILED_V1686 client_id=%s",
+            id(client),
+        )
+        raise
+    return True
