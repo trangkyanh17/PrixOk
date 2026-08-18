@@ -22,6 +22,18 @@ DEFAULT_MAX_THREADS = 192
 DEFAULT_MAX_FDS = 4096
 
 
+def proc_visible_self_pid(proc_root: Path = Path("/proc")) -> int:
+    """Return this process's PID in the PID namespace exposed by procfs."""
+    try:
+        target = os.readlink(proc_root / "self")
+        component = Path(target).name
+        if component.isdigit():
+            return int(component)
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    return os.getpid()
+
+
 def _read_kv_file(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():

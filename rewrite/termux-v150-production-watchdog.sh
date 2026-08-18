@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 BIN="${ATRI_V150_SUPERVISOR_BIN:-$HOME/.local/lib/atri-v150/atri-supervisor}"
 BOT_LAUNCHER="$HOME/.local/lib/atri-v150/prixok-bot-v150.sh"
+ORPHAN_RECOVERY="$HOME/.local/lib/atri-v150/termux-atri-final-recovery.sh"
 LOG_TIMEZONE="${ATRI_LOG_TIMEZONE:-Asia/Ho_Chi_Minh}"
 SHADOW_CONFIG="$HOME/.local/state/atri-v151-shadow/runtime.env"
 STATE_DIR="$HOME/.local/state/atri-v150-wrapper"
@@ -10,6 +11,9 @@ OWNER_LOCK="$STATE_DIR/owner.lock"
 MIN_BACKOFF="${ATRI_V150_SUPERVISOR_MIN_BACKOFF:-3}"
 MAX_BACKOFF="${ATRI_V150_SUPERVISOR_MAX_BACKOFF:-30}"
 STABLE_SECONDS="${ATRI_V150_SUPERVISOR_STABLE_SECONDS:-120}"
+ORPHAN_GRACE="${ATRI_BOT_ORPHAN_GRACE:-90}"
+ORPHAN_RETRY="${ATRI_BOT_ORPHAN_RETRY:-300}"
+ORPHAN_TIMEOUT="${ATRI_BOT_ORPHAN_RECOVERY_TIMEOUT:-60}"
 
 STOP_REQUESTED=0
 CHILD_PID=""
@@ -41,6 +45,10 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$(next_backoff 15)" == 30 ]]
   [[ "$(next_backoff 30)" == 30 ]]
   positive_int "$STABLE_SECONDS"
+  positive_int "$ORPHAN_GRACE"
+  positive_int "$ORPHAN_RETRY"
+  positive_int "$ORPHAN_TIMEOUT"
+  [[ "$ORPHAN_RECOVERY" == */.local/lib/atri-v150/termux-atri-final-recovery.sh ]]
   echo "v150 production watchdog self-test: PASS"
   exit 0
 fi
@@ -48,8 +56,11 @@ fi
 if ! positive_int "$MIN_BACKOFF" || \
    ! positive_int "$MAX_BACKOFF" || \
    ! positive_int "$STABLE_SECONDS" || \
+   ! positive_int "$ORPHAN_GRACE" || \
+   ! positive_int "$ORPHAN_RETRY" || \
+   ! positive_int "$ORPHAN_TIMEOUT" || \
    ((MIN_BACKOFF > MAX_BACKOFF)); then
-  echo "invalid V150 supervisor backoff configuration" >&2
+  echo "invalid V150 supervisor lifecycle configuration" >&2
   exit 2
 fi
 
@@ -100,6 +111,10 @@ while true; do
     ATRI_TELEGRAM_SHADOW_RETRY="${ATRI_TELEGRAM_SHADOW_RETRY:-15}" \
     ATRI_BOT_SESSION=prixok-bot \
     ATRI_BOT_LAUNCHER="$BOT_LAUNCHER" \
+    ATRI_BOT_ORPHAN_RECOVERY="$ORPHAN_RECOVERY" \
+    ATRI_BOT_ORPHAN_GRACE="$ORPHAN_GRACE" \
+    ATRI_BOT_ORPHAN_RETRY="$ORPHAN_RETRY" \
+    ATRI_BOT_ORPHAN_RECOVERY_TIMEOUT="$ORPHAN_TIMEOUT" \
     ATRI_LOCAL_HEALTH="$HOME/atri-production-local-health.sh" \
     ATRI_BROWSER_ENSURE="$HOME/atri-production-browser-ensure.sh" \
     ATRI_NETWORK_STATE="$HOME/atri-production-network-state.sh" \
@@ -111,7 +126,7 @@ while true; do
     ATRI_NETWORK_INTERVAL="${ATRI_NETWORK_INTERVAL:-180}" \
     ATRI_NETWORK_TIMEOUT="${ATRI_NETWORK_TIMEOUT:-8}" \
     ATRI_REWRITE_SHUTDOWN_TIMEOUT="${ATRI_REWRITE_SHUTDOWN_TIMEOUT:-15}" \
-    "$BIN" &
+    "$BIN" 8>&- &
   CHILD_PID=$!
 
   printf '%s SUPERVISOR_START pid=%s\n' "$(date '+%F %T')" "$CHILD_PID"

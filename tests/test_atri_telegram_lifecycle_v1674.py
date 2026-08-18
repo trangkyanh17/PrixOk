@@ -109,6 +109,7 @@ def test_v150_launcher_respawns_supervisor_without_respawning_bot_itself():
     assert "SUPERVISOR_RESTART_BACKOFF" in source
     assert "trap 'request_stop' TERM INT HUP" in source
     assert "ATRI_V150_WRAPPER_ALREADY_RUNNING" in source
+    assert '"$BIN" 8>&- &' in source
     assert 'exec env \\\n' not in source
     assert "tmux new-session" not in source
 

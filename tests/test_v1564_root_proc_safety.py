@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -124,14 +125,15 @@ def test_canary_patch_only_replaces_process_visibility_layer() -> None:
     assert "ATRI_PERFORMANCE_GUARD_V156_INSTALLED" in patched
 
 
-def test_v150_boot_hook_uses_root_owner_guard() -> None:
+def test_v150_boot_hook_uses_wrapper_flock_without_pid_visibility_guess() -> None:
     text = (ROOT / "rewrite/termux-v150-boot-hook.sh").read_text(encoding="utf-8")
-    assert "ATRI_V150_ROOT_OWNER_GUARD_V1564" in text
-    assert "root_ps_snapshot" in text
-    assert "su -c" in text
-    assert "ROOT_PROC_UNAVAILABLE" in text
+    assert 'WRAPPER_LOCK="$WRAPPER_STATE_DIR/owner.lock"' in text
+    assert "wrapper_lock_state" in text
+    assert "flock -n -E 11" in text
+    assert "OWNER_LOCK_UNKNOWN" in text
     assert "exit 78" in text
-    assert "pgrep -af '[a]tri-production-watchdog.sh'" not in text
+    assert "pgrep" not in text
+    assert "su -c" not in text
     assert "9>&-" in text
 
 
@@ -142,10 +144,14 @@ def test_v150_boot_hook_uses_root_owner_guard() -> None:
         ("termux-v1564-v150-safety.sh", "V150 safety installer self-test: PASS"),
     ],
 )
-def test_v1564_shell_self_tests(script: str, marker: str) -> None:
+def test_v1564_shell_self_tests(script: str, marker: str, tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["TMPDIR"] = str(tmp_path)
     result = subprocess.run(
         ["bash", str(ROOT / "rewrite" / script), "--self-test"],
         cwd=ROOT,
+        env=env,
         text=True,
         capture_output=True,
         timeout=30,
