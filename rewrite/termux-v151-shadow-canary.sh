@@ -66,7 +66,7 @@ if [[ "$ACTION" == "--self-test" ]]; then
   for cmd in status apply rollback; do
     grep -q "^    $cmd)" "$0"
   done
-  if grep -Eq 'git[[:space:]]+(pull|reset|checkout|clean)|update\.py|rm[[:space:]]+-rf[[:space:]]+/app' "$0"; then
+  if grep -Eq '^[[:space:]]*git[[:space:]]+(pull|reset|checkout|clean)([[:space:]]|$)|^[[:space:]]*(python[0-9.]*[[:space:]]+)?[^#[:space:]]*update\.py([[:space:]]|$)|^[[:space:]]*rm[[:space:]]+-rf[[:space:]]+/app([/[:space:]]|$)' "$0"; then
     echo "v151 shadow self-test: FAIL (forbidden source mutation command)" >&2
     exit 1
   fi

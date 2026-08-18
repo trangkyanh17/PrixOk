@@ -10,6 +10,7 @@ from httpx import AsyncByteStream, AsyncClient, HTTPError, Limits, Timeout
 
 from ....core.config_manager import Config
 from ...ext_utils.bot_utils import sync_to_async
+from ...ext_utils.files_utils import get_mime_type
 
 LOGGER = getLogger(__name__)
 
@@ -130,11 +131,20 @@ class GoFileUploader:
         files = []
         corrupted = 0
         error = ""
-        if await aiopath.isfile(self._path):
+        first_link = ""
+        folder_count = 0
+        is_single_file = await aiopath.isfile(self._path)
+        if is_single_file:
             files.append(self._path)
+            mime_type = await sync_to_async(get_mime_type, self._path)
         else:
+            mime_type = "Folder"
             walk_data = await sync_to_async(lambda: list(walk(self._path)))
-            for root, _, names in walk_data:
+            for root, dirs, names in walk_data:
+                if root == self._path:
+                    folder_count += len(dirs)
+                else:
+                    folder_count += len(dirs)
                 for name in sorted(names):
                     candidate = ospath.join(root, name)
                     if await aiopath.isfile(candidate):
@@ -165,7 +175,8 @@ class GoFileUploader:
                         return
                     if self._listener.is_cancelled:
                         return
-                    first_link = first_link or link
+                    if not first_link:
+                        first_link = link
         except Exception as exc:
             LOGGER.error(f"GoFile session error: {exc}")
             await self._listener.on_upload_error(f"GoFile: {exc}")
@@ -178,14 +189,15 @@ class GoFileUploader:
             return
         if self._listener.is_cancelled:
             return
+        successful_files = total_files - corrupted
         LOGGER.info(
-            f"Uploaded To GoFile: {self._listener.name} - {total_files - corrupted} files"
+            f"Uploaded To GoFile: {self._listener.name} - {successful_files} files"
         )
         await self._listener.on_upload_complete(
             first_link,
-            files_dict,
-            total_files,
-            corrupted,
+            successful_files,
+            folder_count,
+            mime_type,
         )
 
     async def cancel_task(self):
