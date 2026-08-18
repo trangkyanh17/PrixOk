@@ -438,24 +438,43 @@ def add_atri_unified_menu_handlers(client) -> bool:
         )
         return False
 
+    registered_handlers = []
     setattr(client, _HANDLER_REGISTRATION_MARKER, True)
     try:
-        client.add_handler(
+        for handler in (
             MessageHandler(
                 unified_menu_command,
                 filters=filters.command(list(HUB_COMMANDS)),
             ),
-            group=-21,
-        )
-        client.add_handler(
             CallbackQueryHandler(
                 unified_menu_callback,
                 filters=filters.regex(r"^aucm:"),
             ),
-            group=-21,
-        )
+        ):
+            client.add_handler(handler, group=-21)
+            registered_handlers.append((handler, -21))
     except BaseException:
-        delattr(client, _HANDLER_REGISTRATION_MARKER)
+        rollback_failed = False
+        for handler, group in reversed(registered_handlers):
+            try:
+                client.remove_handler(handler, group=group)
+            except BaseException as rollback_error:
+                rollback_failed = True
+                LOGGER.error(
+                    "Atri Unified Command Center V168.4 rollback failed "
+                    "handler=%s group=%s error=%s",
+                    type(handler).__name__,
+                    group,
+                    rollback_error,
+                )
+
+        if rollback_failed:
+            LOGGER.error(
+                "Atri Unified Command Center V168.4 marker retained "
+                "reason=partial-registration-rollback-failed"
+            )
+        else:
+            delattr(client, _HANDLER_REGISTRATION_MARKER)
         raise
 
     LOGGER.info(

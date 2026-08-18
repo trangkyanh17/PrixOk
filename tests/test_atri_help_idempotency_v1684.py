@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pyrogram import StopPropagation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +81,97 @@ def test_v1684_update_claim_is_atomic_and_update_scoped(tmp_path):
         results = [future.result(timeout=5) for future in futures]
 
     assert sorted(results) == [False, True]
+
+
+def test_v1684_production_shape_identities_are_atomic(tmp_path):
+    module = _load_module(
+        "atri_update_idempotency_v1684_production_shape_test",
+        ROOT / "bot/modules/atri_update_idempotency_v1684.py",
+    )
+    _configure_claims(module, tmp_path)
+
+    def message(message_id: int):
+        update = SimpleNamespace(
+            chat=SimpleNamespace(id=100),
+            message_thread_id=7,
+            id=message_id,
+        )
+        assert not hasattr(update, "update_id")
+        return update
+
+    first, identity = module.claim_telegram_update_once(
+        message(4101),
+        route="help-message",
+    )
+    replay, replay_identity = module.claim_telegram_update_once(
+        message(4101),
+        route="help-message-replay",
+    )
+    assert first is True
+    assert replay is False
+    assert identity == replay_identity == "message:100:7:4101"
+
+    message_barrier = threading.Barrier(3)
+
+    def message_contender() -> bool:
+        message_barrier.wait(timeout=5)
+        return module.claim_telegram_update_once(
+            message(4102),
+            route="help-message-concurrent",
+        )[0]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(message_contender) for _ in range(2)]
+        message_barrier.wait(timeout=5)
+        message_results = [
+            future.result(timeout=5)
+            for future in futures
+        ]
+
+    assert sorted(message_results) == [False, True]
+
+    def callback(query_id: str):
+        update = SimpleNamespace(
+            id=query_id,
+            data="aucm:42:refresh",
+        )
+        assert not hasattr(update, "update_id")
+        return update
+
+    first, identity = module.claim_telegram_update_once(
+        callback("callback-4101"),
+        route="help-callback",
+    )
+    replay, replay_identity = module.claim_telegram_update_once(
+        callback("callback-4101"),
+        route="help-callback-replay",
+    )
+    assert first is True
+    assert replay is False
+    assert (
+        identity
+        == replay_identity
+        == "callback:callback-4101"
+    )
+
+    callback_barrier = threading.Barrier(3)
+
+    def callback_contender() -> bool:
+        callback_barrier.wait(timeout=5)
+        return module.claim_telegram_update_once(
+            callback("callback-4102"),
+            route="help-callback-concurrent",
+        )[0]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(callback_contender) for _ in range(2)]
+        callback_barrier.wait(timeout=5)
+        callback_results = [
+            future.result(timeout=5)
+            for future in futures
+        ]
+
+    assert sorted(callback_results) == [False, True]
 
 
 class _Logger:
@@ -190,11 +282,9 @@ class _Message:
     def __init__(
         self,
         *,
-        update_id: int,
         message_id: int,
         fail_after_side_effect: bool = False,
     ):
-        self.update_id = update_id
         self.id = message_id
         self.message_id = message_id
         self.message_thread_id = 0
@@ -229,11 +319,9 @@ class _Query:
     def __init__(
         self,
         *,
-        update_id: int,
         query_id: str,
         message: _EditableMessage,
     ):
-        self.update_id = update_id
         self.id = query_id
         self.data = "aucm:42:refresh"
         self.from_user = _User()
@@ -252,36 +340,115 @@ class _Client:
     def add_handler(self, handler, group=0):
         self.handlers.append((group, handler))
 
+    def remove_handler(self, handler, group=0):
+        self.handlers.remove((group, handler))
+
     async def restart(self):
         self.restarts += 1
+
+
+class _PartialFailureClient(_Client):
+    def __init__(self):
+        super().__init__()
+        self.add_calls = 0
+
+    def add_handler(self, handler, group=0):
+        self.add_calls += 1
+        if self.add_calls == 2:
+            raise RuntimeError("injected second-handler failure")
+        super().add_handler(handler, group)
+
+
+def test_v1684_partial_registration_rolls_back_before_retry(tmp_path):
+    with _isolated_menu(tmp_path) as (menu, _):
+        client = _PartialFailureClient()
+
+        with pytest.raises(
+            RuntimeError,
+            match="injected second-handler failure",
+        ):
+            menu.add_atri_unified_menu_handlers(client)
+
+        assert client.handlers == []
+        assert menu.add_atri_unified_menu_handlers(client) is True
+
+        callbacks = [
+            handler.callback
+            for _, handler in client.handlers
+        ]
+        assert callbacks.count(menu.unified_menu_command) == 1
+        assert callbacks.count(menu.unified_menu_callback) == 1
+
+
+def test_v1684_unified_help_stops_before_legacy_help(tmp_path):
+    with _isolated_menu(tmp_path) as (menu, _):
+        message = _Message(message_id=99)
+        legacy_calls = 0
+
+        def stop_propagation():
+            message.stop_calls += 1
+            raise StopPropagation
+
+        message.stop_propagation = stop_propagation
+
+        async def legacy_help(_, _message):
+            nonlocal legacy_calls
+            legacy_calls += 1
+
+        async def dispatch():
+            for callback in (
+                menu.unified_menu_command,
+                legacy_help,
+            ):
+                try:
+                    await callback(None, message)
+                except StopPropagation:
+                    break
+
+        asyncio.run(dispatch())
+
+        assert len(message.replies) == 1
+        assert message.stop_calls == 1
+        assert legacy_calls == 0
+
+    handlers_source = (
+        ROOT / "bot/core/handlers.py"
+    ).read_text(encoding="utf-8")
+    assert (
+        handlers_source.count(
+            "filters=command(BotCommands.HelpCommand"
+        )
+        == 1
+    )
 
 
 def test_v1684_help_dispatch_callback_registry_and_catalog_contract(tmp_path):
     with _isolated_menu(tmp_path) as (menu, command_ui):
 
         async def scenario():
-            single = _Message(update_id=5001, message_id=101)
+            single = _Message(message_id=101)
             await menu.unified_menu_command(None, single)
 
-            replay = _Message(update_id=5002, message_id=102)
-            await menu.unified_menu_command(None, replay)
-            await menu.unified_menu_command(None, replay)
+            replay_first = _Message(message_id=102)
+            replay_second = _Message(message_id=102)
+            await menu.unified_menu_command(None, replay_first)
+            await menu.unified_menu_command(None, replay_second)
 
-            concurrent = _Message(update_id=5003, message_id=103)
+            concurrent_first = _Message(message_id=103)
+            concurrent_second = _Message(message_id=103)
             await asyncio.gather(
-                menu.unified_menu_command(None, concurrent),
-                menu.unified_menu_command(None, concurrent),
+                menu.unified_menu_command(None, concurrent_first),
+                menu.unified_menu_command(None, concurrent_second),
             )
 
-            first = _Message(update_id=5004, message_id=104)
-            second = _Message(update_id=5005, message_id=104)
+            first = _Message(message_id=104)
+            second = _Message(message_id=105)
             await asyncio.gather(
                 menu.unified_menu_command(None, first),
                 menu.unified_menu_command(None, second),
             )
 
             retry = _Message(
-                update_id=5006,
                 message_id=106,
                 fail_after_side_effect=True,
             )
@@ -293,15 +460,42 @@ def test_v1684_help_dispatch_callback_registry_and_catalog_contract(tmp_path):
             retry.fail_after_side_effect = False
             await menu.unified_menu_command(None, retry)
 
-            editable = _EditableMessage()
-            callback = _Query(
-                update_id=6001,
+            sequential_editable = _EditableMessage()
+            sequential_callback_first = _Query(
                 query_id="callback-6001",
-                message=editable,
+                message=sequential_editable,
+            )
+            sequential_callback_second = _Query(
+                query_id="callback-6001",
+                message=sequential_editable,
+            )
+            await menu.unified_menu_callback(
+                None,
+                sequential_callback_first,
+            )
+            await menu.unified_menu_callback(
+                None,
+                sequential_callback_second,
+            )
+
+            concurrent_editable = _EditableMessage()
+            concurrent_callback_first = _Query(
+                query_id="callback-6002",
+                message=concurrent_editable,
+            )
+            concurrent_callback_second = _Query(
+                query_id="callback-6002",
+                message=concurrent_editable,
             )
             await asyncio.gather(
-                menu.unified_menu_callback(None, callback),
-                menu.unified_menu_callback(None, callback),
+                menu.unified_menu_callback(
+                    None,
+                    concurrent_callback_first,
+                ),
+                menu.unified_menu_callback(
+                    None,
+                    concurrent_callback_second,
+                ),
             )
 
             registry = _Client()
@@ -320,13 +514,24 @@ def test_v1684_help_dispatch_callback_registry_and_catalog_contract(tmp_path):
 
             return {
                 "single": single,
-                "replay": replay,
-                "concurrent": concurrent,
+                "replay": (replay_first, replay_second),
+                "concurrent": (
+                    concurrent_first,
+                    concurrent_second,
+                ),
                 "first": first,
                 "second": second,
                 "retry": retry,
-                "callback": callback,
-                "editable": editable,
+                "sequential_callbacks": (
+                    sequential_callback_first,
+                    sequential_callback_second,
+                ),
+                "sequential_editable": sequential_editable,
+                "concurrent_callbacks": (
+                    concurrent_callback_first,
+                    concurrent_callback_second,
+                ),
+                "concurrent_editable": concurrent_editable,
                 "registry": registry,
                 "restarted": restarted_process_client,
             }
@@ -334,16 +539,30 @@ def test_v1684_help_dispatch_callback_registry_and_catalog_contract(tmp_path):
         result = asyncio.run(scenario())
 
         assert len(result["single"].replies) == 1
-        assert len(result["replay"].replies) == 1
-        assert len(result["concurrent"].replies) == 1
+        assert sum(
+            len(message.replies)
+            for message in result["replay"]
+        ) == 1
+        assert sum(
+            len(message.replies)
+            for message in result["concurrent"]
+        ) == 1
         assert (
             len(result["first"].replies)
             + len(result["second"].replies)
             == 2
         )
         assert len(result["retry"].replies) == 1
-        assert result["callback"].answers == 1
-        assert len(result["editable"].edits) == 1
+        assert sum(
+            query.answers
+            for query in result["sequential_callbacks"]
+        ) == 1
+        assert len(result["sequential_editable"].edits) == 1
+        assert sum(
+            query.answers
+            for query in result["concurrent_callbacks"]
+        ) == 1
+        assert len(result["concurrent_editable"].edits) == 1
 
         for key in ("registry", "restarted"):
             handlers = result[key].handlers
@@ -373,7 +592,7 @@ def test_v1684_help_dispatch_callback_registry_and_catalog_contract(tmp_path):
     menu_source = (
         ROOT / "bot/modules/atri_unified_menu.py"
     ).read_text(encoding="utf-8")
-    assert "filters=command(BotCommands.HelpCommand" not in handlers_source
+    assert "filters=command(BotCommands.HelpCommand" in handlers_source
     assert '_cmd("help"): "main"' in menu_source
 
 
