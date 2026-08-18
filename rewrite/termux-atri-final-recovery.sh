@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # The normal mode is an all-in-one verified deployment/recovery transaction.
 # --orphan-recover is an internal fail-closed hook called by the V150 watchdog.
 
-SCRIPT_VERSION="v168.2-final"
+SCRIPT_VERSION="v168.3-final"
 DISTRO="${ATRI_PROOT_DISTRO:-debian}"
 BOT_SESSION="${ATRI_BOT_SESSION:-prixok-bot}"
 BOT_LOCK="${ATRI_BOT_LOCK_PATH:-/app/.atri-prixok-bot-v133.lock}"
@@ -34,6 +34,8 @@ STABILITY_ROUNDS="${ATRI_FINAL_STABILITY_ROUNDS:-10}"
 STABILITY_INTERVAL="${ATRI_FINAL_STABILITY_INTERVAL:-6}"
 SUPERVISOR_TIMEOUT="${ATRI_FINAL_SUPERVISOR_TIMEOUT:-120}"
 RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
+ROOTFS_PATH="UNRESOLVED"
+RUN_DIR=""
 
 positive_int() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; }
 log_line() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
@@ -181,7 +183,11 @@ self_test() {
     'LIFECYCLE_TEST_OVERLAY=PASS' \
     'RUNTIME_PYTHON_ENV_UNCHANGED=PASS' \
     'discover_rootfs' \
+    'bot_lock_host_path' \
     'resolve_lock_owner' \
+    'require-lock-held' \
+    'fdinfo_lock' \
+    'fd_held' \
     'orphan_recover_main' \
     'CONTROLLED BOT RECOVERY' \
     'CONTROLLED SUPERVISOR RECOVERY' \
@@ -264,6 +270,30 @@ print(f"{s.st_dev}|{s.st_ino}")
 ' "$1" 2>/dev/null | tail -n1 | tr -d '\r'
 }
 
+host_identity() {
+  "$HOST_PYTHON" -c '
+import os, sys
+s = os.stat(sys.argv[1], follow_symlinks=True)
+print(f"{s.st_dev}|{s.st_ino}")
+' "$1" 2>/dev/null | tail -n1 | tr -d '\r'
+}
+
+bot_lock_host_path() {
+  local device="$1" inode="$2"
+  local guest_path host_path guest_current host_current
+  [[ -n "$ROOTFS_PATH" && "$ROOTFS_PATH" != UNRESOLVED && -d "$ROOTFS_PATH" ]] || return 1
+  [[ "$(guest_lock_state 2>/dev/null || true)" == HELD ]] || return 1
+  guest_current="$(guest_identity "$BOT_LOCK" || true)"
+  [[ "$guest_current" == "$device|$inode" ]] || return 1
+  guest_path="$(guest readlink -f -- "$BOT_LOCK" 2>/dev/null | tail -n1 | tr -d '\r')"
+  [[ "$guest_path" == /* && "$guest_path" != *$'\n'* && "$guest_path" != *$'\t'* ]] || return 1
+  host_path="$ROOTFS_PATH$guest_path"
+  [[ -f "$host_path" && ! -L "$host_path" ]] || return 1
+  host_current="$(host_identity "$host_path" || true)"
+  [[ "$host_current" == "$device|$inode" ]] || return 1
+  printf '%s\n' "$host_path"
+}
+
 host_lock_state() {
   local path="$1"
   local rc
@@ -312,28 +342,79 @@ run_probe() {
   printf '%s\n' "$output"
 }
 
+discover_rootfs() (
+  local identity_file cleanup_identity=0
+  local launcher device inode candidate host_identity
+  if [[ -n "$RUN_DIR" && -d "$RUN_DIR" ]]; then
+    identity_file="$RUN_DIR/rootfs-probe.txt"
+  else
+    mkdir -p "$STATE_ROOT"
+    identity_file="$(mktemp "$STATE_ROOT/rootfs-probe.XXXXXX")"
+    cleanup_identity=1
+  fi
+  trap '((cleanup_identity == 0)) || rm -f -- "$identity_file"' EXIT
+  : >"$identity_file"
+  guest python3 -c '
+import os, time
+s = os.stat("/", follow_symlinks=True)
+print(f"{s.st_dev}|{s.st_ino}", flush=True)
+time.sleep(8)
+' >"$identity_file" 2>/dev/null &
+  launcher=$!
+  for _ in $(seq 1 30); do
+    [[ -s "$identity_file" ]] && break
+    sleep 0.2
+  done
+  IFS='|' read -r device inode <"$identity_file" || true
+  if [[ "$device" =~ ^[0-9]+$ && "$inode" =~ ^[1-9][0-9]*$ ]]; then
+    candidate="$(run_probe --strategy rootfs --proc-root /proc --root-device "$device" --root-inode "$inode" --expected-uid "$(id -u)" 2>/dev/null | tail -n1 || true)"
+  fi
+  wait "$launcher" 2>/dev/null || true
+  [[ -n "$candidate" && -d "$candidate" ]] || return 1
+  host_identity="$("$HOST_PYTHON" -c 'import os,sys; s=os.stat(sys.argv[1]); print(f"{s.st_dev}|{s.st_ino}")' "$candidate" 2>/dev/null || true)"
+  [[ -n "${device:-}" && "$host_identity" == "$device|$inode" ]] || return 1
+  printf '%s\n' "$candidate"
+)
+
 resolve_lock_owner() {
   local device="$1"
   local inode="$2"
-  run_probe \
+  local host_path owner
+  [[ "$(guest_lock_state 2>/dev/null || true)" == HELD ]] || return 1
+  host_path="$(bot_lock_host_path "$device" "$inode" || true)"
+  [[ -n "$host_path" ]] || return 1
+  owner="$(run_probe \
     --strategy lock-owner \
     --proc-root /proc \
+    --lock-file "$host_path" \
     --lock-device "$device" \
     --lock-inode "$inode" \
     --expected-uid "$(id -u)" \
-    --require-proc-locks \
-    --details | tail -n1
+    --require-lock-held \
+    --details | tail -n1)" || return 1
+  [[ "$owner" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|(proc_locks|fdinfo_lock|fd_held)$ ]] || return 1
+  [[ "$(guest_lock_state 2>/dev/null || true)" == HELD ]] || return 1
+  [[ "$(guest_identity "$BOT_LOCK" 2>/dev/null || true)" == "$device|$inode" ]] || return 1
+  [[ "$(host_identity "$host_path" 2>/dev/null || true)" == "$device|$inode" ]] || return 1
+  printf '%s\n' "$owner"
 }
 
 resolve_wrapper_owner() {
+  local identity owner
   [[ "$(host_lock_state "$OWNER_LOCK" 2>/dev/null || true)" == HELD ]] || return 1
-  run_probe \
+  identity="$(host_identity "$OWNER_LOCK" || true)"
+  [[ "$identity" =~ ^[0-9]+\|[1-9][0-9]*$ ]] || return 1
+  owner="$(run_probe \
     --strategy lock-owner \
     --proc-root /proc \
     --lock-file "$OWNER_LOCK" \
     --expected-uid "$(id -u)" \
-    --require-proc-locks \
-    --details | tail -n1
+    --require-lock-held \
+    --details | tail -n1)" || return 1
+  [[ "$owner" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|(proc_locks|fdinfo_lock|fd_held)$ ]] || return 1
+  [[ "$(host_lock_state "$OWNER_LOCK" 2>/dev/null || true)" == HELD ]] || return 1
+  [[ "$(host_identity "$OWNER_LOCK" 2>/dev/null || true)" == "$identity" ]] || return 1
+  printf '%s\n' "$owner"
 }
 
 resolve_supervisor_child() {
@@ -415,6 +496,9 @@ orphan_recover_main() {
   command -v tmux >/dev/null 2>&1 || { log_line "ORPHAN_RECOVERY_FAIL tmux-missing"; exit 70; }
   command -v timeout >/dev/null 2>&1 || { log_line "ORPHAN_RECOVERY_FAIL timeout-missing"; exit 70; }
   [[ -f "$RUNTIME_PROBE" ]] || { log_line "ORPHAN_RECOVERY_FAIL probe-missing"; exit 70; }
+  ROOTFS_PATH="$(discover_rootfs || true)"
+  [[ -n "$ROOTFS_PATH" && -d "$ROOTFS_PATH" ]] || { log_line "ORPHAN_RECOVERY_FAIL rootfs-unproven"; exit 71; }
+  log_line "ORPHAN_RECOVERY_ROOTFS_PROVEN path=$ROOTFS_PATH"
   tmux_has "$BOT_SESSION" && { log_line "ORPHAN_RECOVERY_ABORT tmux-present"; exit 75; }
   state="$(guest_lock_state 2>/dev/null || true)"
   if [[ "$state" == FREE || "$state" == MISSING ]]; then
@@ -427,7 +511,7 @@ orphan_recover_main() {
   IFS='|' read -r device inode <<<"$identity"
   [[ "$device" =~ ^[0-9]+$ && "$inode" =~ ^[1-9][0-9]*$ ]] || { log_line "ORPHAN_RECOVERY_FAIL identity"; exit 71; }
   owner="$(resolve_lock_owner "$device" "$inode" || true)"
-  [[ "$owner" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|proc_locks$ ]] || { log_line "ORPHAN_RECOVERY_FAIL owner-unproven"; exit 72; }
+  [[ "$owner" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|(proc_locks|fdinfo_lock|fd_held)$ ]] || { log_line "ORPHAN_RECOVERY_FAIL owner-unproven"; exit 72; }
 
   tmux_has "$BOT_SESSION" && { log_line "ORPHAN_RECOVERY_ABORT tmux-returned"; exit 75; }
   [[ "$(guest_lock_state 2>/dev/null || true)" == HELD ]] || { log_line "ORPHAN_RECOVERY_RACE lock-released"; exit 0; }
@@ -664,32 +748,6 @@ wait_recovered_bot() {
   return 1
 }
 
-discover_rootfs() {
-  local identity_file="$RUN_DIR/rootfs-probe.txt"
-  local launcher device inode candidate host_identity
-  : >"$identity_file"
-  guest python3 -c '
-import os, time
-s = os.stat("/", follow_symlinks=True)
-print(f"{s.st_dev}|{s.st_ino}", flush=True)
-time.sleep(8)
-' >"$identity_file" 2>/dev/null &
-  launcher=$!
-  for _ in $(seq 1 30); do
-    [[ -s "$identity_file" ]] && break
-    sleep 0.2
-  done
-  IFS='|' read -r device inode <"$identity_file" || true
-  if [[ "$device" =~ ^[0-9]+$ && "$inode" =~ ^[1-9][0-9]*$ ]]; then
-    candidate="$(run_probe --strategy rootfs --proc-root /proc --root-device "$device" --root-inode "$inode" --expected-uid "$(id -u)" 2>/dev/null | tail -n1 || true)"
-  fi
-  wait "$launcher" 2>/dev/null || true
-  [[ -n "$candidate" && -d "$candidate" ]] || return 1
-  host_identity="$("$HOST_PYTHON" -c 'import os,sys; s=os.stat(sys.argv[1]); print(f"{s.st_dev}|{s.st_ino}")' "$candidate" 2>/dev/null || true)"
-  [[ -n "${device:-}" && "$host_identity" == "$device|$inode" ]] || return 1
-  printf '%s\n' "$candidate"
-}
-
 wait_wrapper_owner() {
   local timeout="$1"
   local deadline
@@ -697,7 +755,7 @@ wait_wrapper_owner() {
   deadline=$((SECONDS + timeout))
   while ((SECONDS < deadline)); do
     details="$(resolve_wrapper_owner 2>/dev/null || true)"
-    [[ "$details" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|proc_locks$ ]] && { printf '%s\n' "$details"; return 0; }
+    [[ "$details" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|(proc_locks|fdinfo_lock|fd_held)$ ]] && { printf '%s\n' "$details"; return 0; }
     sleep 1
   done
   return 1
