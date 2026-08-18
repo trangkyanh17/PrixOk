@@ -10,6 +10,7 @@ from httpx import AsyncByteStream, AsyncClient, HTTPError, Limits, Timeout
 
 from ....core.config_manager import Config
 from ...ext_utils.bot_utils import sync_to_async
+from ...ext_utils.files_utils import get_mime_type
 
 LOGGER = getLogger(__name__)
 
@@ -90,8 +91,7 @@ class GoFileUploader:
             raise RuntimeError("GoFile server lookup returned no servers")
         if server := servers[0].get("name"):
             return f"https://{server}.gofile.io/uploadFile"
-        else:
-            raise RuntimeError("GoFile server response missing server name")
+        raise RuntimeError("GoFile server response missing server name")
 
     async def _upload_one(self, client, upload_url, file_path):
         if self._listener.is_cancelled:
@@ -123,27 +123,51 @@ class GoFileUploader:
             raise RuntimeError("GoFile response missing 'data' object")
         if link := (data.get("downloadPage") or "").strip():
             return link
-        else:
-            raise RuntimeError("GoFile response missing downloadPage")
+        raise RuntimeError("GoFile response missing downloadPage")
 
     async def upload(self):
         files = []
+        folders = 0
         corrupted = 0
         error = ""
-        if await aiopath.isfile(self._path):
+        first_link = ""
+        is_single_file = await aiopath.isfile(self._path)
+
+        if is_single_file:
             files.append(self._path)
         else:
             walk_data = await sync_to_async(lambda: list(walk(self._path)))
-            for root, _, names in walk_data:
+            root_abs = ospath.abspath(self._path)
+            for root, dirs, names in walk_data:
+                if ospath.abspath(root) != root_abs:
+                    folders += 1
+                folders += sum(
+                    1
+                    for dirname in dirs
+                    if ospath.abspath(ospath.join(root, dirname)) != root_abs
+                )
                 for name in sorted(names):
                     candidate = ospath.join(root, name)
                     if await aiopath.isfile(candidate):
                         files.append(candidate)
+
         if not files:
             await self._listener.on_upload_error(
                 "GoFile: no files were found to upload"
             )
             return
+
+        # walk() already visits every child directory as a root. Counting dirs in
+        # each tuple as well would double-count nested directories, so normalize
+        # from the actual parent directories represented by discovered files.
+        if not is_single_file:
+            parent_dirs = {
+                ospath.abspath(ospath.dirname(file_path))
+                for file_path in files
+                if ospath.abspath(ospath.dirname(file_path)) != ospath.abspath(self._path)
+            }
+            folders = len(parent_dirs)
+
         total_files = len(files)
         try:
             async with AsyncClient(
@@ -165,27 +189,35 @@ class GoFileUploader:
                         return
                     if self._listener.is_cancelled:
                         return
-                    first_link = first_link or link
+                    if not first_link:
+                        first_link = link
         except Exception as exc:
             LOGGER.error(f"GoFile session error: {exc}")
             await self._listener.on_upload_error(f"GoFile: {exc}")
             return
 
-        if total_files <= corrupted:
+        successful = total_files - corrupted
+        if successful <= 0 or not first_link:
             await self._listener.on_upload_error(
                 f"Files Corrupted or unable to upload. {error or 'Check logs!'}"
             )
             return
         if self._listener.is_cancelled:
             return
+
+        mime_type = (
+            await sync_to_async(get_mime_type, self._path)
+            if is_single_file
+            else "Folder"
+        )
         LOGGER.info(
-            f"Uploaded To GoFile: {self._listener.name} - {total_files - corrupted} files"
+            f"Uploaded To GoFile: {self._listener.name} - {successful} files"
         )
         await self._listener.on_upload_complete(
             first_link,
-            files_dict,
-            total_files,
-            corrupted,
+            successful,
+            folders,
+            mime_type,
         )
 
     async def cancel_task(self):
