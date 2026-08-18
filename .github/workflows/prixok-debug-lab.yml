@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - debug/prixok-runtime-lab
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: prixok-exhaustive-debug-${{ github.ref }}
+  group: prixok-exhaustive-debug-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -83,7 +86,7 @@ jobs:
           fi
 
       - name: Commit confirmed repairs back to isolated branch
-        if: steps.repair.outputs.changed == 'true'
+        if: github.event_name == 'push' && steps.repair.outputs.changed == 'true'
         shell: bash
         run: |
           set -euo pipefail
