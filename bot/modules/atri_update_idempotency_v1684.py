@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # ATRI_TELEGRAM_UPDATE_IDEMPOTENCY_V1684
+# ATRI_GLOBAL_DISPATCH_GUARD_V1685
 
 import fcntl
 import hashlib
@@ -25,6 +26,10 @@ UPDATE_SWEEP_INTERVAL_SECONDS = max(
     int(os.getenv("ATRI_TELEGRAM_UPDATE_SWEEP_SECONDS", "120")),
 )
 
+_GLOBAL_HANDLER_REGISTRATION_MARKER = (
+    "_atri_global_dispatch_guard_v1685_registered"
+)
+_GLOBAL_HANDLER_GROUP = -10000
 _LAST_SWEEP_AT = 0.0
 
 
@@ -74,9 +79,23 @@ def _update_identity(update: Any) -> str | None:
     return f"message:{chat_id}:{thread_id}:{message_id}"
 
 
-def _claim_path(identity: str) -> Path:
-    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-    return UPDATE_CLAIM_DIR / f"{digest}.claim"
+def _claim_namespace(route: str) -> str:
+    # The global ingress guard and downstream route-specific guards must not
+    # contend for the same claim. The global claim only decides whether this
+    # parsed Telegram event may enter the handler graph at all. Downstream
+    # V168.4 claims remain independent so the accepted first dispatch can still
+    # execute the unified-menu command/callback normally.
+    if str(route or "").startswith("global-dispatch-"):
+        return "global-dispatch"
+    return "route"
+
+
+def _claim_path(identity: str, *, route: str = "") -> Path:
+    namespace = _claim_namespace(route)
+    digest = hashlib.sha256(
+        f"{namespace}\0{identity}".encode("utf-8")
+    ).hexdigest()
+    return UPDATE_CLAIM_DIR / f"{namespace}-{digest}.claim"
 
 
 def _mutex_path() -> Path:
@@ -164,6 +183,11 @@ def claim_telegram_update_once(
 
     Claims are shared across tasks and processes. Filesystem failures fail open
     so an unavailable optional claim store cannot make the bot silent.
+
+    V168.5 reserves a separate "global-dispatch" namespace for the earliest
+    ingress guard. This lets the first accepted event continue through normal
+    handler groups while all replays of that same event are stopped before
+    command/AI/media side effects.
     """
 
     identity = _update_identity(update)
@@ -187,7 +211,7 @@ def claim_telegram_update_once(
         return True, identity
 
     try:
-        path = _claim_path(identity)
+        path = _claim_path(identity, route=route)
         _sweep_stale_claims(now)
 
         try:
@@ -253,3 +277,134 @@ def claim_telegram_update_once(
             _close_claim_mutex(mutex_fd)
         except OSError:
             pass
+
+
+def _stop_propagation(update: Any) -> None:
+    stop = getattr(update, "stop_propagation", None)
+    if callable(stop):
+        stop()
+
+    # Defensive fallback for light-weight test doubles or a future parsed
+    # update type that does not expose stop_propagation().
+    from pyrogram import StopPropagation
+
+    raise StopPropagation
+
+
+async def _global_message_guard(_, message) -> None:
+    accepted, identity = claim_telegram_update_once(
+        message,
+        route="global-dispatch-message",
+    )
+    if accepted:
+        return
+
+    from bot import LOGGER
+
+    LOGGER.warning(
+        "ATRI_GLOBAL_DISPATCH_DUPLICATE_DROPPED_V1685 "
+        "kind=message identity=%s pid=%s",
+        identity,
+        os.getpid(),
+    )
+    _stop_propagation(message)
+
+
+async def _global_callback_guard(_, query) -> None:
+    accepted, identity = claim_telegram_update_once(
+        query,
+        route="global-dispatch-callback",
+    )
+    if accepted:
+        return
+
+    from bot import LOGGER
+
+    LOGGER.warning(
+        "ATRI_GLOBAL_DISPATCH_DUPLICATE_DROPPED_V1685 "
+        "kind=callback identity=%s pid=%s",
+        identity,
+        os.getpid(),
+    )
+    _stop_propagation(query)
+
+
+def install_atri_global_dispatch_guard_v1685(client: Any) -> bool:
+    """Install a process-shared replay guard before normal Telegram handlers."""
+
+    if client is None:
+        return False
+    if getattr(client, _GLOBAL_HANDLER_REGISTRATION_MARKER, False):
+        return False
+
+    from pyrogram import filters
+    from pyrogram.handlers import CallbackQueryHandler, MessageHandler
+
+    registered_handlers: list[tuple[Any, int]] = []
+    setattr(client, _GLOBAL_HANDLER_REGISTRATION_MARKER, True)
+
+    try:
+        for handler in (
+            MessageHandler(
+                _global_message_guard,
+                filters=filters.incoming,
+            ),
+            CallbackQueryHandler(_global_callback_guard),
+        ):
+            client.add_handler(handler, group=_GLOBAL_HANDLER_GROUP)
+            registered_handlers.append(
+                (handler, _GLOBAL_HANDLER_GROUP)
+            )
+    except BaseException:
+        rollback_failed = False
+        for handler, group in reversed(registered_handlers):
+            try:
+                client.remove_handler(handler, group=group)
+            except BaseException:
+                rollback_failed = True
+
+        if not rollback_failed:
+            try:
+                delattr(client, _GLOBAL_HANDLER_REGISTRATION_MARKER)
+            except AttributeError:
+                pass
+        raise
+
+    from bot import LOGGER
+
+    LOGGER.info(
+        "ATRI_GLOBAL_DISPATCH_GUARD_V1685_INSTALLED "
+        "group=%s ttl=%s path=%s",
+        _GLOBAL_HANDLER_GROUP,
+        UPDATE_CLAIM_TTL_SECONDS,
+        UPDATE_CLAIM_DIR,
+    )
+    return True
+
+
+def _install_global_dispatch_guard_if_ready() -> bool:
+    """Production import hook.
+
+    The canonical V168.4 module is imported by atri_unified_menu while
+    bot.core.handlers is being built, after TgClient.start_bot() has completed
+    and before add_handlers() registers /ping, legacy /help, Atri, media, etc.
+    Installing here therefore creates one earlier group=-10000 ingress gate
+    without changing main/lifecycle code.
+    """
+
+    try:
+        from bot.core.telegram_manager import TgClient
+    except Exception:
+        return False
+
+    client = getattr(TgClient, "bot", None)
+    if client is None:
+        return False
+
+    return install_atri_global_dispatch_guard_v1685(client)
+
+
+# Only the canonical package import may touch the live Telegram client.
+# Unit tests load this source under alternate module names to test claim logic.
+if __name__ == "bot.modules.atri_update_idempotency_v1684":
+    _install_global_dispatch_guard_if_ready()
