@@ -34,6 +34,7 @@ def _proc_entry(
 ) -> Path:
     proc = proc_root / str(pid)
     (proc / "fd").mkdir(parents=True)
+    (proc / "fdinfo").mkdir()
     stat_tail = ["S", str(parent_pid), *("0" for _ in range(17)), str(start_ticks)]
     (proc / "stat").write_text(
         f"{pid} (worker) {' '.join(stat_tail)}\n", encoding="utf-8"
@@ -65,6 +66,17 @@ def _attach_fd(proc: Path, fd: int, target: Path) -> None:
     (proc / "fd" / str(fd)).symlink_to(target)
 
 
+def _write_fdinfo_lock(proc: Path, fd: int, lock: Path, lock_pid: int) -> None:
+    stat = lock.stat()
+    (proc / "fdinfo" / str(fd)).write_text(
+        "pos:\t0\n"
+        "flags:\t0100002\n"
+        f"lock:\t1: FLOCK  ADVISORY  WRITE {lock_pid} "
+        f"{os.major(stat.st_dev):02x}:{os.minor(stat.st_dev):02x}:{stat.st_ino} 0 EOF\n",
+        encoding="utf-8",
+    )
+
+
 def test_v1563_proc_locks_resolves_owner_even_when_recorded_pid_is_wrong(tmp_path: Path):
     probe = _load_probe()
     proc_root = tmp_path / "proc"
@@ -93,6 +105,120 @@ def test_v1563_fd_inode_scan_is_kernel_identity_fallback(tmp_path: Path):
     assert probe.find_proc_lock_owner_pids(proc_root, lock) == []
     assert probe.find_fd_lock_owner_pids(proc_root, lock) == [401]
     assert probe.resolve_lock_owner_pid(proc_root, lock) == 401
+
+
+def test_v1563_android_empty_proc_locks_accepts_only_held_exact_fd(tmp_path: Path):
+    lock = tmp_path / "production.lock"
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import fcntl,sys,time; "
+                "f=open(sys.argv[1],'w+'); f.write('7\\n'); f.flush(); "
+                "fcntl.flock(f.fileno(),fcntl.LOCK_EX); "
+                "print('LOCKED',flush=True); time.sleep(60)"
+            ),
+            str(lock),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "LOCKED"
+        proc_root = tmp_path / "proc"
+        proc_root.mkdir()
+        owner = _proc_entry(proc_root, holder.pid, start_ticks=8765)
+        _attach_fd(owner, 9, lock)
+        (proc_root / "locks").write_text("", encoding="utf-8")
+        stat = lock.stat()
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(PROBE_PATH),
+                "--strategy",
+                "lock-owner",
+                "--proc-root",
+                str(proc_root),
+                "--lock-file",
+                str(lock),
+                "--lock-device",
+                str(stat.st_dev),
+                "--lock-inode",
+                str(stat.st_ino),
+                "--expected-uid",
+                str(os.getuid()),
+                "--require-lock-held",
+                "--details",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == f"{holder.pid}|8765|{os.getuid()}|fd_held"
+    finally:
+        holder.terminate()
+        holder.wait(timeout=10)
+
+
+def test_v1563_android_prefers_exact_fdinfo_flock_when_proc_locks_is_empty(
+    tmp_path: Path,
+):
+    probe = _load_probe()
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    lock = tmp_path / "production.lock"
+    lock.write_text("guest-pid\n", encoding="utf-8")
+    owner = _proc_entry(proc_root, 405, start_ticks=8642)
+    _attach_fd(owner, 9, lock)
+    _write_fdinfo_lock(owner, 9, lock, 405)
+    (proc_root / "locks").write_text("", encoding="utf-8")
+
+    identity = probe.resolve_lock_owner_identity(
+        proc_root,
+        lock.stat().st_dev,
+        lock.stat().st_ino,
+        expected_uid=os.getuid(),
+    )
+    assert identity == probe.ProcessIdentity(
+        405, 8642, os.getuid(), "fdinfo_lock"
+    )
+
+
+def test_v1563_fd_reference_without_flock_is_never_signal_evidence(tmp_path: Path):
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    lock = tmp_path / "production.lock"
+    lock.write_text("7\n", encoding="utf-8")
+    owner = _proc_entry(proc_root, 409, start_ticks=7654)
+    _attach_fd(owner, 9, lock)
+    (proc_root / "locks").write_text("", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PROBE_PATH),
+            "--strategy",
+            "lock-owner",
+            "--proc-root",
+            str(proc_root),
+            "--lock-file",
+            str(lock),
+            "--expected-uid",
+            str(os.getuid()),
+            "--require-lock-held",
+            "--details",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "exact lock inode is not held" in result.stderr
 
 
 def test_v1563_destructive_gate_requires_proc_locks_not_fd_fallback(tmp_path: Path):

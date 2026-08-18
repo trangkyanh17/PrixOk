@@ -4,14 +4,17 @@
 The legacy/default ``argv`` strategy is retained for V156.1 compatibility.
 V156.3 uses ``lock-owner``: it identifies the process that owns the exact
 production singleton lock inode from kernel-visible state. ``/proc/locks`` is
-preferred; ``/proc/<pid>/fd`` inode ownership is an independent fallback and
-cross-check. The PID text stored inside the lock and argv matches are only
-reported as diagnostics.
+preferred, followed by a FLOCK row attached directly to the matching descriptor
+in ``/proc/<pid>/fdinfo/<fd>``. Android kernels that publish neither view may
+use exactly one ``/proc/<pid>/fd`` inode owner only when an independent
+non-blocking flock attempt proves that same inode is currently locked. The PID
+text stored inside the lock and argv matches are only reported as diagnostics.
 """
 
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import re
 import sys
@@ -21,6 +24,10 @@ from typing import NamedTuple
 _PYTHON_BASENAME = re.compile(r"^python(?:3(?:\.\d+)*)?$")
 _PROC_LOCK_RE = re.compile(
     r"^\d+:\s+(?:->\s+)?FLOCK\s+\S+\s+\S+\s+(-?\d+)\s+"
+    r"([0-9A-Fa-f]+):([0-9A-Fa-f]+):(\d+)\s+"
+)
+_FDINFO_LOCK_RE = re.compile(
+    r"^lock:\s+\d+:\s+(?:->\s+)?FLOCK\s+\S+\s+\S+\s+(-?\d+)\s+"
     r"([0-9A-Fa-f]+):([0-9A-Fa-f]+):(\d+)\s+"
 )
 _DEFAULT_LOCK = Path("/app/.atri-prixok-bot-v133.lock")
@@ -136,6 +143,58 @@ def find_fd_lock_owner_pids_for_identity(
     return sorted(set(matches))
 
 
+def find_fdinfo_lock_owner_pids_for_identity(
+    proc_root: Path,
+    device: int,
+    inode: int,
+) -> list[int]:
+    """Find PIDs whose exact matching FD has a kernel-reported FLOCK row."""
+    identity = (device, inode)
+    major, minor = os.major(device), os.minor(device)
+    matches: list[int] = []
+
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        fd_dir = entry / "fd"
+        try:
+            fds = list(fd_dir.iterdir())
+        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+            continue
+        for fd in fds:
+            try:
+                stat = os.stat(fd)
+                if (stat.st_dev, stat.st_ino) != identity:
+                    continue
+                lines = (entry / "fdinfo" / fd.name).read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+            except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+                continue
+            found = False
+            for line in lines:
+                match = _FDINFO_LOCK_RE.match(line)
+                if match is None:
+                    continue
+                pid_text, major_hex, minor_hex, inode_text = match.groups()
+                try:
+                    lock_pid = int(pid_text)
+                    item = (
+                        int(major_hex, 16),
+                        int(minor_hex, 16),
+                        int(inode_text),
+                    )
+                except ValueError:
+                    continue
+                if lock_pid > 0 and item == (major, minor, inode):
+                    matches.append(int(entry.name))
+                    found = True
+                    break
+            if found:
+                break
+    return sorted(set(matches))
+
+
 def find_fd_lock_owner_pids(proc_root: Path, lock_file: Path) -> list[int]:
     """Find processes with an FD referencing the exact production lock inode."""
     stat = lock_file.stat()
@@ -154,6 +213,40 @@ class ProcessIdentity(NamedTuple):
     start_ticks: int
     real_uid: int
     source: str
+
+
+def require_exact_lock_held(lock_file: Path, device: int, inode: int) -> None:
+    """Prove the path is the requested inode and a separate open cannot lock it."""
+    before = lock_file.stat()
+    if (before.st_dev, before.st_ino) != (device, inode):
+        raise RuntimeError(
+            "lock path identity mismatch: "
+            f"path={(before.st_dev, before.st_ino)} expected={(device, inode)}"
+        )
+
+    flags = (
+        os.O_RDWR
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    fd = os.open(lock_file, flags)
+    try:
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) != (device, inode):
+            raise RuntimeError("opened lock descriptor identity mismatch")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            raise RuntimeError("exact lock inode is not held")
+    finally:
+        os.close(fd)
+
+    after = lock_file.stat()
+    if (after.st_dev, after.st_ino) != (device, inode):
+        raise RuntimeError("lock path identity changed during held-state proof")
 
 
 def read_process_start_ticks(proc_root: Path, pid: int) -> int:
@@ -190,28 +283,46 @@ def resolve_lock_owner_identity(
     proc_lock_pids = find_proc_lock_owner_pids_for_identity(
         proc_root, device, inode
     )
+    fdinfo_lock_pids = find_fdinfo_lock_owner_pids_for_identity(
+        proc_root, device, inode
+    )
     fd_pids = find_fd_lock_owner_pids_for_identity(proc_root, device, inode)
 
-    if len(proc_lock_pids) > 1:
+    if len(proc_lock_pids) > 1 or len(fdinfo_lock_pids) > 1:
         raise RuntimeError(
-            f"ambiguous lock owners: proc_locks={proc_lock_pids} fd_owners={fd_pids}"
+            "ambiguous lock owners: "
+            f"proc_locks={proc_lock_pids} fdinfo_locks={fdinfo_lock_pids} "
+            f"fd_owners={fd_pids}"
         )
 
     if require_proc_locks and len(proc_lock_pids) != 1:
         raise RuntimeError(
             "requires exactly one /proc/locks owner: "
-            f"proc_locks={proc_lock_pids} fd_owners={fd_pids}"
+            f"proc_locks={proc_lock_pids} fdinfo_locks={fdinfo_lock_pids} "
+            f"fd_owners={fd_pids}"
         )
 
-    if proc_lock_pids and fd_pids and proc_lock_pids[0] not in fd_pids:
+    if proc_lock_pids and fdinfo_lock_pids and proc_lock_pids != fdinfo_lock_pids:
         raise RuntimeError(
-            f"kernel lock owner disagreement: proc_locks={proc_lock_pids} fd_owners={fd_pids}"
+            "kernel lock owner disagreement: "
+            f"proc_locks={proc_lock_pids} fdinfo_locks={fdinfo_lock_pids} "
+            f"fd_owners={fd_pids}"
         )
 
-    owners = proc_lock_pids or (fd_pids if len(fd_pids) == 1 else [])
+    authoritative_pids = proc_lock_pids or fdinfo_lock_pids
+    if authoritative_pids and fd_pids and authoritative_pids[0] not in fd_pids:
+        raise RuntimeError(
+            "kernel lock owner disagreement: "
+            f"proc_locks={proc_lock_pids} fdinfo_locks={fdinfo_lock_pids} "
+            f"fd_owners={fd_pids}"
+        )
+
+    owners = authoritative_pids or (fd_pids if len(fd_pids) == 1 else [])
     if len(owners) != 1:
         raise RuntimeError(
-            f"requires exactly one kernel lock owner: proc_locks={proc_lock_pids} fd_owners={fd_pids}"
+            "requires exactly one kernel lock owner: "
+            f"proc_locks={proc_lock_pids} fdinfo_locks={fdinfo_lock_pids} "
+            f"fd_owners={fd_pids}"
         )
 
     pid = owners[0]
@@ -222,11 +333,17 @@ def resolve_lock_owner_identity(
         raise RuntimeError(
             f"lock owner UID mismatch: pid={pid} uid={real_uid} expected={expected_uid}"
         )
+    if proc_lock_pids:
+        source = "proc_locks"
+    elif fdinfo_lock_pids:
+        source = "fdinfo_lock"
+    else:
+        source = "fd"
     return ProcessIdentity(
         pid=pid,
         start_ticks=read_process_start_ticks(proc_root, pid),
         real_uid=real_uid,
-        source="proc_locks" if proc_lock_pids else "fd",
+        source=source,
     )
 
 
@@ -388,6 +505,7 @@ def main() -> int:
     parser.add_argument("--expected-uid", type=int)
     parser.add_argument("--details", action="store_true")
     parser.add_argument("--require-proc-locks", action="store_true")
+    parser.add_argument("--require-lock-held", action="store_true")
     parser.add_argument("--parent-pid", type=int)
     parser.add_argument("--executable")
     parser.add_argument("--argument")
@@ -469,6 +587,8 @@ def main() -> int:
         if (args.lock_device is None) != (args.lock_inode is None):
             parser.error("lock identity requires both --lock-device and --lock-inode")
         if args.lock_device is not None:
+            if args.require_lock_held:
+                require_exact_lock_held(lock_file, args.lock_device, args.lock_inode)
             identity = resolve_lock_owner_identity(
                 proc_root,
                 args.lock_device,
@@ -476,8 +596,12 @@ def main() -> int:
                 expected_uid=args.expected_uid,
                 require_proc_locks=args.require_proc_locks,
             )
+            if args.require_lock_held:
+                require_exact_lock_held(lock_file, args.lock_device, args.lock_inode)
         else:
             stat = lock_file.stat()
+            if args.require_lock_held:
+                require_exact_lock_held(lock_file, stat.st_dev, stat.st_ino)
             identity = resolve_lock_owner_identity(
                 proc_root,
                 stat.st_dev,
@@ -485,6 +609,10 @@ def main() -> int:
                 expected_uid=args.expected_uid,
                 require_proc_locks=args.require_proc_locks,
             )
+            if args.require_lock_held:
+                require_exact_lock_held(lock_file, stat.st_dev, stat.st_ino)
+        if args.require_lock_held and identity.source == "fd":
+            identity = identity._replace(source="fd_held")
     except (FileNotFoundError, PermissionError, OSError, RuntimeError) as exc:
         argv_pids = find_bot_pids(proc_root)
         print(
