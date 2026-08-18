@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FINAL = ROOT / "rewrite/termux-atri-final-recovery.sh"
 PROBE = ROOT / "rewrite/v156_bot_pid_probe.py"
 WATCHDOG = ROOT / "rewrite/termux-v150-production-watchdog.sh"
+LIFECYCLE_REQUIREMENTS = ROOT / "requirements-lifecycle.txt"
+DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
+CI_WORKFLOW = ROOT / ".github/workflows/prixok-ci.yml"
 
 
 def _proc_real_uid() -> int:
@@ -75,6 +78,50 @@ def test_runtime_generated_qbittorrent_config_is_the_only_tracked_dirty_exceptio
         'audit_production_tree final "$EXPECTED_MAIN_SHA" "$EXPECTED_MAIN_SHA"'
         in source
     )
+
+
+def test_lifecycle_tests_use_a_pinned_disposable_overlay_without_mutating_production():
+    source = FINAL.read_text(encoding="utf-8")
+    locked = {
+        line
+        for line in LIFECYCLE_REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    }
+    expected = {
+        "pytest==9.1.1",
+        "pytest-asyncio==1.4.0",
+        "httpx==0.28.1",
+        "anyio==4.14.2",
+        "certifi==2026.7.22",
+        "httpcore==1.0.9",
+        "idna==3.18",
+        "iniconfig==2.3.0",
+        "packaging==26.3",
+        "pluggy==1.6.0",
+        "pygments==2.21.0",
+        "h11==0.16.0",
+        "typing-extensions==4.16.0",
+        "socksio==1.0.0",
+    }
+
+    assert locked == expected
+    assert DEV_REQUIREMENTS.read_text(encoding="utf-8").splitlines()[-1] == (
+        "-r requirements-lifecycle.txt"
+    )
+    assert source.count(" -m pip install") == 1
+    install = source[source.index(" -m pip install") : source.index("export PYTHONPATH")]
+    assert "--target '$STAGE_DIR/.lifecycle-deps'" in install
+    assert "--only-binary=:all:" in install
+    assert "import pytest_asyncio" in source
+    assert "LIFECYCLE_TEST_OVERLAY=PASS" in source
+    assert "RUNTIME_PYTHON_ENV_UNCHANGED=PASS" in source
+    assert "runtime_env_before" in source and "runtime_env_after" in source
+    assert "elif python3" not in source
+
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+    assert "--target \"$deps\"" in workflow
+    assert "-r requirements-lifecycle.txt" in workflow
+    assert "RUNTIME_PYTHON_ENV_UNCHANGED=PASS" in workflow
 
 
 def test_final_recovery_contains_pre_and_post_ten_round_gates():
