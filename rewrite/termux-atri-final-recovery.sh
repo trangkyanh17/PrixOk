@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # The normal mode is an all-in-one verified deployment/recovery transaction.
 # --orphan-recover is an internal fail-closed hook called by the V150 watchdog.
 
-SCRIPT_VERSION="v168.1-final"
+SCRIPT_VERSION="v168.2-final"
 DISTRO="${ATRI_PROOT_DISTRO:-debian}"
 BOT_SESSION="${ATRI_BOT_SESSION:-prixok-bot}"
 BOT_LOCK="${ATRI_BOT_LOCK_PATH:-/app/.atri-prixok-bot-v133.lock}"
@@ -177,6 +177,9 @@ self_test() {
   for marker in \
     'audit_tracked_tree_local' \
     'RUNTIME_MUTABLE_TRACKED_PATH' \
+    'requirements-lifecycle.txt' \
+    'LIFECYCLE_TEST_OVERLAY=PASS' \
+    'RUNTIME_PYTHON_ENV_UNCHANGED=PASS' \
     'discover_rootfs' \
     'resolve_lock_owner' \
     'orphan_recover_main' \
@@ -953,13 +956,52 @@ STAGE_DIR="$(guest mktemp -d /tmp/atri-final-stage.XXXXXX | tail -n1 | tr -d '\r
 [[ "$STAGE_DIR" =~ ^/tmp/atri-final-stage\.[A-Za-z0-9]+$ ]] || fatal "invalid staging directory"
 guest git clone --quiet --shared /app "$STAGE_DIR" || fatal "isolated clone failed"
 guest git -C "$STAGE_DIR" switch --quiet --detach "$EXPECTED_MAIN_SHA" || fatal "isolated checkout failed"
-test_python="$(guest bash -lc 'if [[ -x /app/mltbenv/bin/python ]] && /app/mltbenv/bin/python -c "import pytest" >/dev/null 2>&1; then echo /app/mltbenv/bin/python; elif python3 -c "import pytest" >/dev/null 2>&1; then command -v python3; fi' | tail -n1 | tr -d '\r')"
-[[ -n "$test_python" ]] || fatal "pytest unavailable in Debian"
+# shellcheck disable=SC2016  # Expanded by the guest bash, not the Termux host.
+test_python="$(guest bash -lc 'p=/app/mltbenv/bin/python; if [[ -x "$p" ]] && "$p" -m pip --version >/dev/null 2>&1 && "$p" -c "import pyrogram, uvloop" >/dev/null 2>&1; then echo "$p"; fi' | tail -n1 | tr -d '\r')"
+[[ "$test_python" == /app/mltbenv/bin/python ]] || fatal "production Python/pip/runtime imports unavailable"
 guest_bash "
 set -Eeuo pipefail
 cd '$STAGE_DIR'
 mkdir -p '$STAGE_DIR/.test-state'
+runtime_env_before=\"\$(env -u PYTHONPATH '$test_python' -m pip freeze --all | LC_ALL=C sort | sha256sum | awk '{print \$1}')\"
+PIP_CACHE_DIR='$STAGE_DIR/.lifecycle-pip-cache' \\
+  '$test_python' -m pip install \\
+    --disable-pip-version-check \\
+    --no-input \\
+    --no-compile \\
+    --only-binary=:all: \\
+    --retries 3 \\
+    --timeout 30 \\
+    --target '$STAGE_DIR/.lifecycle-deps' \\
+    -r '$STAGE_DIR/requirements-lifecycle.txt'
+export PYTHONPATH='$STAGE_DIR/.lifecycle-deps'
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
 export ATRI_PROVIDER_CONTROL_STATE_PATH='$STAGE_DIR/.test-state/atri_provider_control.json'
+'$test_python' - <<'PY'
+import os
+from importlib.metadata import version
+
+import httpx
+import pytest
+import pytest_asyncio
+import socksio
+
+expected = {
+    'pytest': '9.1.1',
+    'pytest-asyncio': '1.4.0',
+    'httpx': '0.28.1',
+    'socksio': '1.0.0',
+}
+actual = {name: version(name) for name in expected}
+if actual != expected:
+    raise SystemExit(f'lifecycle dependency mismatch: {actual}')
+deps = os.path.realpath('$STAGE_DIR/.lifecycle-deps') + os.sep
+for module in (pytest, pytest_asyncio, httpx, socksio):
+    if not os.path.realpath(module.__file__).startswith(deps):
+        raise SystemExit(f'non-isolated lifecycle dependency: {module.__name__}')
+print('LIFECYCLE_TEST_OVERLAY=PASS')
+PY
 git diff --check
 while IFS= read -r -d '' file; do bash -n \"\$file\"; done < <(find . -type f -name '*.sh' -not -path './.git/*' -print0)
 bash rewrite/termux-atri-final-recovery.sh --self-test
@@ -976,6 +1018,9 @@ for run in \$(seq 1 10); do
     tests/test_v1563_kernel_lock_owner.py
   bash rewrite/termux-atri-final-recovery.sh --self-test
 done
+runtime_env_after=\"\$(env -u PYTHONPATH '$test_python' -m pip freeze --all | LC_ALL=C sort | sha256sum | awk '{print \$1}')\"
+[[ \"\$runtime_env_before\" == \"\$runtime_env_after\" ]]
+echo RUNTIME_PYTHON_ENV_UNCHANGED=PASS
 cd rewrite/supervisor
 [[ -z \"\$(gofmt -l .)\" ]]
 go vet ./...

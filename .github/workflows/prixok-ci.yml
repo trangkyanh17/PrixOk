@@ -177,11 +177,41 @@ jobs:
             docker run --rm \
               --entrypoint bash \
               "prixok-ci:${GITHUB_SHA}" \
-              -lc '
+              -s 2>&1 <<'DOCKER_TEST'
                 set -euo pipefail
-                mltbenv/bin/pip install --no-cache-dir -r requirements-dev.txt
+                deps="$(mktemp -d /tmp/atri-lifecycle-deps.XXXXXX)"
+                cache="$(mktemp -d /tmp/atri-lifecycle-pip.XXXXXX)"
+                before="$(env -u PYTHONPATH mltbenv/bin/python -m pip freeze --all | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+                PIP_CACHE_DIR="$cache" \
+                  mltbenv/bin/python -m pip install \
+                    --disable-pip-version-check \
+                    --no-input \
+                    --no-compile \
+                    --only-binary=:all: \
+                    --target "$deps" \
+                    -r requirements-lifecycle.txt
+                export PYTHONPATH="$deps"
+                export PYTHONNOUSERSITE=1
+                export PYTHONDONTWRITEBYTECODE=1
+                mltbenv/bin/python - <<'PY'
+          from importlib.metadata import version
+
+          expected = {
+              "pytest": "9.1.1",
+              "pytest-asyncio": "1.4.0",
+              "httpx": "0.28.1",
+              "socksio": "1.0.0",
+          }
+          actual = {name: version(name) for name in expected}
+          if actual != expected:
+              raise SystemExit(f"lifecycle dependency mismatch: {actual}")
+          print("LIFECYCLE_TEST_OVERLAY=PASS")
+          PY
                 mltbenv/bin/python -m pytest -m "not slow"
-              ' 2>&1
+                after="$(env -u PYTHONPATH mltbenv/bin/python -m pip freeze --all | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+                test "$before" = "$after"
+                echo "RUNTIME_PYTHON_ENV_UNCHANGED=PASS"
+          DOCKER_TEST
           )"
           status=$?
           set -e
