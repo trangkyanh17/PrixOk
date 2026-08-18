@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -388,6 +390,203 @@ def test_v1563_exact_argv_scan_does_not_use_substring_matching(tmp_path: Path):
         target,
         expected_uid=os.getuid(),
     ) == [probe.ProcessIdentity(735, 11, os.getuid(), "exact_argv")]
+
+
+def test_exact_shell_script_owner_requires_interpreter_argv_and_open_inode(
+    tmp_path: Path,
+):
+    probe = _load_probe()
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    interpreter = tmp_path / "bash"
+    interpreter.write_bytes(b"interpreter")
+    script = tmp_path / "atri-production-watchdog.sh"
+    script.write_text("while true; do sleep 30; done\n", encoding="utf-8")
+
+    owner = _proc_entry(
+        proc_root,
+        737,
+        [str(interpreter), str(script)],
+        start_ticks=21,
+    )
+    (owner / "exe").symlink_to(interpreter)
+    _attach_fd(owner, 255, script)
+
+    argv_only = _proc_entry(
+        proc_root,
+        738,
+        [str(interpreter), str(script)],
+        start_ticks=22,
+    )
+    (argv_only / "exe").symlink_to(interpreter)
+
+    unrelated = _proc_entry(
+        proc_root,
+        739,
+        ["python3", "--argument", str(script)],
+        start_ticks=23,
+    )
+    (unrelated / "exe").symlink_to(interpreter)
+    _attach_fd(unrelated, 10, script)
+
+    assert probe.find_exact_shell_script_processes(
+        proc_root,
+        script,
+        interpreter,
+        expected_uid=os.getuid(),
+    ) == [probe.ProcessIdentity(737, 21, os.getuid(), "script_fd_exec")]
+
+
+def test_exact_shell_script_owner_is_proven_against_live_proc(tmp_path: Path):
+    script = tmp_path / "legacy-watchdog.sh"
+    script.write_text(
+        "while true; do sleep 1; done\n",
+        encoding="utf-8",
+    )
+    interpreter = Path(subprocess.check_output(["which", "bash"], text=True).strip())
+    holder = subprocess.Popen(
+        [str(interpreter), str(script)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        result = None
+        while time.monotonic() < deadline:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(PROBE_PATH),
+                    "--strategy",
+                    "shell-script",
+                    "--proc-root",
+                    "/proc",
+                    "--script",
+                    str(script),
+                    "--interpreter",
+                    str(interpreter),
+                    "--expected-uid",
+                    str(os.getuid()),
+                    "--details",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                break
+            time.sleep(0.05)
+        assert result is not None
+        assert result.returncode == 0, result.stderr
+        pid, start_ticks, uid, source = result.stdout.strip().split("|")
+        assert int(pid) > 0
+        assert int(start_ticks) > 0
+        assert int(uid) == os.getuid()
+        assert source == "script_fd_exec"
+        visible_argv = (Path("/proc") / pid / "cmdline").read_bytes().split(b"\0")
+        assert visible_argv[:2] == [
+            os.fsencode(str(interpreter)),
+            os.fsencode(str(script)),
+        ]
+
+        replacement = tmp_path / "replacement-watchdog.sh"
+        replacement.write_text("exit 0\n", encoding="utf-8")
+        os.replace(replacement, script)
+        after_replace = subprocess.run(
+            [
+                sys.executable,
+                str(PROBE_PATH),
+                "--strategy",
+                "shell-script",
+                "--proc-root",
+                "/proc",
+                "--script",
+                str(script),
+                "--interpreter",
+                str(interpreter),
+                "--expected-uid",
+                str(os.getuid()),
+                "--details",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert after_replace.returncode == 0, after_replace.stderr
+        assert after_replace.stdout == result.stdout
+    finally:
+        holder.terminate()
+        holder.wait(timeout=10)
+
+
+def test_exact_executable_rejects_path_that_is_only_an_argument(tmp_path: Path):
+    probe = _load_probe()
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    executable = tmp_path / "atri-supervisor"
+    executable.write_bytes(b"binary")
+
+    owner = _proc_entry(proc_root, 740, [str(executable)], start_ticks=31)
+    (owner / "exe").symlink_to(executable)
+    false_match = _proc_entry(
+        proc_root,
+        741,
+        ["python3", "--executable", str(executable)],
+        start_ticks=32,
+    )
+    (false_match / "exe").symlink_to(executable)
+
+    assert probe.find_exact_executable_processes(
+        proc_root,
+        executable,
+        expected_uid=os.getuid(),
+    ) == [probe.ProcessIdentity(740, 31, os.getuid(), "exact_exe")]
+
+
+def test_exact_executable_survives_atomic_binary_replacement(tmp_path: Path):
+    source = shutil.which("sleep")
+    assert source is not None
+    executable = tmp_path / "atri-supervisor"
+    shutil.copy2(source, executable)
+    holder = subprocess.Popen(
+        [str(executable), "30"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    def probe_owner() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(PROBE_PATH),
+                "--strategy",
+                "exact-exe",
+                "--proc-root",
+                "/proc",
+                "--executable",
+                str(executable),
+                "--expected-uid",
+                str(os.getuid()),
+                "--details",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    try:
+        before = probe_owner()
+        assert before.returncode == 0, before.stderr
+        assert before.stdout.strip().endswith(f"|{os.getuid()}|exact_exe")
+        replacement = tmp_path / "replacement-supervisor"
+        shutil.copy2(source, replacement)
+        os.replace(replacement, executable)
+        after = probe_owner()
+        assert after.returncode == 0, after.stderr
+        assert after.stdout == before.stdout
+    finally:
+        holder.terminate()
+        holder.wait(timeout=10)
 
 
 def test_v1563_rootfs_is_derived_from_live_proot_argv_and_inode(tmp_path: Path):

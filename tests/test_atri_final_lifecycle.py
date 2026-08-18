@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FINAL = ROOT / "rewrite/termux-atri-final-recovery.sh"
 PROBE = ROOT / "rewrite/v156_bot_pid_probe.py"
 WATCHDOG = ROOT / "rewrite/termux-v150-production-watchdog.sh"
+BOOT_HOOK = ROOT / "rewrite/termux-v150-boot-hook.sh"
 LIFECYCLE_REQUIREMENTS = ROOT / "requirements-lifecycle.txt"
 DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
 CI_WORKFLOW = ROOT / ".github/workflows/prixok-ci.yml"
@@ -43,6 +44,8 @@ def test_final_recovery_syntax_self_test_and_safety_contract():
         text=True,
     )
     assert self_test.returncode == 0, self_test.stdout + self_test.stderr
+    assert "lock state self-test: PASS" in self_test.stdout
+    assert "legacy handoff logic self-test: PASS" in self_test.stdout
     assert "tracked tree audit self-test: PASS" in self_test.stdout
     assert "termux atri final recovery self-test: PASS" in self_test.stdout
 
@@ -61,6 +64,67 @@ def test_final_recovery_syntax_self_test_and_safety_contract():
     assert "ATRI_EXPECTED_MAIN_SHA" in source
     assert "ATRI_FINAL_RECOVERY=FAIL" in source
     assert "tar -C \"$RUN_DIR\" -czf \"$BUNDLE\"" in source
+    assert not re.search(r"\bfi\n\s*rc=\$\?", source)
+
+
+def test_legacy_watchdog_handoff_requires_script_inode_owner_and_pid_revalidation():
+    source = FINAL.read_text(encoding="utf-8")
+
+    assert "--strategy shell-script" in source
+    assert "script_fd_exec" in source
+    assert "legacy_file_identity" in source
+    assert "stop_exact_legacy_process" in source
+    assert "stop_legacy_snapshot" in source
+    assert 'signal_exact_pid TERM "$expected"' in source
+    assert 'signal_exact_pid KILL "$expected"' in source
+    transaction = source[source.index('PHASE="runtime-transaction"') :]
+    assert transaction.index("stop_legacy_snapshot") < transaction.index(
+        'PHASE="source-fast-forward"'
+    )
+    assert transaction.index('PHASE="source-fast-forward"') < transaction.index(
+        "--orphan-recover"
+    )
+    assert transaction.index("--orphan-recover") < transaction.index(
+        "install_candidates ||"
+    )
+    assert transaction.index("install_candidates ||") < transaction.index(
+        "requested_wrapper=\"$(start_wrapper)\""
+    )
+    production_topology = source[
+        source.index('PHASE="production-topology"') : source.index(
+            'PHASE="runtime-transaction"'
+        )
+    ]
+    assert "verify_no_legacy_owner" not in production_topology
+    assert "LEGACY_PROCESSES_BEFORE" in production_topology
+
+
+def test_supervisor_orphan_probe_requires_exact_executable_inode():
+    source = FINAL.read_text(encoding="utf-8")
+    transaction = source[
+        source.index('PHASE="production-topology"') : source.index(
+            'PHASE="bot-online"'
+        )
+    ]
+
+    assert 'exact_executable_processes "$V150_BIN"' in transaction
+    assert 'exact_argument_processes "$V150_BIN"' not in transaction
+    assert "exact_exe" in source
+
+
+def test_boot_hook_real_flock_self_test_covers_held_and_free_states():
+    source = BOOT_HOOK.read_text(encoding="utf-8")
+    assert not re.search(r"\bfi\n\s*rc=\$\?", source)
+    completed = subprocess.run(
+        ["bash", str(BOOT_HOOK), "--self-test"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "v150 boot lock state self-test: PASS" in completed.stdout
+    assert "v150 boot hook self-test: PASS" in completed.stdout
 
 
 def test_runtime_generated_qbittorrent_config_is_the_only_tracked_dirty_exception():
