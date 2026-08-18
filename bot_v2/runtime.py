@@ -21,7 +21,7 @@ DEFAULT_INVENTORY_PATH = Path("/app/atri_data/prixok_v2_handler_inventory.tsv")
 class RuntimeLock:
     """Hold the same singleton lock as production v1 for the whole process.
 
-    v2 must never run beside the legacy Telegram worker.  Reusing the existing
+    v2 must never run beside the legacy Telegram worker. Reusing the existing
     lock path gives a hard mutual-exclusion boundary during migration.
     """
 
@@ -106,7 +106,6 @@ async def _start_application_services() -> None:
 
 
 def _register_extension_handlers(registry: HandlerRegistry) -> None:
-    from bot.modules.atri_command_ui import add_atri_command_ui_handlers
     from bot.modules.atri_media_auto import add_atri_media_auto_handlers
     from bot.modules.atri_provider_control import add_atri_provider_control_handlers
     from bot.modules.atri_rose import add_atri_rose_handlers
@@ -120,7 +119,6 @@ def _register_extension_handlers(registry: HandlerRegistry) -> None:
         ("atri.media_auto", add_atri_media_auto_handlers),
         ("atri.skills", add_atri_skills_handlers),
         ("atri.unified_menu", add_atri_unified_menu_handlers),
-        ("atri.command_ui", add_atri_command_ui_handlers),
         ("atri.thinking", add_atri_thinking_handlers),
         ("atri.provider", add_atri_provider_control_handlers),
         ("atri.rose_natural", add_atri_rose_natural_handlers),
@@ -183,8 +181,20 @@ def _validate_route_contract(registry: HandlerRegistry) -> None:
             f"handler, got {len(ping_callbacks)}"
         )
 
+    command_center_callbacks = [
+        callback
+        for callback in callbacks
+        if callback.endswith("bot.modules.atri_command_ui:command_center")
+    ]
+    if command_center_callbacks:
+        raise RuntimeError(
+            "PRIXOK_V2_ROUTE_CONTRACT_FAILED: legacy command_center registered; "
+            "/menu and /amenu must be owned only by atri_unified_menu"
+        )
+
     LOGGER.info(
-        "PRIXOK_V2_ROUTE_CONTRACT_PASS ping_owner=1 legacy_help=0 handlers=%s",
+        "PRIXOK_V2_ROUTE_CONTRACT_PASS ping_owner=1 legacy_help=0 "
+        "legacy_command_center=0 handlers=%s",
         len(registry.records),
     )
 
@@ -231,8 +241,10 @@ async def bootstrap() -> HandlerRegistry:
 
     # Import after all runtime patch layers so this module captures the patched
     # Atri callback aliases rather than stale pre-patch references.
+    from .atri_routes import register_atri_command_ui_routes
     from .routes import register_core_routes
 
+    register_atri_command_ui_routes(registry)
     register_core_routes(registry)
     bot_loop.create_task(start_free_tools(guarded), name="prixok-v2-free-tools")
     add_capability_runtime_handlers(guarded)
