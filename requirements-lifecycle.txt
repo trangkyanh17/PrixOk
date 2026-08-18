@@ -1,0 +1,16 @@
+# Exact, pure-Python test overlay used by the Termux production lifecycle gate.
+# Installed into a disposable --target directory; never into /app/mltbenv.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
+anyio==4.14.2
+certifi==2026.7.22
+httpcore==1.0.9
+idna==3.18
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+pygments==2.21.0
+h11==0.16.0
+typing-extensions==4.16.0
+socksio==1.0.0
