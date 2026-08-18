@@ -1,0 +1,210 @@
+name: PrixOk Debug Lab
+
+on:
+  push:
+    branches:
+      - debug/prixok-runtime-lab
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prixok-debug-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-and-runtime-lab:
+    name: source-and-runtime-lab
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Prepare debug artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p debug-artifacts
+          {
+            echo "repo=${GITHUB_REPOSITORY}"
+            echo "ref=${GITHUB_REF}"
+            echo "sha=${GITHUB_SHA}"
+            echo "runner=${RUNNER_OS}"
+            python --version
+            docker --version
+            git status --short --branch
+          } > debug-artifacts/environment.txt
+
+      - name: Source sanity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q bot scripts tests
+          while IFS= read -r -d '' file; do
+            bash -n "$file"
+          done < <(
+            find . -type f -name '*.sh' -not -path './.git/*' -print0
+          )
+
+      - name: Build handler registration inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' > debug-artifacts/handler-registration-inventory.txt
+          import ast
+          from pathlib import Path
+
+          roots = [Path("bot")]
+          interesting = {
+              "ping",
+              "bot_help",
+              "unified_menu_command",
+              "unified_menu_callback",
+              "atri_message",
+          }
+
+          for root in roots:
+              for path in sorted(root.rglob("*.py")):
+                  try:
+                      text = path.read_text(encoding="utf-8")
+                      tree = ast.parse(text, filename=str(path))
+                  except Exception as exc:
+                      print(f"PARSE_ERROR\t{path}\t{exc}")
+                      continue
+
+                  for node in ast.walk(tree):
+                      if not isinstance(node, ast.Call):
+                          continue
+
+                      func = node.func
+                      name = None
+                      if isinstance(func, ast.Attribute):
+                          name = func.attr
+                      elif isinstance(func, ast.Name):
+                          name = func.id
+
+                      if name == "add_handler" or (
+                          isinstance(name, str)
+                          and name.startswith("add_")
+                          and name.endswith("_handlers")
+                      ):
+                          print(
+                              f"REGISTER\t{path}:{getattr(node, 'lineno', 0)}\t{name}"
+                          )
+
+                  for node in ast.walk(tree):
+                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                          if node.name in interesting:
+                              print(
+                                  f"CALLBACK_DEF\t{path}:{node.lineno}\t{node.name}"
+                              )
+          PY
+
+          {
+            echo
+            echo "===== DIRECT SOURCE REFERENCES ====="
+            grep -RInE \
+              'add_handler|add_handlers|add_atri_.*handlers|BotCommands\.(Ping|Help)|unified_menu_(command|callback)|bot_help|def ping\b' \
+              bot 2>/dev/null || true
+          } >> debug-artifacts/handler-registration-inventory.txt
+
+      - name: Build production Docker image
+        run: docker build --tag "prixok-debug:${GITHUB_SHA}" .
+
+      - name: Run targeted and full non-slow tests in production image
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_artifacts="$(pwd)/debug-artifacts"
+
+          set +e
+          docker run --rm \
+            --volume "${host_artifacts}:/ci-artifacts" \
+            --entrypoint bash \
+            "prixok-debug:${GITHUB_SHA}" \
+            -s 2>&1 <<'DOCKER_TEST' | tee debug-artifacts/docker-test-console.txt
+          set -euo pipefail
+
+          deps="$(mktemp -d /tmp/prixok-debug-deps.XXXXXX)"
+          cache="$(mktemp -d /tmp/prixok-debug-pip.XXXXXX)"
+
+          PIP_CACHE_DIR="$cache" \
+            mltbenv/bin/python -m pip install \
+              --disable-pip-version-check \
+              --no-input \
+              --no-compile \
+              --only-binary=:all: \
+              --target "$deps" \
+              -r requirements-lifecycle.txt
+
+          export PYTHONPATH="$deps"
+          export PYTHONNOUSERSITE=1
+          export PYTHONDONTWRITEBYTECODE=1
+
+          mltbenv/bin/python -m pytest --collect-only -q \
+            > /ci-artifacts/pytest-collect.txt
+
+          targeted=(
+            tests/test_atri_message_idempotency_v1672.py
+            tests/test_atri_response_output_guard_v1673.py
+            tests/test_atri_telegram_lifecycle_v1674.py
+            tests/test_atri_final_lifecycle.py
+            tests/test_v1674_live_recovery_final.py
+          )
+
+          while IFS= read -r file; do
+            targeted+=("$file")
+          done < <(
+            find tests -maxdepth 2 -type f \
+              \( -name '*duplicate*.py' \
+                 -o -name '*dispatch*.py' \
+                 -o -name '*handler*.py' \
+                 -o -path 'tests/debug/*.py' \) \
+              | sort -u
+          )
+
+          mapfile -t targeted < <(printf '%s\n' "${targeted[@]}" | awk '!seen[$0]++')
+
+          echo "===== TARGETED TEST FILES =====" \
+            | tee /ci-artifacts/targeted-tests.txt
+          printf '%s\n' "${targeted[@]}" \
+            | tee -a /ci-artifacts/targeted-tests.txt
+
+          mltbenv/bin/python -m pytest -q "${targeted[@]}" \
+            2>&1 | tee /ci-artifacts/pytest-targeted.txt
+
+          mltbenv/bin/python -m pytest -m "not slow" -q \
+            2>&1 | tee /ci-artifacts/pytest-full-nonslow.txt
+          DOCKER_TEST
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+
+      - name: Record Docker metadata
+        if: always()
+        shell: bash
+        run: |
+          {
+            docker image inspect "prixok-debug:${GITHUB_SHA}" \
+              --format 'id={{.Id}} created={{.Created}} size={{.Size}}' \
+              2>/dev/null || true
+          } > debug-artifacts/docker-image.txt
+
+      - name: Upload debug lab artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prixok-debug-lab-${{ github.run_id }}
+          path: debug-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
