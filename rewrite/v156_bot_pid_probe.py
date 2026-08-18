@@ -17,6 +17,7 @@ import argparse
 import fcntl
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -441,6 +442,156 @@ def find_exact_argument_processes(
     return sorted(matches)
 
 
+def _process_has_open_script_descriptor(
+    process: Path,
+    script: Path,
+) -> bool:
+    try:
+        descriptors = list((process / "fd").iterdir())
+    except PermissionError as exc:
+        raise RuntimeError(f"cannot inspect process descriptors: {process.name}") from exc
+    except (FileNotFoundError, ProcessLookupError, OSError):
+        return False
+    inaccessible = False
+    for descriptor in descriptors:
+        try:
+            target = os.readlink(descriptor)
+            opened = os.stat(descriptor)
+        except PermissionError:
+            inaccessible = True
+            continue
+        except (FileNotFoundError, ProcessLookupError, OSError):
+            continue
+        target_path = target.removesuffix(" (deleted)")
+        if target_path == str(script) and stat.S_ISREG(opened.st_mode):
+            return True
+    if inaccessible:
+        raise RuntimeError(f"cannot prove all process descriptors: {process.name}")
+    return False
+
+
+def _process_executable_names_path(process: Path, executable: Path) -> bool:
+    link = process / "exe"
+    target = os.readlink(link).removesuffix(" (deleted)")
+    opened = os.stat(link)
+    return target == str(executable) and stat.S_ISREG(opened.st_mode)
+
+
+def find_exact_executable_processes(
+    proc_root: Path,
+    executable: Path,
+    *,
+    expected_uid: int | None = None,
+) -> list[ProcessIdentity]:
+    """Resolve processes whose executable link and argv[0] name one exact path."""
+    expected = executable.stat()
+    if not stat.S_ISREG(expected.st_mode):
+        raise RuntimeError(f"executable is not a regular file: {executable}")
+    matches: list[ProcessIdentity] = []
+    unproven: list[int] = []
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        try:
+            real_uid = read_process_real_uid(proc_root, pid)
+            if expected_uid is not None and real_uid != expected_uid:
+                continue
+            argv = read_cmdline(entry / "cmdline")
+            if not argv or argv[0] != str(executable):
+                continue
+            if not _process_executable_names_path(entry, executable):
+                continue
+            matches.append(
+                ProcessIdentity(
+                    pid=pid,
+                    start_ticks=read_process_start_ticks(proc_root, pid),
+                    real_uid=real_uid,
+                    source="exact_exe",
+                )
+            )
+        except PermissionError:
+            unproven.append(pid)
+        except (
+            FileNotFoundError,
+            ProcessLookupError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ):
+            continue
+    if unproven:
+        raise RuntimeError(f"exact executable candidates are permission-hidden: {unproven}")
+    return sorted(matches)
+
+
+def find_exact_shell_script_processes(
+    proc_root: Path,
+    script: Path,
+    interpreter: Path,
+    *,
+    expected_uid: int | None = None,
+) -> list[ProcessIdentity]:
+    """Prove Bash is executing the exact regular script inode.
+
+    A path merely appearing somewhere in argv is not ownership evidence.  The
+    process must use the expected interpreter executable path, have the exact two-item
+    ``bash SCRIPT`` argv shape, and retain a regular script descriptor whose
+    kernel link names that exact path.  The descriptor may carry Linux's
+    ``(deleted)`` suffix after an atomic on-disk script replacement.
+    """
+    if not script.is_absolute() or not interpreter.is_absolute():
+        raise RuntimeError("script and interpreter paths must be absolute")
+    if script.is_symlink():
+        raise RuntimeError(f"script path must not be a symlink: {script}")
+    script_stat = script.stat()
+    interpreter_stat = interpreter.stat()
+    if not stat.S_ISREG(script_stat.st_mode):
+        raise RuntimeError(f"script is not a regular file: {script}")
+    if not stat.S_ISREG(interpreter_stat.st_mode):
+        raise RuntimeError(f"interpreter is not a regular file: {interpreter}")
+
+    matches: list[ProcessIdentity] = []
+    unproven: list[int] = []
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        try:
+            real_uid = read_process_real_uid(proc_root, pid)
+            if expected_uid is not None and real_uid != expected_uid:
+                continue
+            argv = read_cmdline(entry / "cmdline")
+            if len(argv) != 2 or argv[1] != str(script):
+                continue
+            if not _process_executable_names_path(entry, interpreter):
+                continue
+            if not _process_has_open_script_descriptor(entry, script):
+                continue
+            matches.append(
+                ProcessIdentity(
+                    pid=pid,
+                    start_ticks=read_process_start_ticks(proc_root, pid),
+                    real_uid=real_uid,
+                    source="script_fd_exec",
+                )
+            )
+        except PermissionError:
+            unproven.append(pid)
+        except RuntimeError:
+            unproven.append(pid)
+        except (
+            FileNotFoundError,
+            ProcessLookupError,
+            OSError,
+            ValueError,
+        ):
+            continue
+    if unproven:
+        raise RuntimeError(f"shell-script candidates are permission-hidden: {unproven}")
+    return sorted(matches)
+
+
 def _proot_root_arguments(argv: list[str]) -> list[Path]:
     roots: list[Path] = []
     index = 1
@@ -496,7 +647,15 @@ def main() -> int:
     parser.add_argument("--proc-root", default="/proc")
     parser.add_argument(
         "--strategy",
-        choices=("argv", "lock-owner", "child-exe", "argv-exact", "rootfs"),
+        choices=(
+            "argv",
+            "lock-owner",
+            "child-exe",
+            "argv-exact",
+            "exact-exe",
+            "shell-script",
+            "rootfs",
+        ),
         default="argv",
     )
     parser.add_argument("--lock-file", default=str(_DEFAULT_LOCK))
@@ -509,6 +668,8 @@ def main() -> int:
     parser.add_argument("--parent-pid", type=int)
     parser.add_argument("--executable")
     parser.add_argument("--argument")
+    parser.add_argument("--script")
+    parser.add_argument("--interpreter")
     parser.add_argument("--root-device", type=int)
     parser.add_argument("--root-inode", type=int)
     args = parser.parse_args()
@@ -563,6 +724,47 @@ def main() -> int:
             if args.details
             else identity.pid
         )
+        return 0
+
+    if args.strategy == "exact-exe":
+        if not args.executable:
+            parser.error("exact-exe requires --executable")
+        try:
+            identities = find_exact_executable_processes(
+                proc_root,
+                Path(args.executable),
+                expected_uid=args.expected_uid,
+            )
+        except (FileNotFoundError, PermissionError, OSError, RuntimeError, ValueError) as exc:
+            print(f"exact executable gate failed: {exc}", file=sys.stderr)
+            return 1
+        for identity in identities:
+            print(
+                f"{identity.pid}|{identity.start_ticks}|{identity.real_uid}|{identity.source}"
+                if args.details
+                else identity.pid
+            )
+        return 0
+
+    if args.strategy == "shell-script":
+        if not args.script or not args.interpreter:
+            parser.error("shell-script requires --script and --interpreter")
+        try:
+            identities = find_exact_shell_script_processes(
+                proc_root,
+                Path(args.script),
+                Path(args.interpreter),
+                expected_uid=args.expected_uid,
+            )
+        except (FileNotFoundError, PermissionError, OSError, RuntimeError, ValueError) as exc:
+            print(f"exact shell-script gate failed: {exc}", file=sys.stderr)
+            return 1
+        for identity in identities:
+            print(
+                f"{identity.pid}|{identity.start_ticks}|{identity.real_uid}|{identity.source}"
+                if args.details
+                else identity.pid
+            )
         return 0
 
     if args.strategy == "rootfs":

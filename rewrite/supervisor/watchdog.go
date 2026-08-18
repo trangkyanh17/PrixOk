@@ -105,10 +105,13 @@ exec 9<>"$lock_path" || exit 21
 if flock -n -E 11 9; then
   flock -u 9 || exit 22
   exit 10
+else
+  # Capture flock itself here; $? after fi would be the compound-if status.
+  rc=$?
+  [ "$rc" -eq 11 ] && exit 0
+  exit 23
 fi
-rc=$?
-[ "$rc" -eq 11 ] && exit 0
-exit 23`,
+`,
 			"watchdog-lock",
 			watchdog.config.BotLockPath,
 		},

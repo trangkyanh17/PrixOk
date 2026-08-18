@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # The normal mode is an all-in-one verified deployment/recovery transaction.
 # --orphan-recover is an internal fail-closed hook called by the V150 watchdog.
 
-SCRIPT_VERSION="v168.3-final"
+SCRIPT_VERSION="v168.4-final"
 DISTRO="${ATRI_PROOT_DISTRO:-debian}"
 BOT_SESSION="${ATRI_BOT_SESSION:-prixok-bot}"
 BOT_LOCK="${ATRI_BOT_LOCK_PATH:-/app/.atri-prixok-bot-v133.lock}"
@@ -21,6 +21,7 @@ V150_BOT_WRAPPER="$V150_DIR/prixok-bot-v150.sh"
 V150_BOOT_HOOK="$HOST_HOME/.termux/boot/20-atri-v150-production.sh"
 FINAL_INSTALL="$V150_DIR/termux-atri-final-recovery.sh"
 RUNTIME_PROBE="${ATRI_RUNTIME_PROBE:-$V150_DIR/atri-runtime-probe.py}"
+LEGACY_WATCHDOG="$HOST_HOME/atri-production-watchdog.sh"
 OWNER_LOCK="$HOST_HOME/.local/state/atri-v150-wrapper/owner.lock"
 LOCAL_HEALTH="$HOST_HOME/atri-production-local-health.sh"
 WATCHDOG_LOG="$HOST_HOME/.atri-v150-production-watchdog.log"
@@ -39,6 +40,61 @@ RUN_DIR=""
 
 positive_int() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; }
 log_line() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
+
+lock_fd_state() {
+  local fd="$1"
+  local rc
+  if flock -n -E 11 "$fd"; then
+    flock -u "$fd" || return 22
+    echo FREE
+    return 0
+  else
+    # Capture flock itself here; $? after fi would be the compound-if status.
+    rc=$?
+    [[ "$rc" -eq 11 ]] || return 23
+    echo HELD
+    return 0
+  fi
+}
+
+emit_lock_state_program() {
+  declare -f lock_fd_state
+  # Expanded by the receiving bash, not the emitting host shell.
+  printf '%s\n' '
+set -u
+p=$1
+if [[ ! -e "$p" ]]; then echo MISSING; exit 0; fi
+command -v flock >/dev/null 2>&1 || exit 20
+exec 9<>"$p" || exit 21
+lock_fd_state 9
+'
+}
+
+lock_state_self_test() (
+  set -Eeuo pipefail
+  local directory file state
+  directory="$(mktemp -d "${TMPDIR:-/tmp}/atri-lock-state.XXXXXX")"
+  file="$directory/owner.lock"
+  trap 'rm -f -- "$file"; rmdir -- "$directory" 2>/dev/null || true' EXIT
+  : >"$file"
+  exec 5<>"$file"
+  flock -x 5
+  exec 6<>"$file"
+  state="$(lock_fd_state 6)"
+  exec 6>&-
+  [[ "$state" == HELD ]]
+  state="$(emit_lock_state_program | bash -s -- "$file")"
+  [[ "$state" == HELD ]]
+  flock -u 5
+  exec 5>&-
+  exec 6<>"$file"
+  state="$(lock_fd_state 6)"
+  exec 6>&-
+  [[ "$state" == FREE ]]
+  state="$(emit_lock_state_program | bash -s -- "$file")"
+  [[ "$state" == FREE ]]
+  echo "lock state self-test: PASS"
+)
 
 audit_tracked_tree_local() {
   local repo="${1:-}" current="${2:-}" expected="${3:-}"
@@ -197,6 +253,8 @@ self_test() {
   if [[ -f "$probe" ]]; then
     python3 -m py_compile "$probe"
   fi
+  lock_state_self_test
+  legacy_handoff_logic_self_test
   tracked_tree_audit_self_test
   echo "termux atri final recovery self-test: PASS"
 }
@@ -234,22 +292,7 @@ bot_pane_identity() {
 guest_lock_state() {
   local output rc
   set +e
-  # shellcheck disable=SC2016  # Expanded by the guest bash, not the host.
-  output="$(timeout 30 proot-distro login "$DISTRO" -- bash -lc '
-set -u
-p=$1
-if [[ ! -e "$p" ]]; then echo MISSING; exit 0; fi
-command -v flock >/dev/null 2>&1 || exit 20
-exec 9<>"$p" || exit 21
-if flock -n -E 11 9; then
-  flock -u 9 || exit 22
-  echo FREE
-  exit 0
-fi
-rc=$?
-[[ "$rc" -eq 11 ]] || exit 23
-echo HELD
-' lock-state "$BOT_LOCK" 2>/dev/null)"
+  output="$(emit_lock_state_program | timeout 30 proot-distro login "$DISTRO" -- bash -s -- "$BOT_LOCK" 2>/dev/null)"
   rc=$?
   set -e
   if ((rc != 0)); then
@@ -296,20 +339,19 @@ bot_lock_host_path() {
 
 host_lock_state() {
   local path="$1"
-  local rc
+  local state
   [[ -e "$path" ]] || { echo MISSING; return 0; }
   exec 6<>"$path" || { echo UNKNOWN; return 1; }
-  if flock -n -E 11 6; then
-    flock -u 6 || true
+  if ! state="$(lock_fd_state 6)"; then
     exec 6>&-
-    echo FREE
-    return 0
+    echo UNKNOWN
+    return 1
   fi
-  rc=$?
   exec 6>&-
-  [[ "$rc" -eq 11 ]] && { echo HELD; return 0; }
-  echo UNKNOWN
-  return 1
+  case "$state" in
+    FREE|HELD) printf '%s\n' "$state" ;;
+    *) echo UNKNOWN; return 1 ;;
+  esac
 }
 
 probe_command_safe() {
@@ -437,6 +479,59 @@ exact_argument_processes() {
     --details
 }
 
+exact_executable_processes() {
+  local executable="$1"
+  local candidates
+  if [[ ! -f "$executable" || -L "$executable" ]]; then
+    candidates="$(exact_argument_processes "$executable")" || return 1
+    [[ -z "$candidates" ]] || return 1
+    return 0
+  fi
+  run_probe \
+    --strategy exact-exe \
+    --proc-root /proc \
+    --executable "$executable" \
+    --expected-uid "$(id -u)" \
+    --details
+}
+
+legacy_script_processes() {
+  local candidates
+  if [[ ! -f "$LEGACY_WATCHDOG" || -L "$LEGACY_WATCHDOG" ]]; then
+    candidates="$(exact_argument_processes "$LEGACY_WATCHDOG")" || return 1
+    [[ -z "$candidates" ]] || return 1
+    return 0
+  fi
+  run_probe \
+    --strategy shell-script \
+    --proc-root /proc \
+    --script "$LEGACY_WATCHDOG" \
+    --interpreter "$HOST_BASH" \
+    --expected-uid "$(id -u)" \
+    --details
+}
+
+legacy_file_identity() {
+  local metadata digest
+  [[ -f "$LEGACY_WATCHDOG" && ! -L "$LEGACY_WATCHDOG" ]] || return 1
+  metadata="$(stat -c '%d|%i|%s|%a' "$LEGACY_WATCHDOG" 2>/dev/null)" || return 1
+  digest="$(sha256sum "$LEGACY_WATCHDOG" 2>/dev/null | awk '{print $1}')" || return 1
+  [[ "$metadata" =~ ^[0-9]+\|[1-9][0-9]*\|[0-9]+\|[0-9]+$ && "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s|%s\n' "$metadata" "$digest"
+}
+
+identity_line_present() {
+  local expected="$1"
+  local identities="$2"
+  grep -Fqx -- "$expected" <<<"$identities"
+}
+
+identity_pid_present() {
+  local pid="$1"
+  local identities="$2"
+  awk -F'|' -v expected="$pid" '$1 == expected { found=1 } END { exit found ? 0 : 1 }' <<<"$identities"
+}
+
 same_process_identity() {
   local expected="$1"
   local actual="$2"
@@ -450,11 +545,121 @@ signal_exact_pid() {
   IFS='|' read -r pid start uid source <<<"$details"
   [[ "$pid" =~ ^[1-9][0-9]*$ && "$start" =~ ^[1-9][0-9]*$ ]] || return 1
   [[ "$uid" == "$(id -u)" ]] || return 1
+  [[ "$source" =~ ^(proc_locks|fdinfo_lock|fd_held|parent_exe|exact_exe|script_fd_exec)$ ]] || return 1
   [[ "$pid" != "$$" && "$pid" != "$PPID" ]] || return 1
   if kill "-$signal" "$pid" 2>/dev/null; then return 0; fi
   command -v su >/dev/null 2>&1 || return 1
   timeout 10 su -c "kill -$signal $pid" >/dev/null 2>&1
 }
+
+stop_exact_legacy_process() {
+  local expected="$1"
+  local expected_file="$2"
+  local pid current deadline
+  [[ "$expected" =~ ^[1-9][0-9]*\|[1-9][0-9]*\|[0-9]+\|script_fd_exec$ ]] || return 1
+  [[ "$(legacy_file_identity 2>/dev/null || true)" == "$expected_file" ]] || return 1
+  current="$(legacy_script_processes)" || return 1
+  identity_line_present "$expected" "$current" || return 1
+  signal_exact_pid TERM "$expected" || return 1
+  LEGACY_WATCHDOG_STOPPED=1
+  IFS='|' read -r pid _ <<<"$expected"
+  deadline=$((SECONDS + 20))
+  while ((SECONDS < deadline)); do
+    current="$(legacy_script_processes)" || return 1
+    if ! identity_line_present "$expected" "$current"; then
+      identity_pid_present "$pid" "$current" && return 1
+      return 0
+    fi
+    sleep 1
+  done
+
+  [[ "$(legacy_file_identity 2>/dev/null || true)" == "$expected_file" ]] || return 1
+  current="$(legacy_script_processes)" || return 1
+  identity_line_present "$expected" "$current" || return 1
+  signal_exact_pid KILL "$expected" || return 1
+  deadline=$((SECONDS + 10))
+  while ((SECONDS < deadline)); do
+    current="$(legacy_script_processes)" || return 1
+    if ! identity_line_present "$expected" "$current"; then
+      identity_pid_present "$pid" "$current" && return 1
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+stop_legacy_snapshot() {
+  local snapshot="$1"
+  local file_identity="$2"
+  local current expected
+  current="$(legacy_script_processes)" || return 1
+  [[ "$current" == "$snapshot" ]] || return 1
+  while IFS= read -r expected; do
+    [[ -n "$expected" ]] || continue
+    stop_exact_legacy_process "$expected" "$file_identity" || return 1
+  done <<<"$snapshot"
+  current="$(legacy_script_processes)" || return 1
+  [[ -z "$current" ]]
+}
+
+restart_one_legacy_watchdog() {
+  local current count requested deadline
+  current="$(legacy_script_processes)" || return 1
+  count="$(awk 'NF { count++ } END { print count+0 }' <<<"$current")"
+  if [[ "$count" == 1 ]]; then
+    return 0
+  fi
+  [[ "$count" == 0 ]] || return 1
+  [[ -n "$LEGACY_FILE_BEFORE" ]] || return 1
+  [[ "$(legacy_file_identity 2>/dev/null || true)" == "$LEGACY_FILE_BEFORE" ]] || return 1
+  bash -n "$LEGACY_WATCHDOG" || return 1
+  nohup "$HOST_BASH" "$LEGACY_WATCHDOG" \
+    >>"$HOST_HOME/.atri-production-watchdog-launch.log" 2>&1 < /dev/null &
+  requested=$!
+  deadline=$((SECONDS + 30))
+  while ((SECONDS < deadline)); do
+    current="$(legacy_script_processes)" || return 1
+    count="$(awk 'NF { count++ } END { print count+0 }' <<<"$current")"
+    if [[ "$count" == 1 ]]; then
+      log_line "LEGACY_ROLLBACK_OWNER_PROVEN requested_pid=$requested owner_pid=${current%%|*}"
+      return 0
+    fi
+    [[ "$count" -le 1 ]] || return 1
+    sleep 1
+  done
+  return 1
+}
+
+legacy_handoff_logic_self_test() (
+  set -Eeuo pipefail
+  local snapshot file_identity
+  snapshot="741|9001|$(id -u)|script_fd_exec"
+  file_identity="65074|1295984|1234|700|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  TEST_CURRENT="$snapshot"
+  TEST_SIGNALLED=0
+  LEGACY_WATCHDOG_STOPPED=0
+  legacy_file_identity() { printf '%s\n' "$file_identity"; }
+  legacy_script_processes() { printf '%s\n' "$TEST_CURRENT"; }
+  signal_exact_pid() {
+    [[ "$1" == TERM && "$2" == "$snapshot" ]]
+    TEST_SIGNALLED=1
+    TEST_CURRENT=""
+  }
+  sleep() { :; }
+
+  stop_legacy_snapshot "$snapshot" "$file_identity"
+  [[ "$TEST_SIGNALLED" == 1 && "$LEGACY_WATCHDOG_STOPPED" == 1 ]]
+
+  TEST_CURRENT="741|9002|$(id -u)|script_fd_exec"
+  TEST_SIGNALLED=0
+  if stop_exact_legacy_process "$snapshot" "$file_identity"; then
+    echo "legacy handoff logic self-test: FAIL (PID reuse accepted)" >&2
+    return 1
+  fi
+  [[ "$TEST_SIGNALLED" == 0 ]]
+  echo "legacy handoff logic self-test: PASS"
+)
 
 wait_guest_lock_not_held() {
   local timeout="$1"
@@ -578,6 +783,9 @@ STAGE_DIR=""
 CURRENT_HEAD=""
 RUNTIME_MUTATED=0
 ORPHAN_SUPERVISOR_STOPPED=0
+LEGACY_WATCHDOG_STOPPED=0
+LEGACY_PROCESSES_BEFORE=""
+LEGACY_FILE_BEFORE=""
 LEGACY_BOOT_MANIFEST="$BACKUP_DIR/legacy-boot-hooks.tsv"
 
 section() { printf '\n===== %s =====\n' "$1"; }
@@ -611,6 +819,7 @@ collect_diagnostics() {
     echo "BOT_SESSION=$(tmux_has "$BOT_SESSION" && echo PRESENT || echo MISSING)"
     echo "BOT_PANE=$(bot_pane_identity 2>/dev/null || true)"
     echo "BOT_LOCK=$(guest_lock_state 2>/dev/null || true)"
+    echo "WRAPPER_LOCK=$(host_lock_state "$OWNER_LOCK" 2>/dev/null || true)"
     echo "WRAPPER_OWNER=$(resolve_wrapper_owner 2>/dev/null || true)"
     echo "===== TMUX ====="
     tmux list-panes -a -F 'session=#{session_name} pane=#{pane_id} pid=#{pane_pid} dead=#{pane_dead} cmd=#{pane_current_command}' 2>&1 || true
@@ -618,6 +827,13 @@ collect_diagnostics() {
     free -h 2>&1 || true
     grep -E 'MemAvailable|SwapTotal|SwapFree' /proc/meminfo 2>/dev/null || true
   } >"$destination/host.txt" 2>&1
+  {
+    echo "LEGACY_FILE_IDENTITY=$(legacy_file_identity 2>/dev/null || true)"
+    echo "===== PROVEN LEGACY SCRIPT OWNERS ====="
+    legacy_script_processes 2>&1 || echo "LEGACY_OWNER_PROBE=FAILED_CLOSED"
+    echo "===== PROVEN V150 EXECUTABLES ====="
+    exact_executable_processes "$V150_BIN" 2>&1 || echo "V150_EXECUTABLE_PROBE=FAILED_CLOSED"
+  } >"$destination/lifecycle-owners.txt" 2>&1
   capture_bot >"$destination/bot-pane.txt" 2>&1 || true
   tail -n 3000 "$WATCHDOG_LOG" >"$destination/watchdog.log" 2>&1 || true
   tail -n 1000 "$ORPHAN_LOG" >"$destination/orphan-recovery.log" 2>&1 || true
@@ -882,6 +1098,7 @@ restore_legacy_boot_hooks() {
 
 rollback_runtime_and_restart() {
   local current lock_state restored_wrapper restored_pid restored_supervisor
+  local current_legacy legacy_count
   lock_state="$(host_lock_state "$OWNER_LOCK" 2>/dev/null || true)"
   case "$lock_state" in
     HELD)
@@ -895,13 +1112,20 @@ rollback_runtime_and_restart() {
   restore_runtime || return 1
   restore_legacy_boot_hooks || return 1
   RUNTIME_PROBE="$RUN_DIR/candidate-probe.py"
-  if [[ -n "${wrapper_before:-}" || "$ORPHAN_SUPERVISOR_STOPPED" == 1 ]]; then
+  current_legacy="$(legacy_script_processes)" || return 1
+  legacy_count="$(awk 'NF { count++ } END { print count+0 }' <<<"$current_legacy")"
+  if [[ "$legacy_count" -gt 0 ]]; then
+    # Never add a V150 restart loop beside a surviving legacy lifecycle owner.
+    [[ "$legacy_count" == 1 ]] || return 1
+  elif [[ -n "${wrapper_before:-}" || "$ORPHAN_SUPERVISOR_STOPPED" == 1 ]]; then
     start_wrapper >/dev/null
     restored_wrapper="$(wait_wrapper_owner 60 || true)"
     [[ -n "$restored_wrapper" ]] || return 1
     IFS='|' read -r restored_pid _ <<<"$restored_wrapper"
     restored_supervisor="$(wait_supervisor_child "$restored_pid" "" 90 || true)"
     [[ -n "$restored_supervisor" ]] || return 1
+  elif [[ "$LEGACY_WATCHDOG_STOPPED" == 1 ]]; then
+    restart_one_legacy_watchdog || return 1
   fi
   RUNTIME_MUTATED=0
 }
@@ -922,12 +1146,11 @@ start_wrapper() {
 }
 
 verify_no_legacy_owner() {
-  local legacy="$HOST_HOME/atri-production-watchdog.sh"
-  local pids
-  if ! pids="$(exact_argument_processes "$legacy" 2>/dev/null)"; then
+  local owners
+  if ! owners="$(legacy_script_processes 2>/dev/null)"; then
     fatal "legacy watchdog ownership probe failed closed"
   fi
-  [[ -z "$pids" ]] || fatal "legacy watchdog active with exact argv evidence: $(cut -d'|' -f1 <<<"$pids" | tr '\n' ',')"
+  [[ -z "$owners" ]] || fatal "legacy watchdog remains active with script inode ownership: $(cut -d'|' -f1 <<<"$owners" | tr '\n' ',')"
 }
 
 verify_no_legacy_boot_hook() {
@@ -1105,7 +1328,18 @@ bash -n "$RUN_DIR/candidate-watchdog.sh" "$RUN_DIR/candidate-bot-wrapper.sh" "$R
 pass "CANDIDATES_EXTRACTED supervisor_sha256=$(sha256sum "$RUN_DIR/candidate-supervisor" | awk '{print $1}')"
 
 PHASE="production-topology"
-verify_no_legacy_owner
+if ! LEGACY_PROCESSES_BEFORE="$(legacy_script_processes 2>/dev/null)"; then
+  fatal "legacy watchdog ownership probe failed closed"
+fi
+if [[ -n "$LEGACY_PROCESSES_BEFORE" ]]; then
+  LEGACY_FILE_BEFORE="$(legacy_file_identity 2>/dev/null || true)"
+  [[ -n "$LEGACY_FILE_BEFORE" ]] || fatal "active legacy watchdog script identity is unproven"
+  bash -n "$LEGACY_WATCHDOG" || fatal "active legacy watchdog script syntax failed"
+  legacy_count="$(awk 'NF { count++ } END { print count+0 }' <<<"$LEGACY_PROCESSES_BEFORE")"
+  info "proven legacy watchdog owners scheduled for controlled handoff: $legacy_count"
+else
+  info "proven legacy watchdog owners: 0"
+fi
 inventory_legacy_boot_hooks || fatal "legacy boot-hook inventory failed closed"
 info "legacy boot hooks scheduled for reversible retirement: ${#LEGACY_BOOT_HOOKS[@]}"
 [[ -x "$HOST_HOME/prixok-bot.sh" ]] || fatal "canonical bot launcher missing"
@@ -1117,10 +1351,7 @@ session_before="$(session_metadata || true)"
 lock_state="$(guest_lock_state 2>/dev/null || true)"
 [[ "$lock_state" != UNKNOWN ]] || fatal "bot singleton lock state is UNKNOWN"
 if ! tmux_has "$BOT_SESSION" && [[ "$lock_state" == HELD ]]; then
-  info "current topology=tmux-missing+lock-held; invoking exact kernel-owner rescue"
-  ATRI_RUNTIME_PROBE="$RUNTIME_PROBE" "$RUN_DIR/candidate-final.sh" --orphan-recover || fatal "verified orphan recovery failed"
-  wait_guest_lock_not_held 15 || fatal "orphan lock remained held"
-  lock_state="$(guest_lock_state 2>/dev/null || true)"
+  info "current topology=tmux-missing+lock-held; verified orphan recovery scheduled after lifecycle owners are quiesced"
 fi
 if tmux_has "$BOT_SESSION" && [[ "$lock_state" != HELD ]]; then
   info "bot tmux present without proven lock; waiting for startup convergence"
@@ -1139,7 +1370,7 @@ case "$wrapper_lock_state" in
   FREE|MISSING) wrapper_before="" ;;
   *) fatal "wrapper owner lock state is UNKNOWN" ;;
 esac
-if ! orphan_supervisors="$(exact_argument_processes "$V150_BIN" 2>/dev/null)"; then
+if ! orphan_supervisors="$(exact_executable_processes "$V150_BIN" 2>/dev/null)"; then
   fatal "supervisor topology probe failed closed"
 fi
 if [[ -z "$wrapper_before" && -n "$orphan_supervisors" ]]; then
@@ -1149,42 +1380,58 @@ if [[ -z "$wrapper_before" && -n "$orphan_supervisors" ]]; then
 fi
 pass "TOPOLOGY session=$(tmux_has "$BOT_SESSION" && echo PRESENT || echo MISSING) lock=$lock_state wrapper=${wrapper_before%%|*}"
 
+PHASE="runtime-transaction"
+backup_runtime
+RUNTIME_MUTATED=1
+retire_legacy_boot_hooks || fatal "legacy boot-hook retirement failed"
+if [[ -n "$LEGACY_PROCESSES_BEFORE" ]]; then
+  stop_legacy_snapshot "$LEGACY_PROCESSES_BEFORE" "$LEGACY_FILE_BEFORE" || fatal "proven legacy watchdog handoff failed"
+  info "proven legacy watchdog owners retired by revalidated PID identity"
+fi
+if [[ -n "$wrapper_before" ]]; then
+  stop_exact_wrapper "$wrapper_before" || fatal "existing wrapper did not stop gracefully"
+fi
+if [[ -z "$wrapper_before" && -n "$orphan_supervisors" ]]; then
+  current_orphan="$(exact_executable_processes "$V150_BIN" 2>/dev/null | tail -n1)" || fatal "orphan supervisor revalidation failed"
+  same_process_identity "$current_orphan" "$orphan_supervisors" || fatal "orphan supervisor identity changed"
+  signal_exact_pid TERM "$current_orphan" || fatal "cannot stop exact orphan supervisor"
+  for _ in $(seq 1 30); do
+    remaining_orphans="$(exact_executable_processes "$V150_BIN" 2>/dev/null)" || fatal "orphan supervisor post-TERM probe failed"
+    [[ -z "$remaining_orphans" ]] && break
+    same_process_identity "$current_orphan" "$remaining_orphans" || fatal "orphan supervisor identity changed after TERM"
+    sleep 1
+  done
+  if [[ -n "$remaining_orphans" ]]; then
+    revalidated_orphan="$(exact_executable_processes "$V150_BIN" 2>/dev/null | tail -n1)" || fatal "orphan supervisor KILL revalidation failed"
+    same_process_identity "$current_orphan" "$revalidated_orphan" || fatal "orphan supervisor identity changed before KILL"
+    signal_exact_pid KILL "$revalidated_orphan" || fatal "cannot KILL exact orphan supervisor"
+    sleep 2
+    remaining_orphans="$(exact_executable_processes "$V150_BIN" 2>/dev/null)" || fatal "orphan supervisor final probe failed"
+    [[ -z "$remaining_orphans" ]] || fatal "orphan supervisor remained alive"
+  fi
+  ORPHAN_SUPERVISOR_STOPPED=1
+fi
+
 PHASE="source-fast-forward"
 audit_production_tree pre-fast-forward "$CURRENT_HEAD" "$EXPECTED_MAIN_SHA"
 guest git -C /app merge --ff-only "$EXPECTED_MAIN_SHA" || fatal "production main fast-forward failed"
 CURRENT_HEAD="$(guest git -C /app rev-parse HEAD | tail -n1 | tr -d '\r')"
 [[ "$CURRENT_HEAD" == "$EXPECTED_MAIN_SHA" ]] || fatal "production source did not reach expected main"
 [[ -n "$(session_metadata 2>/dev/null || true)" ]] || fatal "persistent session lost during source fast-forward"
-pass "SOURCE_FAST_FORWARD=$CURRENT_HEAD"
+pass "SOURCE_FAST_FORWARD=$CURRENT_HEAD lifecycle_owners=QUIESCED"
 
 PHASE="runtime-transaction"
-backup_runtime
-RUNTIME_MUTATED=1
-retire_legacy_boot_hooks || fatal "legacy boot-hook retirement failed"
-if [[ -n "$wrapper_before" ]]; then
-  stop_exact_wrapper "$wrapper_before" || fatal "existing wrapper did not stop gracefully"
-fi
-if [[ -z "$wrapper_before" && -n "$orphan_supervisors" ]]; then
-  current_orphan="$(exact_argument_processes "$V150_BIN" 2>/dev/null | tail -n1)" || fatal "orphan supervisor revalidation failed"
-  same_process_identity "$current_orphan" "$orphan_supervisors" || fatal "orphan supervisor identity changed"
-  signal_exact_pid TERM "$current_orphan" || fatal "cannot stop exact orphan supervisor"
-  for _ in $(seq 1 30); do
-    remaining_orphans="$(exact_argument_processes "$V150_BIN" 2>/dev/null)" || fatal "orphan supervisor post-TERM probe failed"
-    [[ -z "$remaining_orphans" ]] && break
-    same_process_identity "$current_orphan" "$remaining_orphans" || fatal "orphan supervisor identity changed after TERM"
-    sleep 1
-  done
-  if [[ -n "$remaining_orphans" ]]; then
-    revalidated_orphan="$(exact_argument_processes "$V150_BIN" 2>/dev/null | tail -n1)" || fatal "orphan supervisor KILL revalidation failed"
-    same_process_identity "$current_orphan" "$revalidated_orphan" || fatal "orphan supervisor identity changed before KILL"
-    signal_exact_pid KILL "$revalidated_orphan" || fatal "cannot KILL exact orphan supervisor"
-    sleep 2
-    remaining_orphans="$(exact_argument_processes "$V150_BIN" 2>/dev/null)" || fatal "orphan supervisor final probe failed"
-    [[ -z "$remaining_orphans" ]] || fatal "orphan supervisor remained alive"
-  fi
-  ORPHAN_SUPERVISOR_STOPPED=1
+lock_state="$(guest_lock_state 2>/dev/null || true)"
+[[ "$lock_state" != UNKNOWN ]] || fatal "bot singleton lock became UNKNOWN during runtime transaction"
+if ! tmux_has "$BOT_SESSION" && [[ "$lock_state" == HELD ]]; then
+  info "lifecycle owners quiesced; invoking exact kernel-owner rescue"
+  ATRI_RUNTIME_PROBE="$RUNTIME_PROBE" "$RUN_DIR/candidate-final.sh" --orphan-recover || fatal "verified orphan recovery failed"
+  wait_guest_lock_not_held 15 || fatal "orphan lock remained held"
+  lock_state="$(guest_lock_state 2>/dev/null || true)"
+  [[ "$lock_state" == FREE || "$lock_state" == MISSING ]] || fatal "orphan recovery did not prove a restart-safe lock state"
 fi
 install_candidates || fatal "candidate installation failed; automatic rollback will run"
+verify_no_legacy_owner
 requested_wrapper="$(start_wrapper)"
 wrapper_after="$(wait_wrapper_owner 60 || true)"
 if [[ -z "$wrapper_after" ]]; then

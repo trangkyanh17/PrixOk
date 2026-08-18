@@ -16,22 +16,56 @@ START_TIMEOUT="${ATRI_V150_BOOT_START_TIMEOUT:-60}"
 nonnegative_int() { [[ "${1:-}" =~ ^[0-9]+$ ]]; }
 positive_int() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; }
 
-wrapper_lock_state() {
+lock_fd_state() {
+  local fd="$1"
   local rc
-  mkdir -p "$WRAPPER_STATE_DIR" || return 1
-  exec 8>"$WRAPPER_LOCK" || return 1
-  if flock -n -E 11 8; then
-    flock -u 8 || { exec 8>&-; return 1; }
-    exec 8>&-
+  if flock -n -E 11 "$fd"; then
+    flock -u "$fd" || return 22
     echo FREE
     return 0
+  else
+    # Capture flock itself here; $? after fi would be the compound-if status.
+    rc=$?
+    [[ "$rc" -eq 11 ]] || return 23
+    echo HELD
+    return 0
   fi
-  rc=$?
-  exec 8>&-
-  [[ "$rc" -eq 11 ]] && { echo HELD; return 0; }
-  echo UNKNOWN
-  return 1
 }
+
+wrapper_lock_state() {
+  local state
+  mkdir -p "$WRAPPER_STATE_DIR" || return 1
+  exec 8>"$WRAPPER_LOCK" || return 1
+  if ! state="$(lock_fd_state 8)"; then
+    exec 8>&-
+    echo UNKNOWN
+    return 1
+  fi
+  exec 8>&-
+  case "$state" in
+    FREE|HELD) printf '%s\n' "$state" ;;
+    *) echo UNKNOWN; return 1 ;;
+  esac
+}
+
+lock_state_self_test() (
+  set -Eeuo pipefail
+  local directory state
+  directory="$(mktemp -d "${TMPDIR:-/tmp}/atri-boot-lock.XXXXXX")"
+  trap 'rm -f -- "$WRAPPER_LOCK"; rmdir -- "$directory" 2>/dev/null || true' EXIT
+  WRAPPER_STATE_DIR="$directory"
+  WRAPPER_LOCK="$directory/owner.lock"
+  : >"$WRAPPER_LOCK"
+  exec 7<>"$WRAPPER_LOCK"
+  flock -x 7
+  state="$(wrapper_lock_state)"
+  [[ "$state" == HELD ]]
+  flock -u 7
+  exec 7>&-
+  state="$(wrapper_lock_state)"
+  [[ "$state" == FREE ]]
+  echo "v150 boot lock state self-test: PASS"
+)
 
 if [[ "${1:-}" == "--self-test" ]]; then
   (($# == 1)) || exit 2
@@ -41,6 +75,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'WRAPPER_LOCK=.*owner.lock' "${BASH_SOURCE[0]}"
   grep -q 'flock -n -E 11' "${BASH_SOURCE[0]}"
   grep -q '9>&-' "${BASH_SOURCE[0]}"
+  lock_state_self_test
   echo "v150 boot hook self-test: PASS"
   exit 0
 fi
