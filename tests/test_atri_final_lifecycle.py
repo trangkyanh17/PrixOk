@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import subprocess
@@ -51,7 +52,11 @@ def test_final_recovery_syntax_self_test_and_safety_contract():
     assert not re.search(r"git\s+(reset|clean|checkout)\b", source)
     assert "/var/lib/proot-distro" not in source
     assert "/usr/var/lib/proot-distro" not in source
-    assert "--require-proc-locks" in source
+    assert "--require-proc-locks" not in source
+    assert "--require-lock-held" in source
+    assert "bot_lock_host_path" in source
+    assert "fdinfo_lock" in source
+    assert "fd_held" in source
     assert 'tmux send-keys -t "$BOT_SESSION" C-c' in source
     assert "ATRI_EXPECTED_MAIN_SHA" in source
     assert "ATRI_FINAL_RECOVERY=FAIL" in source
@@ -135,6 +140,35 @@ def test_final_recovery_contains_pre_and_post_ten_round_gates():
     assert "FINAL_PRODUCTION_AUDIT=PASS" in source
 
 
+def test_android_fd_owner_requires_held_inode_and_stable_path_before_signal():
+    source = FINAL.read_text(encoding="utf-8")
+    bot_resolver = source[
+        source.index("resolve_lock_owner() {") : source.index("resolve_wrapper_owner() {")
+    ]
+    wrapper_resolver = source[
+        source.index("resolve_wrapper_owner() {") : source.index("resolve_supervisor_child() {")
+    ]
+    orphan = source[
+        source.index("orphan_recover_main() {") : source.index('if [[ "${1:-}" == "--self-test"')
+    ]
+
+    assert bot_resolver.count("guest_lock_state") >= 2
+    assert "bot_lock_host_path" in bot_resolver
+    assert '--lock-file "$host_path"' in bot_resolver
+    assert "--require-lock-held" in bot_resolver
+    assert "proc_locks|fdinfo_lock|fd_held" in bot_resolver
+    assert wrapper_resolver.count("host_lock_state") >= 2
+    assert "--require-lock-held" in wrapper_resolver
+    assert "host_identity" in wrapper_resolver
+    assert 'ROOTFS_PATH="$(discover_rootfs || true)"' in orphan
+    assert source.index("discover_rootfs() (") < source.index(
+        'if [[ "${1:-}" == "--orphan-recover"'
+    )
+    assert "same_process_identity" in orphan
+    assert "owner-changed-before-term" in orphan
+    assert "owner-changed-after-term" in orphan
+
+
 def test_real_flock_owner_ignores_recorded_guest_pid_and_binds_host_identity(tmp_path: Path):
     lock = tmp_path / "production.lock"
     holder_code = r"""
@@ -159,6 +193,14 @@ with open(sys.argv[1], "w+", encoding="utf-8") as handle:
     try:
         assert holder.stdout is not None
         assert holder.stdout.readline().strip() == "LOCKED"
+        with lock.open("r+", encoding="utf-8") as contender:
+            try:
+                fcntl.flock(contender.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass
+            else:
+                fcntl.flock(contender.fileno(), fcntl.LOCK_UN)
+                raise AssertionError("independent non-blocking flock unexpectedly succeeded")
         resolved = subprocess.run(
             [
                 sys.executable,
@@ -171,7 +213,7 @@ with open(sys.argv[1], "w+", encoding="utf-8") as handle:
                 str(lock),
                 "--expected-uid",
                 str(_proc_real_uid()),
-                "--require-proc-locks",
+                "--require-lock-held",
                 "--details",
             ],
             check=False,
@@ -183,7 +225,7 @@ with open(sys.argv[1], "w+", encoding="utf-8") as handle:
         assert int(pid) != 7
         assert int(start_ticks) > 0
         assert int(uid) == _proc_real_uid()
-        assert source == "proc_locks"
+        assert source in {"proc_locks", "fdinfo_lock", "fd_held"}
         visible_cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
         assert os.fsencode(str(lock)) in visible_cmdline
         assert lock.read_text(encoding="utf-8").strip() == "7"
