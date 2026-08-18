@@ -49,9 +49,9 @@ def make_handler_key(handler: Any, group: int) -> HandlerKey:
 class HandlerRegistry:
     """Single owner for every Telegram handler registered by the v2 runtime.
 
-    Pyrogram/Kurigram permits the same callback to be registered repeatedly.  The
+    Pyrogram/Kurigram permits the same callback to be registered repeatedly. The
     legacy runtime accumulated registrations from several bootstrap functions,
-    which makes duplicate-response bugs hard to reason about.  This registry
+    which makes duplicate-response bugs hard to reason about. This registry
     makes registration idempotent and exposes a deterministic inventory.
     """
 
@@ -134,7 +134,7 @@ class HandlerRegistry:
 
 
 class GuardedClient:
-    """Small Client facade that forces extension registrars through the registry."""
+    """Client facade that forces extension registrars through the registry."""
 
     __slots__ = ("_registry", "_client")
 
@@ -143,10 +143,10 @@ class GuardedClient:
         self._client = registry.client
 
     def add_handler(self, handler: Any, group: int = 0):
-        installed = self._registry.add(handler, group=group)
-        # Pyrogram callers in this project do not use the return value, but
-        # returning the usual tuple keeps compatibility with code that does.
-        return handler, group if installed else group
+        self._registry.add(handler, group=group)
+        # Preserve the normal Pyrogram/Kurigram compatibility shape even when
+        # the registry suppresses an exact duplicate registration.
+        return handler, group
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
