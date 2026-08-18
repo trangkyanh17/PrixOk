@@ -21,8 +21,9 @@ def _load_probe():
 
 def test_v156_probe_samples_current_linux_process():
     probe = _load_probe()
-    sample = probe.sample_process(os.getpid())
-    assert sample["pid"] == os.getpid()
+    visible_pid = probe.proc_visible_self_pid()
+    sample = probe.sample_process(visible_pid)
+    assert sample["pid"] == visible_pid
     assert sample["start_ticks"] > 0
     assert sample["rss_kib"] > 0
     assert sample["threads"] >= 1

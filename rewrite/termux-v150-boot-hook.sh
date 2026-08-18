@@ -3,22 +3,56 @@ set -Eeuo pipefail
 
 HOST_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 HOST_HOME="${HOME:-/data/data/com.termux/files/home}"
+
+LAUNCHER="$HOST_HOME/atri-v150-production-watchdog.sh"
+STATE_DIR="$HOST_HOME/.cache/atri-v150-persistence"
+WRAPPER_STATE_DIR="$HOST_HOME/.local/state/atri-v150-wrapper"
+WRAPPER_LOCK="$WRAPPER_STATE_DIR/owner.lock"
+LOG="$HOST_HOME/.atri-v150-persistence.log"
+LOCK_FILE="$STATE_DIR/boot-hook.lock"
+DELAY="${ATRI_V150_BOOT_DELAY:-20}"
+START_TIMEOUT="${ATRI_V150_BOOT_START_TIMEOUT:-60}"
+
+nonnegative_int() { [[ "${1:-}" =~ ^[0-9]+$ ]]; }
+positive_int() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; }
+
+wrapper_lock_state() {
+  local rc
+  mkdir -p "$WRAPPER_STATE_DIR" || return 1
+  exec 8>"$WRAPPER_LOCK" || return 1
+  if flock -n -E 11 8; then
+    flock -u 8 || { exec 8>&-; return 1; }
+    exec 8>&-
+    echo FREE
+    return 0
+  fi
+  rc=$?
+  exec 8>&-
+  [[ "$rc" -eq 11 ]] && { echo HELD; return 0; }
+  echo UNKNOWN
+  return 1
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  (($# == 1)) || exit 2
+  bash -n "${BASH_SOURCE[0]}"
+  nonnegative_int 0
+  positive_int 1
+  grep -q 'WRAPPER_LOCK=.*owner.lock' "${BASH_SOURCE[0]}"
+  grep -q 'flock -n -E 11' "${BASH_SOURCE[0]}"
+  grep -q '9>&-' "${BASH_SOURCE[0]}"
+  echo "v150 boot hook self-test: PASS"
+  exit 0
+fi
+(($# == 0)) || { echo "Usage: $0 [--self-test]" >&2; exit 2; }
+
 export HOME="$HOST_HOME"
 export PREFIX="$HOST_PREFIX"
 export PATH="$HOST_PREFIX/bin:/system/bin:/system/xbin"
 export TMPDIR="$HOST_PREFIX/tmp"
 export LD_LIBRARY_PATH="$HOST_PREFIX/lib"
 
-BIN="$HOST_HOME/.local/lib/atri-v150/atri-supervisor"
-LAUNCHER="$HOST_HOME/atri-v150-production-watchdog.sh"
-STATE_DIR="$HOST_HOME/.cache/atri-v150-persistence"
-LOG="$HOST_HOME/.atri-v150-persistence.log"
-LOCK_FILE="$STATE_DIR/boot-hook.lock"
-DELAY="${ATRI_V150_BOOT_DELAY:-20}"
-START_TIMEOUT="${ATRI_V150_BOOT_START_TIMEOUT:-60}"
-ROOT_PS="$HOST_PREFIX/bin/ps"
-
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" "$WRAPPER_STATE_DIR"
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
   printf '%s\n' "LOCK_BUSY" >"$STATE_DIR/last_result"
@@ -26,8 +60,7 @@ if ! flock -n 9; then
   exit 77
 fi
 
-positive_int() { [[ "$1" =~ ^[0-9]+$ ]]; }
-if ! positive_int "$DELAY" || ! positive_int "$START_TIMEOUT"; then
+if ! nonnegative_int "$DELAY" || ! positive_int "$START_TIMEOUT"; then
   printf '%s invalid boot timing delay=%s timeout=%s\n' "$(date '+%F %T')" "$DELAY" "$START_TIMEOUT" >>"$LOG"
   exit 2
 fi
@@ -37,93 +70,69 @@ printf '%s\n' "$boot_id" >"$STATE_DIR/last_hook_boot_id"
 printf '%s\n' "$(date +%s)" >"$STATE_DIR/last_hook_epoch"
 printf '%s boot_hook_invoked boot_id=%s\n' "$(date '+%F %T')" "$boot_id" >>"$LOG"
 
-# ATRI_V150_ROOT_OWNER_GUARD_V1564
-# Android may hide unrelated /proc entries from the Termux app UID. Never use a
-# user-view pgrep result to decide whether another production owner exists.
-root_ps_snapshot() {
-  command -v su >/dev/null 2>&1 || return 1
-  [[ -x "$ROOT_PS" ]] || return 1
-  su -c "PATH=$HOST_PREFIX/bin:/system/bin:/system/xbin LD_LIBRARY_PATH=$HOST_PREFIX/lib $ROOT_PS -eo pid,args" 2>/dev/null
-}
-
-owner_snapshot_or_fail() {
-  local snapshot
-  if ! snapshot="$(root_ps_snapshot)"; then
-    printf '%s\n' "ROOT_PROC_UNAVAILABLE" >"$STATE_DIR/last_result"
-    printf '%s boot_hook_root_proc_unavailable\n' "$(date '+%F %T')" >>"$LOG"
-    return 1
-  fi
-  mapfile -t legacy < <(awk '$0 ~ /[a]tri-production-watchdog\.sh/ {print $1}' <<<"$snapshot" | sort -n -u)
-  mapfile -t current < <(awk -v bin="$BIN" '$0 ~ /[a]tri-supervisor/ { if ($0 ~ bin || $0 ~ /[[:space:]]atri-supervisor([[:space:]]|$)/) print $1 }' <<<"$snapshot" | sort -n -u)
-}
-
-owner_snapshot_or_fail || exit 78
-if ((${#legacy[@]} > 0)); then
-  printf '%s\n' "BLOCKED_LEGACY_OWNER pids=${legacy[*]}" >"$STATE_DIR/last_result"
-  printf '%s boot_hook_blocked legacy=%s\n' "$(date '+%F %T')" "${legacy[*]}" >>"$LOG"
-  exit 75
-fi
-
-if ((${#current[@]} == 1)); then
-  printf '%s\n' "ALREADY_RUNNING pid=${current[0]}" >"$STATE_DIR/last_result"
-  printf '%s boot_hook_already_running pid=%s\n' "$(date '+%F %T')" "${current[0]}" >>"$LOG"
-  exit 0
-elif ((${#current[@]} > 1)); then
-  printf '%s\n' "DUPLICATE_V150 pids=${current[*]}" >"$STATE_DIR/last_result"
-  printf '%s boot_hook_duplicate_v150 pids=%s\n' "$(date '+%F %T')" "${current[*]}" >>"$LOG"
-  exit 76
-fi
-
-if [[ ! -x "$BIN" || ! -x "$LAUNCHER" ]]; then
-  printf '%s\n' "MISSING_RUNTIME bin=$BIN launcher=$LAUNCHER" >"$STATE_DIR/last_result"
+if [[ ! -x "$LAUNCHER" ]]; then
+  printf '%s\n' "MISSING_RUNTIME launcher=$LAUNCHER" >"$STATE_DIR/last_result"
   printf '%s boot_hook_missing_runtime\n' "$(date '+%F %T')" >>"$LOG"
   exit 127
 fi
+
+state="$(wrapper_lock_state 2>/dev/null || true)"
+case "$state" in
+  HELD)
+    printf '%s\n' "ALREADY_RUNNING owner_lock=HELD" >"$STATE_DIR/last_result"
+    printf '%s boot_hook_already_running owner_lock=HELD\n' "$(date '+%F %T')" >>"$LOG"
+    exit 0
+    ;;
+  FREE) ;;
+  *)
+    printf '%s\n' "OWNER_LOCK_UNKNOWN" >"$STATE_DIR/last_result"
+    printf '%s boot_hook_owner_lock_unknown\n' "$(date '+%F %T')" >>"$LOG"
+    exit 78
+    ;;
+esac
 
 if ((DELAY > 0)); then
   sleep "$DELAY"
 fi
 
-# Re-check root-visible ownership after the boot delay so two boot paths cannot
-# create two V150 watchdogs. A legacy owner always wins the safety gate.
-owner_snapshot_or_fail || exit 78
-if ((${#legacy[@]} > 0)); then
-  printf '%s\n' "BLOCKED_LEGACY_OWNER pids=${legacy[*]}" >"$STATE_DIR/last_result"
-  exit 75
-fi
-if ((${#current[@]} == 1)); then
-  printf '%s\n' "ALREADY_RUNNING pid=${current[0]}" >"$STATE_DIR/last_result"
-  exit 0
-elif ((${#current[@]} > 1)); then
-  printf '%s\n' "DUPLICATE_V150 pids=${current[*]}" >"$STATE_DIR/last_result"
-  exit 76
-fi
+# The wrapper's own singleton flock is the authority. Re-check after the boot
+# delay; a concurrent boot/deploy attempt is safe because only one wrapper can
+# acquire this exact lock and only that wrapper may spawn the supervisor.
+state="$(wrapper_lock_state 2>/dev/null || true)"
+case "$state" in
+  HELD)
+    printf '%s\n' "ALREADY_RUNNING owner_lock=HELD" >"$STATE_DIR/last_result"
+    exit 0
+    ;;
+  FREE) ;;
+  *)
+    printf '%s\n' "OWNER_LOCK_UNKNOWN" >"$STATE_DIR/last_result"
+    exit 78
+    ;;
+esac
 
-# FD 9 owns the boot-hook flock. It must not survive into the long-lived
-# watchdog/supervisor process, otherwise future boot/deploy invocations see a
-# permanently busy lock even though this hook has already exited.
+# FD 9 owns only the short-lived boot-hook lock and must not be inherited.
 nohup "$HOST_PREFIX/bin/bash" "$LAUNCHER" \
   9>&- >>"$HOST_HOME/.atri-v150-production-watchdog.log" 2>&1 < /dev/null &
 started_pid=$!
 
 for ((i=0; i<START_TIMEOUT; i++)); do
   sleep 1
-  owner_snapshot_or_fail || exit 78
-  if ((${#legacy[@]} > 0)); then
-    printf '%s\n' "START_CONFLICT_LEGACY pids=${legacy[*]}" >"$STATE_DIR/last_result"
-    printf '%s boot_hook_start_conflict legacy=%s\n' "$(date '+%F %T')" "${legacy[*]}" >>"$LOG"
-    exit 75
-  fi
-  if ((${#current[@]} == 1)); then
-    printf '%s\n' "STARTED pid=${current[0]} boot_id=$boot_id" >"$STATE_DIR/last_result"
-    printf '%s boot_hook_started pid=%s requested_pid=%s\n' "$(date '+%F %T')" "${current[0]}" "$started_pid" >>"$LOG"
-    exit 0
-  elif ((${#current[@]} > 1)); then
-    printf '%s\n' "DUPLICATE_V150 pids=${current[*]}" >"$STATE_DIR/last_result"
-    exit 76
-  fi
+  state="$(wrapper_lock_state 2>/dev/null || true)"
+  case "$state" in
+    HELD)
+      printf '%s\n' "STARTED owner_lock=HELD boot_id=$boot_id" >"$STATE_DIR/last_result"
+      printf '%s boot_hook_started owner_lock=HELD requested_pid=%s\n' "$(date '+%F %T')" "$started_pid" >>"$LOG"
+      exit 0
+      ;;
+    FREE) ;;
+    *)
+      printf '%s\n' "OWNER_LOCK_UNKNOWN requested_pid=$started_pid" >"$STATE_DIR/last_result"
+      exit 78
+      ;;
+  esac
 done
 
-printf '%s\n' "START_TIMEOUT requested_pid=$started_pid" >"$STATE_DIR/last_result"
-printf '%s boot_hook_start_timeout pid=%s\n' "$(date '+%F %T')" "$started_pid" >>"$LOG"
+printf '%s\n' "START_TIMEOUT requested_pid=$started_pid owner_lock=$state" >"$STATE_DIR/last_result"
+printf '%s boot_hook_start_timeout pid=%s owner_lock=%s\n' "$(date '+%F %T')" "$started_pid" "$state" >>"$LOG"
 exit 1

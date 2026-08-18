@@ -88,9 +88,9 @@ func commandExitCode(err error) int {
 	if errors.Is(err, context.Canceled) {
 		return 130
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode()
+	var exitCoder interface{ ExitCode() int }
+	if errors.As(err, &exitCoder) {
+		return exitCoder.ExitCode()
 	}
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 		return 127

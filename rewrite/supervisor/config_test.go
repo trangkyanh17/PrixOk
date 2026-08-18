@@ -16,6 +16,7 @@ func TestLoadConfigWatchdogSettings(t *testing.T) {
 	t.Setenv("ATRI_REWRITE_WATCHDOG", "true")
 	t.Setenv("ATRI_BOT_SESSION", "prixok-test")
 	t.Setenv("ATRI_BOT_LAUNCHER", "/tmp/prixok-bot.sh")
+	t.Setenv("ATRI_BOT_ORPHAN_RECOVERY", "/tmp/orphan-recovery.sh")
 	t.Setenv("ATRI_LOCAL_HEALTH", "/tmp/local-health.sh")
 	t.Setenv("ATRI_BROWSER_ENSURE", "/tmp/browser-ensure.sh")
 	t.Setenv("ATRI_NETWORK_STATE", "/tmp/network-state.sh")
@@ -23,6 +24,9 @@ func TestLoadConfigWatchdogSettings(t *testing.T) {
 	t.Setenv("ATRI_BOT_LOCK_PATH", "/tmp/prixok.lock")
 	t.Setenv("ATRI_WATCHDOG_INTERVAL", "12")
 	t.Setenv("ATRI_WATCHDOG_COMMAND_TIMEOUT", "17")
+	t.Setenv("ATRI_BOT_ORPHAN_GRACE", "91")
+	t.Setenv("ATRI_BOT_ORPHAN_RETRY", "301")
+	t.Setenv("ATRI_BOT_ORPHAN_RECOVERY_TIMEOUT", "61")
 	t.Setenv("ATRI_WATCHDOG_REPAIR_TIMEOUT", "88")
 	t.Setenv("ATRI_NETWORK_INTERVAL", "44")
 	t.Setenv("ATRI_NETWORK_TIMEOUT", "7")
@@ -33,12 +37,15 @@ func TestLoadConfigWatchdogSettings(t *testing.T) {
 		t.Fatal("watchdog should be enabled")
 	}
 	if config.BotSession != "prixok-test" || config.BotLauncher != "/tmp/prixok-bot.sh" ||
+		config.BotOrphanRecovery != "/tmp/orphan-recovery.sh" ||
 		config.LocalHealth != "/tmp/local-health.sh" || config.BrowserEnsure != "/tmp/browser-ensure.sh" ||
 		config.NetworkState != "/tmp/network-state.sh" || config.ProotDistro != "debian-test" ||
 		config.BotLockPath != "/tmp/prixok.lock" {
 		t.Fatalf("unexpected watchdog paths: %+v", config)
 	}
 	if config.LoopInterval != 12*time.Second || config.CommandTimeout != 17*time.Second ||
+		config.OrphanGrace != 91*time.Second || config.OrphanRetry != 301*time.Second ||
+		config.OrphanRecoveryTimeout != 61*time.Second ||
 		config.RepairTimeout != 88*time.Second || config.NetworkCheckInterval != 44*time.Second ||
 		config.NetworkProbeTimeout != 7*time.Second || config.ShutdownTimeout != 19*time.Second {
 		t.Fatalf("unexpected watchdog durations: %+v", config)
