@@ -32,7 +32,35 @@ ATRI_PUBLIC_INTERACTION_V161 = filters.create(
 )
 
 
+_CORE_HANDLER_REGISTRATION_MARKER = "_prixok_core_handlers_registered_v1686"
+
+
 def add_handlers():
+    client = TgClient.bot
+    if client is None:
+        raise RuntimeError("Telegram bot client is not initialized")
+    if getattr(client, _CORE_HANDLER_REGISTRATION_MARKER, False):
+        LOGGER.warning(
+            "ATRI_CORE_HANDLER_DUPLICATE_REGISTRATION_BLOCKED_V1686 client_id=%s",
+            id(client),
+        )
+        return False
+    setattr(client, _CORE_HANDLER_REGISTRATION_MARKER, True)
+    try:
+        _add_handlers_impl()
+    except Exception:
+        # Fail-safe: keep the marker set. Startup is expected to abort on a
+        # partial registration failure; retrying in the same process would
+        # multiply the already-added handlers.
+        LOGGER.exception(
+            "ATRI_CORE_HANDLER_REGISTRATION_FAILED_V1686 client_id=%s",
+            id(client),
+        )
+        raise
+    return True
+
+
+def _add_handlers_impl():
     # ATRI_UNIVERSAL_MEDIA_HANDLER_V163
     add_atri_media_auto_handlers(TgClient.bot)
     add_atri_skills_handlers(TgClient.bot)
