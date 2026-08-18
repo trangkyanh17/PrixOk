@@ -39,6 +39,7 @@ def test_final_recovery_syntax_self_test_and_safety_contract():
         text=True,
     )
     assert self_test.returncode == 0, self_test.stdout + self_test.stderr
+    assert "tracked tree audit self-test: PASS" in self_test.stdout
     assert "termux atri final recovery self-test: PASS" in self_test.stdout
 
     source = FINAL.read_text(encoding="utf-8")
@@ -52,6 +53,28 @@ def test_final_recovery_syntax_self_test_and_safety_contract():
     assert "ATRI_EXPECTED_MAIN_SHA" in source
     assert "ATRI_FINAL_RECOVERY=FAIL" in source
     assert "tar -C \"$RUN_DIR\" -czf \"$BUNDLE\"" in source
+
+
+def test_runtime_generated_qbittorrent_config_is_the_only_tracked_dirty_exception():
+    source = FINAL.read_text(encoding="utf-8")
+
+    assert (
+        'RUNTIME_MUTABLE_TRACKED_PATH="qBittorrent/config/qBittorrent.conf"'
+        in source
+    )
+    assert "qBittorrent/config/*" not in source
+    assert '[[ "$line" == " M $RUNTIME_MUTABLE_TRACKED_PATH" ]]' in source
+    assert "runtime-change-not-content-only" in source
+    assert "runtime-path-changed-upstream" in source
+    assert 'audit_production_tree exact-main "$CURRENT_HEAD" "$EXPECTED_MAIN_SHA"' in source
+    assert (
+        'audit_production_tree pre-fast-forward "$CURRENT_HEAD" "$EXPECTED_MAIN_SHA"'
+        in source
+    )
+    assert (
+        'audit_production_tree final "$EXPECTED_MAIN_SHA" "$EXPECTED_MAIN_SHA"'
+        in source
+    )
 
 
 def test_final_recovery_contains_pre_and_post_ten_round_gates():

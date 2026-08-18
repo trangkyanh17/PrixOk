@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # The normal mode is an all-in-one verified deployment/recovery transaction.
 # --orphan-recover is an internal fail-closed hook called by the V150 watchdog.
 
-SCRIPT_VERSION="v168-final"
+SCRIPT_VERSION="v168.1-final"
 DISTRO="${ATRI_PROOT_DISTRO:-debian}"
 BOT_SESSION="${ATRI_BOT_SESSION:-prixok-bot}"
 BOT_LOCK="${ATRI_BOT_LOCK_PATH:-/app/.atri-prixok-bot-v133.lock}"
@@ -27,6 +27,7 @@ WATCHDOG_LOG="$HOST_HOME/.atri-v150-production-watchdog.log"
 STATE_ROOT="$HOST_HOME/.local/state/atri-final-lifecycle"
 ORPHAN_LOG="$STATE_ROOT/orphan-recovery.log"
 EXPECTED_MAIN_SHA="${ATRI_EXPECTED_MAIN_SHA:-}"
+RUNTIME_MUTABLE_TRACKED_PATH="qBittorrent/config/qBittorrent.conf"
 STARTUP_TIMEOUT="${ATRI_FINAL_STARTUP_TIMEOUT:-1200}"
 RECOVERY_TIMEOUT="${ATRI_FINAL_RECOVERY_TIMEOUT:-420}"
 STABILITY_ROUNDS="${ATRI_FINAL_STABILITY_ROUNDS:-10}"
@@ -36,6 +37,121 @@ RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
 
 positive_int() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; }
 log_line() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
+
+audit_tracked_tree_local() {
+  local repo="${1:-}" current="${2:-}" expected="${3:-}"
+  local status line path raw old_mode new_mode old_oid new_oid change reported_path
+  local runtime_dirty=0 sha mode
+
+  [[ "$current" =~ ^[0-9a-f]{40}$ && "$expected" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "TREE_AUDIT_DENY reason=invalid-commit" >&2
+    return 40
+  }
+  [[ "$(git -C "$repo" rev-parse --is-inside-work-tree 2>/dev/null || true)" == true ]] || {
+    echo "TREE_AUDIT_DENY reason=not-a-work-tree" >&2
+    return 40
+  }
+  git -C "$repo" cat-file -e "$current^{commit}" 2>/dev/null || {
+    echo "TREE_AUDIT_DENY reason=current-commit-missing" >&2
+    return 40
+  }
+  git -C "$repo" cat-file -e "$expected^{commit}" 2>/dev/null || {
+    echo "TREE_AUDIT_DENY reason=expected-commit-missing" >&2
+    return 40
+  }
+
+  status="$(LC_ALL=C git -C "$repo" status --porcelain=v1 --untracked-files=no)" || {
+    echo "TREE_AUDIT_DENY reason=status-failed" >&2
+    return 41
+  }
+  if [[ -n "$status" ]]; then
+    while IFS= read -r line; do
+      [[ "$line" == " M $RUNTIME_MUTABLE_TRACKED_PATH" ]] || {
+        printf 'TREE_AUDIT_DENY reason=tracked-change status=%q\n' "$line" >&2
+        return 42
+      }
+      path="$RUNTIME_MUTABLE_TRACKED_PATH"
+      [[ -f "$repo/$path" && ! -L "$repo/$path" ]] || {
+        echo "TREE_AUDIT_DENY reason=runtime-path-not-regular path=$path" >&2
+        return 43
+      }
+      raw="$(LC_ALL=C git -C "$repo" diff --raw --no-renames -- "$path")" || {
+        echo "TREE_AUDIT_DENY reason=runtime-diff-failed path=$path" >&2
+        return 43
+      }
+      [[ -n "$raw" && "$raw" != *$'\n'* ]] || {
+        echo "TREE_AUDIT_DENY reason=runtime-diff-ambiguous path=$path" >&2
+        return 43
+      }
+      IFS=$' \t' read -r old_mode new_mode old_oid new_oid change reported_path <<<"$raw"
+      [[ "$old_mode" == :100644 && "$new_mode" == 100644 &&
+        "$old_oid" =~ ^[0-9a-f]+$ && "$new_oid" =~ ^[0-9a-f]+$ &&
+        "$change" == M && "$reported_path" == "$path" ]] || {
+        echo "TREE_AUDIT_DENY reason=runtime-change-not-content-only path=$path" >&2
+        return 43
+      }
+      if ! git -C "$repo" cat-file -e "$current:$path" 2>/dev/null ||
+        ! git -C "$repo" cat-file -e "$expected:$path" 2>/dev/null; then
+        echo "TREE_AUDIT_DENY reason=runtime-path-not-tracked path=$path" >&2
+        return 44
+      fi
+      git -C "$repo" diff --quiet "$current" "$expected" -- "$path" || {
+        echo "TREE_AUDIT_DENY reason=runtime-path-changed-upstream path=$path" >&2
+        return 44
+      }
+      sha="$(sha256sum "$repo/$path" | awk '{print $1}')"
+      mode="$(stat -c '%a' "$repo/$path")"
+      printf 'TREE_AUDIT_RUNTIME_DIRTY path=%s sha256=%s mode=%s\n' "$path" "$sha" "$mode"
+      runtime_dirty=$((runtime_dirty + 1))
+    done <<<"$status"
+  fi
+  printf 'TREE_AUDIT_PASS runtime_dirty=%d\n' "$runtime_dirty"
+}
+
+tracked_tree_audit_self_test() (
+  set -Eeuo pipefail
+  local repo="" base expected before after output
+
+  # shellcheck disable=SC2329  # Invoked by the EXIT trap in this subshell.
+  cleanup_tree_audit_test() {
+    [[ -n "$repo" && -d "$repo" && "$(basename "$repo")" == atri-tree-audit.* ]] || return 0
+    rm -rf -- "$repo"
+  }
+  trap cleanup_tree_audit_test EXIT
+
+  repo="$(mktemp -d "${TMPDIR:-/tmp}/atri-tree-audit.XXXXXX")"
+  mkdir -p "$repo/qBittorrent/config" "$repo/bot"
+  printf '[Preferences]\nWebUI\\Port=8090\n' >"$repo/$RUNTIME_MUTABLE_TRACKED_PATH"
+  printf 'BASE = True\n' >"$repo/bot/source.py"
+  git -C "$repo" init -q
+  git -C "$repo" add "$RUNTIME_MUTABLE_TRACKED_PATH" bot/source.py
+  git -C "$repo" -c user.name=ATRI -c user.email=atri@example.invalid -c commit.gpgsign=false commit -qm base
+  base="$(git -C "$repo" rev-parse HEAD)"
+
+  printf 'EXPECTED = True\n' >"$repo/bot/source.py"
+  git -C "$repo" add bot/source.py
+  git -C "$repo" -c user.name=ATRI -c user.email=atri@example.invalid -c commit.gpgsign=false commit -qm expected
+  expected="$(git -C "$repo" rev-parse HEAD)"
+  git -C "$repo" switch --detach -q "$base"
+  printf 'Runtime\\SessionPort=48123\n' >>"$repo/$RUNTIME_MUTABLE_TRACKED_PATH"
+
+  output="$(audit_tracked_tree_local "$repo" "$base" "$expected")"
+  grep -q "TREE_AUDIT_RUNTIME_DIRTY path=$RUNTIME_MUTABLE_TRACKED_PATH" <<<"$output"
+  grep -q 'TREE_AUDIT_PASS runtime_dirty=1' <<<"$output"
+  before="$(sha256sum "$repo/$RUNTIME_MUTABLE_TRACKED_PATH" | awk '{print $1}')"
+  git -C "$repo" merge --ff-only -q "$expected"
+  after="$(sha256sum "$repo/$RUNTIME_MUTABLE_TRACKED_PATH" | awk '{print $1}')"
+  [[ "$before" == "$after" ]]
+  [[ "$(LC_ALL=C git -C "$repo" status --porcelain=v1 --untracked-files=no)" == " M $RUNTIME_MUTABLE_TRACKED_PATH" ]]
+  audit_tracked_tree_local "$repo" "$expected" "$expected" >/dev/null
+
+  printf 'DIRTY = True\n' >>"$repo/bot/source.py"
+  if audit_tracked_tree_local "$repo" "$expected" "$expected" >/dev/null 2>&1; then
+    echo "tracked tree audit self-test: FAIL (source dirt was accepted)" >&2
+    return 1
+  fi
+  echo "tracked tree audit self-test: PASS"
+)
 
 self_test() {
   local script_dir probe
@@ -59,6 +175,8 @@ self_test() {
     return 1
   fi
   for marker in \
+    'audit_tracked_tree_local' \
+    'RUNTIME_MUTABLE_TRACKED_PATH' \
     'discover_rootfs' \
     'resolve_lock_owner' \
     'orphan_recover_main' \
@@ -70,6 +188,7 @@ self_test() {
   if [[ -f "$probe" ]]; then
     python3 -m py_compile "$probe"
   fi
+  tracked_tree_audit_self_test
   echo "termux atri final recovery self-test: PASS"
 }
 
@@ -79,6 +198,16 @@ guest() {
 
 guest_bash() {
   proot-distro login "$DISTRO" -- bash -lc "$1"
+}
+
+run_guest_tree_audit() {
+  local repo="$1" current="$2" expected="$3"
+  {
+    declare -p RUNTIME_MUTABLE_TRACKED_PATH
+    declare -f audit_tracked_tree_local
+    # shellcheck disable=SC2016  # Positional parameters expand in guest bash.
+    printf '%s\n' 'audit_tracked_tree_local "$1" "$2" "$3"'
+  } | timeout 60 proot-distro login "$DISTRO" -- bash -s -- "$repo" "$current" "$expected"
 }
 
 tmux_has() {
@@ -368,6 +497,19 @@ section() { printf '\n===== %s =====\n' "$1"; }
 info() { log_line "[INFO] $*"; }
 pass() { log_line "[PASS] $*"; }
 fatal() { log_line "[FAIL] phase=$PHASE $*"; exit 1; }
+
+audit_production_tree() {
+  local label="$1" current="$2" expected="$3"
+  local output rc evidence
+  [[ "$label" =~ ^[a-z0-9-]+$ ]] || fatal "invalid tree-audit label"
+  evidence="$RUN_DIR/tracked-tree-audit-$label.txt"
+  set +e
+  output="$(run_guest_tree_audit /app "$current" "$expected" 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$output" | tee "$evidence"
+  ((rc == 0)) || fatal "tracked production tree audit failed label=$label rc=$rc"
+}
 
 collect_diagnostics() {
   local destination="$RUN_DIR/failure"
@@ -788,15 +930,14 @@ branch="$(guest git -C /app branch --show-current | tail -n1 | tr -d '\r')"
 CURRENT_HEAD="$(guest git -C /app rev-parse HEAD | tail -n1 | tr -d '\r')"
 app_real="$(guest readlink -f /app | tail -n1 | tr -d '\r')"
 remote_url="$(guest git -C /app remote get-url origin | tail -n1 | tr -d '\r')"
-dirty="$(guest git -C /app status --porcelain --untracked-files=no | tr -d '\r')"
 [[ "$branch" == main ]] || fatal "live branch=$branch, expected main"
 [[ "$app_real" == /home/prix/PrixOk ]] || fatal "/app resolves to $app_real"
 case "$remote_url" in
   https://github.com/trangkyanh17/PrixOk|https://github.com/trangkyanh17/PrixOk.git|git@github.com:trangkyanh17/PrixOk.git|ssh://git@github.com/trangkyanh17/PrixOk.git) ;;
   *) fatal "unexpected origin remote" ;;
 esac
-[[ -z "$dirty" ]] || fatal "tracked production source is dirty"
 guest git -C /app merge-base --is-ancestor "$CURRENT_HEAD" "$EXPECTED_MAIN_SHA" || fatal "live main is not an ancestor of expected main"
+audit_production_tree exact-main "$CURRENT_HEAD" "$EXPECTED_MAIN_SHA"
 guest git -C /app show "$EXPECTED_MAIN_SHA:rewrite/v156_bot_pid_probe.py" >"$RUN_DIR/candidate-probe.py" || fatal "cannot extract runtime probe"
 "$HOST_PYTHON" -m py_compile "$RUN_DIR/candidate-probe.py" || fatal "runtime probe compile failed"
 RUNTIME_PROBE="$RUN_DIR/candidate-probe.py"
@@ -906,6 +1047,7 @@ fi
 pass "TOPOLOGY session=$(tmux_has "$BOT_SESSION" && echo PRESENT || echo MISSING) lock=$lock_state wrapper=${wrapper_before%%|*}"
 
 PHASE="source-fast-forward"
+audit_production_tree pre-fast-forward "$CURRENT_HEAD" "$EXPECTED_MAIN_SHA"
 guest git -C /app merge --ff-only "$EXPECTED_MAIN_SHA" || fatal "production main fast-forward failed"
 CURRENT_HEAD="$(guest git -C /app rev-parse HEAD | tail -n1 | tr -d '\r')"
 [[ "$CURRENT_HEAD" == "$EXPECTED_MAIN_SHA" ]] || fatal "production source did not reach expected main"
@@ -1016,6 +1158,7 @@ PHASE="final-audit"
 verify_no_legacy_owner
 verify_no_legacy_boot_hook
 [[ "$(guest git -C /app rev-parse HEAD | tail -n1 | tr -d '\r')" == "$EXPECTED_MAIN_SHA" ]] || fatal "final source SHA drift"
+audit_production_tree final "$EXPECTED_MAIN_SHA" "$EXPECTED_MAIN_SHA"
 [[ "$(resolve_wrapper_owner || true)" == "$wrapper_after" ]] || fatal "final wrapper drift"
 [[ "$(resolve_supervisor_child "$wrapper_pid" || true)" == "$supervisor_final" ]] || fatal "final supervisor drift"
 [[ "$(bot_pane_identity || true)" == "$bot_after" ]] || fatal "final bot pane drift"
