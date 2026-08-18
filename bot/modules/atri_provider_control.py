@@ -33,7 +33,12 @@ from .atri_provider_capabilities import (
 
 
 # ATRI_PROVIDER_CONTROL_V231
-STATE_PATH = Path("/app/atri_data/atri_provider_control.json")
+STATE_PATH = Path(
+    os.environ.get(
+        "ATRI_PROVIDER_CONTROL_STATE_PATH",
+        "/app/atri_data/atri_provider_control.json",
+    )
+)
 
 PROVIDER_ORDER = (
     "cerebras",

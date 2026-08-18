@@ -23,9 +23,26 @@ def _load_probe():
     return module
 
 
-def _proc_entry(proc_root: Path, pid: int, argv: list[str] | None = None) -> Path:
+def _proc_entry(
+    proc_root: Path,
+    pid: int,
+    argv: list[str] | None = None,
+    *,
+    parent_pid: int = 1,
+    start_ticks: int = 100,
+    uid: int | None = None,
+) -> Path:
     proc = proc_root / str(pid)
     (proc / "fd").mkdir(parents=True)
+    stat_tail = ["S", str(parent_pid), *("0" for _ in range(17)), str(start_ticks)]
+    (proc / "stat").write_text(
+        f"{pid} (worker) {' '.join(stat_tail)}\n", encoding="utf-8"
+    )
+    real_uid = os.getuid() if uid is None else uid
+    (proc / "status").write_text(
+        f"Name:\tworker\nUid:\t{real_uid}\t{real_uid}\t{real_uid}\t{real_uid}\n",
+        encoding="utf-8",
+    )
     if argv is not None:
         (proc / "cmdline").write_bytes(
             b"\0".join(item.encode() for item in argv) + b"\0"
@@ -76,6 +93,25 @@ def test_v1563_fd_inode_scan_is_kernel_identity_fallback(tmp_path: Path):
     assert probe.find_proc_lock_owner_pids(proc_root, lock) == []
     assert probe.find_fd_lock_owner_pids(proc_root, lock) == [401]
     assert probe.resolve_lock_owner_pid(proc_root, lock) == 401
+
+
+def test_v1563_destructive_gate_requires_proc_locks_not_fd_fallback(tmp_path: Path):
+    probe = _load_probe()
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    lock = tmp_path / "production.lock"
+    lock.write_text("guest-pid\n", encoding="utf-8")
+    owner = _proc_entry(proc_root, 411, ["proot", "opaque"])
+    _attach_fd(owner, 9, lock)
+
+    with pytest.raises(RuntimeError, match="/proc/locks owner"):
+        probe.resolve_lock_owner_identity(
+            proc_root,
+            lock.stat().st_dev,
+            lock.stat().st_ino,
+            expected_uid=os.getuid(),
+            require_proc_locks=True,
+        )
 
 
 def test_v1563_cross_check_rejects_kernel_source_disagreement(tmp_path: Path):
@@ -136,6 +172,117 @@ def test_v1563_lock_owner_cli_uses_kernel_owner_not_argv_or_recorded_pid(tmp_pat
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "701"
+
+
+def test_v1563_identity_cli_binds_owner_to_host_pid_start_time_and_uid(tmp_path: Path):
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    lock = tmp_path / "production.lock"
+    lock.write_text("guest-pid-is-not-host-pid\n", encoding="utf-8")
+    _proc_entry(proc_root, 711, ["opaque-proot-worker"], start_ticks=9876)
+    _write_proc_lock(proc_root, lock, 711)
+    stat = lock.stat()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PROBE_PATH),
+            "--strategy",
+            "lock-owner",
+            "--proc-root",
+            str(proc_root),
+            "--lock-device",
+            str(stat.st_dev),
+            "--lock-inode",
+            str(stat.st_ino),
+            "--expected-uid",
+            str(os.getuid()),
+            "--details",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"711|9876|{os.getuid()}|proc_locks"
+
+
+def test_v1563_identity_gate_rejects_wrong_uid(tmp_path: Path):
+    probe = _load_probe()
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    lock = tmp_path / "production.lock"
+    lock.write_text("1\n", encoding="utf-8")
+    _proc_entry(proc_root, 721, uid=os.getuid() + 1)
+    _write_proc_lock(proc_root, lock, 721)
+
+    with pytest.raises(RuntimeError, match="UID mismatch"):
+        probe.resolve_lock_owner_identity(
+            proc_root,
+            lock.stat().st_dev,
+            lock.stat().st_ino,
+            expected_uid=os.getuid(),
+        )
+
+
+def test_v1563_exact_child_executable_uses_parent_exe_and_start_time(tmp_path: Path):
+    probe = _load_probe()
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    executable = tmp_path / "atri-supervisor"
+    executable.write_text("binary", encoding="utf-8")
+    child = _proc_entry(
+        proc_root,
+        731,
+        [str(executable)],
+        parent_pid=730,
+        start_ticks=4444,
+    )
+    (child / "exe").symlink_to(executable)
+
+    identity = probe.resolve_child_executable(
+        proc_root,
+        730,
+        executable,
+        expected_uid=os.getuid(),
+    )
+    assert identity == probe.ProcessIdentity(731, 4444, os.getuid(), "parent_exe")
+
+
+def test_v1563_exact_argv_scan_does_not_use_substring_matching(tmp_path: Path):
+    probe = _load_probe()
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    target = "/data/data/com.termux/files/home/atri-production-watchdog.sh"
+    _proc_entry(proc_root, 735, ["bash", target], start_ticks=11)
+    _proc_entry(proc_root, 736, ["bash", target + ".backup"], start_ticks=12)
+
+    assert probe.find_exact_argument_processes(
+        proc_root,
+        target,
+        expected_uid=os.getuid(),
+    ) == [probe.ProcessIdentity(735, 11, os.getuid(), "exact_argv")]
+
+
+def test_v1563_rootfs_is_derived_from_live_proot_argv_and_inode(tmp_path: Path):
+    probe = _load_probe()
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    rootfs = tmp_path / "dynamic-container" / "rootfs"
+    rootfs.mkdir(parents=True)
+    _proc_entry(
+        proc_root,
+        741,
+        ["/data/data/com.termux/files/usr/bin/proot", "--rootfs", str(rootfs)],
+    )
+
+    resolved = probe.resolve_rootfs_from_proot(
+        proc_root,
+        rootfs.stat().st_dev,
+        rootfs.stat().st_ino,
+        expected_uid=os.getuid(),
+    )
+    assert resolved == rootfs.resolve()
 
 
 def test_v1563_failure_reports_recorded_pid_and_argv_only_as_diagnostics(tmp_path: Path):

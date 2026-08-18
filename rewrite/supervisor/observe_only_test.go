@@ -25,24 +25,11 @@ func TestWatchdogObserveOnlySuppressesMutationsAndKeepsNetworkProbe(t *testing.T
 	config.WatchdogObserveOnly = true
 
 	checkKey := "tmux has-session -t prixok-bot"
-	lockCommand := watchdogCommand{
-		Path: "proot-distro",
-		Args: []string{
-			"login",
-			config.ProotDistro,
-			"--",
-			"bash",
-			"-lc",
-			`lock_path=$1; exec 9>>"$lock_path"; if flock -n 9; then flock -u 9; exit 1; fi; exit 0`,
-			"watchdog-lock",
-			config.BotLockPath,
-		},
-	}
 	healthKey := config.LocalHealth + " --quiet"
 	runner := &fakeWatchdogRunner{responses: map[string][]error{
-		checkKey:                            {errors.New("missing tmux session")},
-		fakeWatchdogCommandKey(lockCommand): {errors.New("worker lock is free")},
-		healthKey:                           {errors.New("unhealthy")},
+		checkKey: {errors.New("missing tmux session")},
+		fakeWatchdogCommandKey(newWatchdog(config, nil, nil, nil).botLockProbeCommand()): {fakeExitError(botLockFreeExitCode)},
+		healthKey: {errors.New("unhealthy")},
 	}}
 	logs, logf := captureWatchdogLogs()
 	watchdog := newWatchdog(config, runner, func(path string) bool {

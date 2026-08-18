@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Termux helper syntax and self-tests
         run: |
-          bash -n ../termux-build.sh ../termux-all-in-one.sh ../termux-production-canary.sh ../termux-production-topology.sh ../termux-production-recovery-host.sh ../termux-production-recovery-common.sh ../termux-production-recovery-run.sh ../termux-v150-production-watchdog.sh ../termux-v150-bot-launcher.sh ../termux-v150-boot-hook.sh ../termux-v150-persistence-host.sh ../termux-v150-pre-reboot-check.sh ../termux-v150-deploy.sh ../termux-v151-shadow-canary.sh ../termux-v152-parity-canary.sh ../termux-v153-ai-canary.sh ../termux-v154-production-canary.sh ../../termux/prixok-bot.sh
+          bash -n ../termux-build.sh ../termux-all-in-one.sh ../termux-production-canary.sh ../termux-production-topology.sh ../termux-production-recovery-host.sh ../termux-production-recovery-common.sh ../termux-production-recovery-run.sh ../termux-v150-production-watchdog.sh ../termux-v150-bot-launcher.sh ../termux-v150-boot-hook.sh ../termux-v150-persistence-host.sh ../termux-v150-pre-reboot-check.sh ../termux-v150-deploy.sh ../termux-v151-shadow-canary.sh ../termux-v152-parity-canary.sh ../termux-v153-ai-canary.sh ../termux-v154-production-canary.sh ../termux-atri-final-recovery.sh ../termux-v1674-main-final-canary.sh ../termux-v1674-live-recovery-final.sh ../../termux/prixok-bot.sh
           ../termux-all-in-one.sh --self-test
           ../termux-production-canary.sh --self-test
           bash ../termux-production-topology.sh --self-test
@@ -70,7 +70,13 @@ jobs:
           bash ../termux-v152-parity-canary.sh --self-test
           bash ../termux-v153-ai-canary.sh --self-test
           bash ../termux-v154-production-canary.sh --self-test
-          python3 -m py_compile ../v151_shadow_patch.py ../v152_parity_patch.py ../v153_ai_guard_patch.py ../v153_ai_probe.py ../v154_production_patch.py ../v154_production_probe.py ../v154_package_guard.py
+          bash ../termux-v150-production-watchdog.sh --self-test
+          bash ../termux-v150-bot-launcher.sh --self-test
+          bash ../termux-v150-boot-hook.sh --self-test
+          bash ../termux-atri-final-recovery.sh --self-test
+          bash ../termux-v1674-main-final-canary.sh --self-test
+          bash ../termux-v1674-live-recovery-final.sh --self-test
+          python3 -m py_compile ../v151_shadow_patch.py ../v152_parity_patch.py ../v153_ai_guard_patch.py ../v153_ai_probe.py ../v154_production_patch.py ../v154_production_probe.py ../v154_package_guard.py ../v156_bot_pid_probe.py
           bash -n ../termux-v150-production-watchdog.sh ../termux-v150-bot-launcher.sh ../termux-v150-boot-hook.sh ../termux-v151-shadow-canary.sh ../termux-v152-parity-canary.sh ../termux-v153-ai-canary.sh ../termux-v154-production-canary.sh
           grep -q 'boot_hook_lock_busy' ../termux-v150-boot-hook.sh
           grep -q '9>&-' ../termux-v150-boot-hook.sh

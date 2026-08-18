@@ -4,6 +4,16 @@ set -Eeuo pipefail
 HOST_BASH="/data/data/com.termux/files/usr/bin/bash"
 CANONICAL_LAUNCHER="$HOME/prixok-bot.sh"
 
+if [[ "${1:-}" == "--self-test" ]]; then
+  (($# == 1)) || exit 2
+  bash -n "${BASH_SOURCE[0]}"
+  grep -q 'ATRI_PRODUCTION_LAUNCHER_GUARD=1' "${BASH_SOURCE[0]}"
+  grep -q 'exec env' "${BASH_SOURCE[0]}"
+  echo "v150 bot launcher self-test: PASS"
+  exit 0
+fi
+(($# == 0)) || { echo "Usage: $0 [--self-test]" >&2; exit 2; }
+
 if [[ ! -x "$CANONICAL_LAUNCHER" ]]; then
   echo "missing executable: $CANONICAL_LAUNCHER" >&2
   exit 127

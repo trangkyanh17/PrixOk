@@ -9,6 +9,16 @@ import (
 
 const watchdogBackoffPollInterval = 10 * time.Second
 
+const botLockFreeExitCode = 10
+
+type botLockState uint8
+
+const (
+	botLockUnknown botLockState = iota
+	botLockFree
+	botLockHeld
+)
+
 type watchdog struct {
 	config     config
 	runner     watchdogCommandRunner
@@ -16,11 +26,13 @@ type watchdog struct {
 	logf       func(string, ...any)
 	now        func() time.Time
 
-	repair           repairBackoff
-	lastNetworkCheck time.Time
-	lastNetworkState string
-	lastBackoffLog   time.Time
-	observeLogged    bool
+	repair                 repairBackoff
+	lastNetworkCheck       time.Time
+	lastNetworkState       string
+	lastBackoffLog         time.Time
+	observeLogged          bool
+	botSessionMissingSince time.Time
+	lastOrphanRecovery     time.Time
 }
 
 func newWatchdog(
@@ -77,8 +89,8 @@ func (watchdog *watchdog) log(format string, args ...any) {
 	}
 }
 
-func (watchdog *watchdog) botWorkerLockHeld(ctx context.Context) bool {
-	command := watchdogCommand{
+func (watchdog *watchdog) botLockProbeCommand() watchdogCommand {
+	return watchdogCommand{
 		Path: "proot-distro",
 		Args: []string{
 			"login",
@@ -86,26 +98,42 @@ func (watchdog *watchdog) botWorkerLockHeld(ctx context.Context) bool {
 			"--",
 			"bash",
 			"-lc",
-			`lock_path=$1; exec 9>>"$lock_path"; if flock -n 9; then flock -u 9; exit 1; fi; exit 0`,
+			`lock_path=$1
+if [ ! -e "$lock_path" ]; then exit 10; fi
+command -v flock >/dev/null 2>&1 || exit 20
+exec 9<>"$lock_path" || exit 21
+if flock -n -E 11 9; then
+  flock -u 9 || exit 22
+  exit 10
+fi
+rc=$?
+[ "$rc" -eq 11 ] && exit 0
+exit 23`,
 			"watchdog-lock",
 			watchdog.config.BotLockPath,
 		},
 	}
-	return watchdog.runCommand(ctx, watchdog.config.CommandTimeout, command) == nil
 }
 
-func (watchdog *watchdog) ensureBotSession(ctx context.Context) {
-	check := watchdogCommand{
-		Path: "tmux",
-		Args: []string{"has-session", "-t", watchdog.config.BotSession},
+func (watchdog *watchdog) botWorkerLockState(ctx context.Context) botLockState {
+	command := watchdog.botLockProbeCommand()
+	err := watchdog.runCommand(ctx, watchdog.config.CommandTimeout, command)
+	if err == nil {
+		return botLockHeld
 	}
-	if watchdog.runCommand(ctx, watchdog.config.CommandTimeout, check) == nil || ctx.Err() != nil {
-		return
+	if commandExitCode(err) == botLockFreeExitCode {
+		return botLockFree
 	}
-	if watchdog.botWorkerLockHeld(ctx) {
-		watchdog.log("BOT_SESSION_MISSING_WORKER_ACTIVE")
-		return
-	}
+	watchdog.log("BOT_LOCK_PROBE_UNKNOWN rc=%d", commandExitCode(err))
+	return botLockUnknown
+}
+
+func (watchdog *watchdog) resetBotOrphanTracking() {
+	watchdog.botSessionMissingSince = time.Time{}
+	watchdog.lastOrphanRecovery = time.Time{}
+}
+
+func (watchdog *watchdog) launchBotSession(ctx context.Context) {
 	if watchdog.config.WatchdogObserveOnly {
 		watchdog.log("BOT_SESSION_MISSING_OBSERVE_ONLY")
 		return
@@ -128,6 +156,78 @@ func (watchdog *watchdog) ensureBotSession(ctx context.Context) {
 	}
 	if err := watchdog.runCommand(ctx, watchdog.config.CommandTimeout, launch); err != nil && ctx.Err() == nil {
 		watchdog.log("BOT_SESSION_RESTART_FAIL")
+	}
+}
+
+func (watchdog *watchdog) recoverVerifiedOrphan(ctx context.Context, now time.Time) {
+	if watchdog.config.WatchdogObserveOnly {
+		return
+	}
+	if !watchdog.executable(watchdog.config.BotOrphanRecovery) {
+		watchdog.log("BOT_ORPHAN_RECOVERY_MISSING")
+		return
+	}
+	if !watchdog.lastOrphanRecovery.IsZero() && now.Sub(watchdog.lastOrphanRecovery) < watchdog.config.OrphanRetry {
+		return
+	}
+	watchdog.lastOrphanRecovery = now
+	watchdog.log("BOT_ORPHAN_RECOVERY_START")
+	command := watchdogCommand{
+		Path: watchdog.config.BotOrphanRecovery,
+		Args: []string{"--orphan-recover"},
+		Env: []string{
+			"ATRI_BOT_SESSION=" + watchdog.config.BotSession,
+			"ATRI_BOT_LOCK_PATH=" + watchdog.config.BotLockPath,
+			"ATRI_PROOT_DISTRO=" + watchdog.config.ProotDistro,
+		},
+	}
+	if err := watchdog.runCommand(ctx, watchdog.config.OrphanRecoveryTimeout, command); err != nil {
+		if ctx.Err() == nil {
+			watchdog.log("BOT_ORPHAN_RECOVERY_FAIL rc=%d", commandExitCode(err))
+		}
+		return
+	}
+	watchdog.log("BOT_ORPHAN_RECOVERY_RELEASED")
+}
+
+func (watchdog *watchdog) ensureBotSession(ctx context.Context) {
+	check := watchdogCommand{
+		Path: "tmux",
+		Args: []string{"has-session", "-t", watchdog.config.BotSession},
+	}
+	if watchdog.runCommand(ctx, watchdog.config.CommandTimeout, check) == nil || ctx.Err() != nil {
+		watchdog.resetBotOrphanTracking()
+		return
+	}
+
+	switch watchdog.botWorkerLockState(ctx) {
+	case botLockUnknown:
+		watchdog.botSessionMissingSince = time.Time{}
+		watchdog.log("BOT_SESSION_MISSING_LOCK_UNKNOWN")
+		return
+	case botLockFree:
+		watchdog.resetBotOrphanTracking()
+		watchdog.launchBotSession(ctx)
+		return
+	case botLockHeld:
+		now := watchdog.currentTime()
+		if watchdog.botSessionMissingSince.IsZero() {
+			watchdog.botSessionMissingSince = now
+		}
+		elapsed := now.Sub(watchdog.botSessionMissingSince)
+		watchdog.log("BOT_SESSION_MISSING_WORKER_ACTIVE elapsed=%s", elapsed.Round(time.Second))
+		if elapsed < watchdog.config.OrphanGrace {
+			return
+		}
+		watchdog.recoverVerifiedOrphan(ctx, now)
+		if ctx.Err() != nil {
+			return
+		}
+		if watchdog.botWorkerLockState(ctx) != botLockFree {
+			return
+		}
+		watchdog.resetBotOrphanTracking()
+		watchdog.launchBotSession(ctx)
 	}
 }
 

@@ -20,6 +20,11 @@ func (run watchdogRunnerFunc) Run(ctx context.Context, command watchdogCommand) 
 	return run(ctx, command)
 }
 
+type fakeExitError int
+
+func (err fakeExitError) Error() string { return fmt.Sprintf("exit status %d", err) }
+func (err fakeExitError) ExitCode() int { return int(err) }
+
 type fakeWatchdogRunner struct {
 	mu        sync.Mutex
 	calls     []watchdogCommand
@@ -61,18 +66,22 @@ func captureWatchdogLogs() (*[]string, func(string, ...any)) {
 
 func testWatchdogConfig() config {
 	return config{
-		BotSession:           "prixok-bot",
-		BotLauncher:          "/tmp/prixok-bot.sh",
-		LocalHealth:          "/tmp/local-health.sh",
-		BrowserEnsure:        "/tmp/browser-ensure.sh",
-		NetworkState:         "/tmp/network-state.sh",
-		ProotDistro:          "debian",
-		BotLockPath:          "/app/.atri-prixok-bot-v133.lock",
-		LoopInterval:         30 * time.Second,
-		CommandTimeout:       5 * time.Second,
-		RepairTimeout:        270 * time.Second,
-		NetworkCheckInterval: 180 * time.Second,
-		NetworkProbeTimeout:  8 * time.Second,
+		BotSession:            "prixok-bot",
+		BotLauncher:           "/tmp/prixok-bot.sh",
+		BotOrphanRecovery:     "/tmp/termux-atri-final-recovery.sh",
+		LocalHealth:           "/tmp/local-health.sh",
+		BrowserEnsure:         "/tmp/browser-ensure.sh",
+		NetworkState:          "/tmp/network-state.sh",
+		ProotDistro:           "debian",
+		BotLockPath:           "/app/.atri-prixok-bot-v133.lock",
+		LoopInterval:          30 * time.Second,
+		CommandTimeout:        5 * time.Second,
+		OrphanGrace:           90 * time.Second,
+		OrphanRetry:           5 * time.Minute,
+		OrphanRecoveryTimeout: 60 * time.Second,
+		RepairTimeout:         270 * time.Second,
+		NetworkCheckInterval:  180 * time.Second,
+		NetworkProbeTimeout:   8 * time.Second,
 	}
 }
 
@@ -93,7 +102,7 @@ func TestWatchdogDoesNotDuplicateActiveWorker(t *testing.T) {
 	if runner.countPrefix("tmux new-session") != 0 {
 		t.Fatal("worker lock was held but watchdog started a duplicate tmux session")
 	}
-	if len(*logs) != 1 || (*logs)[0] != "BOT_SESSION_MISSING_WORKER_ACTIVE" {
+	if len(*logs) != 1 || (*logs)[0] != "BOT_SESSION_MISSING_WORKER_ACTIVE elapsed=0s" {
 		t.Fatalf("logs=%v", *logs)
 	}
 }
@@ -108,11 +117,8 @@ func TestWatchdogRestartsMissingSessionWhenWorkerLockIsFree(t *testing.T) {
 	logs, logf := captureWatchdogLogs()
 	watchdog := newWatchdog(config, runner, func(path string) bool { return path == config.BotLauncher }, logf)
 
-	// A non-zero lock probe means flock acquired the lock, so there is no active bot worker.
-	runner.responses[fakeWatchdogCommandKey(watchdogCommand{
-		Path: "proot-distro",
-		Args: []string{"login", config.ProotDistro, "--", "bash", "-lc", `lock_path=$1; exec 9>>"$lock_path"; if flock -n 9; then flock -u 9; exit 1; fi; exit 0`, "watchdog-lock", config.BotLockPath},
-	})] = []error{errors.New("lock is free")}
+	// Exit code 10 is the explicit, unambiguous lock-free result.
+	runner.responses[fakeWatchdogCommandKey(watchdog.botLockProbeCommand())] = []error{fakeExitError(botLockFreeExitCode)}
 
 	watchdog.ensureBotSession(context.Background())
 	if runner.countPrefix(lockPrefix) != 1 {
@@ -123,6 +129,118 @@ func TestWatchdogRestartsMissingSessionWhenWorkerLockIsFree(t *testing.T) {
 	}
 	if len(*logs) != 1 || (*logs)[0] != "BOT_SESSION_RESTART" {
 		t.Fatalf("logs=%v", *logs)
+	}
+}
+
+func TestWatchdogLockProbeFailureFailsClosed(t *testing.T) {
+	config := testWatchdogConfig()
+	runner := &fakeWatchdogRunner{responses: map[string][]error{
+		"tmux has-session -t prixok-bot": {errors.New("missing tmux session")},
+	}}
+	logs, logf := captureWatchdogLogs()
+	watchdog := newWatchdog(config, runner, func(string) bool { return true }, logf)
+	runner.responses[fakeWatchdogCommandKey(watchdog.botLockProbeCommand())] = []error{fakeExitError(20)}
+
+	watchdog.ensureBotSession(context.Background())
+
+	if runner.countPrefix("tmux new-session") != 0 {
+		t.Fatal("unknown lock state created a duplicate bot session")
+	}
+	joined := strings.Join(*logs, ",")
+	if !strings.Contains(joined, "BOT_LOCK_PROBE_UNKNOWN rc=20") ||
+		!strings.Contains(joined, "BOT_SESSION_MISSING_LOCK_UNKNOWN") {
+		t.Fatalf("logs=%v", *logs)
+	}
+}
+
+func TestWatchdogUnknownLockStateResetsOrphanGrace(t *testing.T) {
+	config := testWatchdogConfig()
+	runner := &fakeWatchdogRunner{responses: map[string][]error{
+		"tmux has-session -t prixok-bot": {
+			errors.New("missing"),
+			errors.New("missing"),
+			errors.New("missing"),
+		},
+	}}
+	watchdog := newWatchdog(config, runner, func(string) bool { return true }, nil)
+	runner.responses[fakeWatchdogCommandKey(watchdog.botLockProbeCommand())] = []error{
+		nil,
+		fakeExitError(20),
+		nil,
+	}
+	now := time.Unix(45_000, 0)
+	watchdog.now = func() time.Time { return now }
+
+	watchdog.ensureBotSession(context.Background())
+	now = now.Add(config.OrphanGrace)
+	watchdog.ensureBotSession(context.Background())
+	if !watchdog.botSessionMissingSince.IsZero() {
+		t.Fatal("unknown lock state retained stale orphan grace evidence")
+	}
+	now = now.Add(config.OrphanGrace)
+	watchdog.ensureBotSession(context.Background())
+	if runner.countPrefix(config.BotOrphanRecovery+" --orphan-recover") != 0 {
+		t.Fatal("orphan recovery ran without a fresh continuous grace period")
+	}
+}
+
+func TestWatchdogRecoversVerifiedOrphanThenRestarts(t *testing.T) {
+	config := testWatchdogConfig()
+	checkKey := "tmux has-session -t prixok-bot"
+	runner := &fakeWatchdogRunner{responses: map[string][]error{
+		checkKey: {errors.New("missing"), errors.New("still missing")},
+	}}
+	logs, logf := captureWatchdogLogs()
+	watchdog := newWatchdog(config, runner, func(path string) bool {
+		return path == config.BotLauncher || path == config.BotOrphanRecovery
+	}, logf)
+	lockKey := fakeWatchdogCommandKey(watchdog.botLockProbeCommand())
+	runner.responses[lockKey] = []error{nil, nil, fakeExitError(botLockFreeExitCode)}
+	now := time.Unix(40_000, 0)
+	watchdog.now = func() time.Time { return now }
+
+	watchdog.ensureBotSession(context.Background())
+	if runner.countPrefix(config.BotOrphanRecovery+" --orphan-recover") != 0 {
+		t.Fatal("orphan recovery ran before grace period")
+	}
+
+	now = now.Add(config.OrphanGrace)
+	watchdog.ensureBotSession(context.Background())
+	if runner.countPrefix(config.BotOrphanRecovery+" --orphan-recover") != 1 {
+		t.Fatal("verified orphan helper was not invoked exactly once")
+	}
+	if runner.countPrefix("tmux new-session -d -s prixok-bot") != 1 {
+		t.Fatal("bot session was not recreated after verified lock release")
+	}
+	joined := strings.Join(*logs, ",")
+	for _, marker := range []string{
+		"BOT_ORPHAN_RECOVERY_START",
+		"BOT_ORPHAN_RECOVERY_RELEASED",
+		"BOT_SESSION_RESTART",
+	} {
+		if !strings.Contains(joined, marker) {
+			t.Fatalf("missing %q in logs=%v", marker, *logs)
+		}
+	}
+}
+
+func TestWatchdogOrphanRecoveryFailureNeverStartsDuplicate(t *testing.T) {
+	config := testWatchdogConfig()
+	runner := &fakeWatchdogRunner{responses: map[string][]error{
+		"tmux has-session -t prixok-bot":               {errors.New("missing")},
+		config.BotOrphanRecovery + " --orphan-recover": {fakeExitError(75)},
+	}}
+	watchdog := newWatchdog(config, runner, func(path string) bool {
+		return path == config.BotLauncher || path == config.BotOrphanRecovery
+	}, nil)
+	runner.responses[fakeWatchdogCommandKey(watchdog.botLockProbeCommand())] = []error{nil, nil}
+	now := time.Unix(50_000, 0)
+	watchdog.now = func() time.Time { return now }
+	watchdog.botSessionMissingSince = now.Add(-config.OrphanGrace)
+
+	watchdog.ensureBotSession(context.Background())
+	if runner.countPrefix("tmux new-session") != 0 {
+		t.Fatal("failed orphan recovery started a duplicate session")
 	}
 }
 
