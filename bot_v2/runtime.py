@@ -216,7 +216,7 @@ def _validate_route_contract(registry: HandlerRegistry) -> None:
     _require_single_command_owner(
         registry,
         _command_name("ping"),
-        "bot.modules.services:ping",
+        "bot_v2.commands.core:ping",
     )
     for base in ("help", "menu", "amenu"):
         _require_single_command_owner(
