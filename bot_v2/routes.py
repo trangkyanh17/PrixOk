@@ -18,7 +18,6 @@ from bot.modules import (
     cancel_multi,
     clear,
     clone_node,
-    confirm_restart,
     confirm_selection,
     count_node,
     delete_file,
@@ -31,7 +30,6 @@ from bot.modules import (
     hydra_search,
     remove_from_queue,
     remove_sudo,
-    restart_bot,
     rss_listener,
     run_shell,
     run_speedtest,
@@ -50,6 +48,7 @@ from bot.modules.atri_free_tools import atri_free_tools_message
 from bot.modules.atri_web_tools import atri_tools_message, sync_bot_command_menu
 
 from .commands.core import log, ping, start
+from .commands.restart import confirm_restart, restart_bot
 from .commands.system import bot_stats
 from .commands.transfers import (
     gallery_dl,
