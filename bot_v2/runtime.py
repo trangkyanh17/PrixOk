@@ -112,13 +112,11 @@ def _register_extension_handlers(registry: HandlerRegistry) -> None:
     from bot.modules.atri_rose_natural import add_atri_rose_natural_handlers
     from bot.modules.atri_skills import add_atri_skills_handlers
     from bot.modules.atri_thinking_control import add_atri_thinking_handlers
-    from bot.modules.atri_unified_menu import add_atri_unified_menu_handlers
 
     guarded = GuardedClient(registry)
     registrars = (
         ("atri.media_auto", add_atri_media_auto_handlers),
         ("atri.skills", add_atri_skills_handlers),
-        ("atri.unified_menu", add_atri_unified_menu_handlers),
         ("atri.thinking", add_atri_thinking_handlers),
         ("atri.provider", add_atri_provider_control_handlers),
         ("atri.rose_natural", add_atri_rose_natural_handlers),
@@ -272,11 +270,15 @@ async def bootstrap() -> HandlerRegistry:
 
     _register_extension_handlers(registry)
 
-    # Import after all runtime patch layers so this module captures the patched
+    # Import after all runtime patch layers so these modules capture patched
     # Atri callback aliases rather than stale pre-patch references.
-    from .atri_routes import register_atri_command_ui_routes
+    from .atri_routes import (
+        register_atri_command_ui_routes,
+        register_atri_unified_menu_routes,
+    )
     from .routes import register_core_routes
 
+    register_atri_unified_menu_routes(registry)
     register_atri_command_ui_routes(registry)
     register_core_routes(registry)
     bot_loop.create_task(start_free_tools(guarded), name="prixok-v2-free-tools")
