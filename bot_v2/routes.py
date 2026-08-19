@@ -39,7 +39,6 @@ from bot.modules import (
     mirror,
     nzb_leech,
     nzb_mirror,
-    ping,
     qb_leech,
     qb_mirror,
     remove_from_queue,
@@ -66,6 +65,7 @@ from bot.modules.atri_free_tools import atri_free_tools_message
 from bot.modules.atri_media_direct import media_direct
 from bot.modules.atri_web_tools import atri_tools_message, sync_bot_command_menu
 
+from .commands.core import ping
 from .registry import HandlerRegistry
 
 
@@ -130,10 +130,10 @@ def _callback(
 
 
 def register_core_routes(registry: HandlerRegistry) -> None:
-    """Register each legacy business callback under one explicit v2 owner.
+    """Register each business callback under one explicit v2 owner.
 
-    The business functions remain reusable Python code.  Handler ownership does
-    not: v2 never calls ``bot.core.handlers.add_handlers``.
+    Most business implementations are migrated incrementally. Handler ownership
+    is already native v2 and never calls ``bot.core.handlers.add_handlers``.
     """
 
     _message(registry, "auth.authorize", authorize, BotCommands.AuthorizeCommand, CustomFilters.sudo)
@@ -206,8 +206,8 @@ def register_core_routes(registry: HandlerRegistry) -> None:
     _message(registry, "core.speedtest", run_speedtest, BotCommands.SpeedtestCommand, CustomFilters.sudo)
     _message(registry, "core.stats", bot_stats, BotCommands.StatsCommand, CustomFilters.authorized)
 
-    # /help is intentionally NOT registered here.  The unified command center
-    # is the sole v2 owner of /help.  This removes the legacy dual-owner route.
+    # /help is intentionally NOT registered here. The unified command center
+    # is the sole v2 owner of /help. This removes the legacy dual-owner route.
 
     registry.add(
         MessageHandler(
