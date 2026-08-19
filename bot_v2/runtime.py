@@ -13,6 +13,7 @@ from bot.modules.atri_network_egress_guard import install_atri_early_network_gua
 
 from .contracts import validate_route_contract
 from .registry import GuardedClient, HandlerRegistry
+from .tasks import SUPERVISOR
 
 
 DEFAULT_LOCK_PATH = Path("/app/.atri-prixok-bot-v133.lock")
@@ -205,7 +206,10 @@ async def bootstrap() -> HandlerRegistry:
     register_atri_unified_menu_routes(registry)
     register_atri_command_ui_routes(registry)
     register_core_routes(registry)
-    bot_loop.create_task(start_free_tools(guarded), name="prixok-v2-free-tools")
+    SUPERVISOR.spawn(
+        start_free_tools(guarded),
+        name="prixok-v2-free-tools",
+    )
     add_capability_runtime_handlers(guarded)
     install_atri_system_post_import_guard()
     add_v150_shadow_handlers(guarded)
@@ -224,11 +228,11 @@ async def bootstrap() -> HandlerRegistry:
         prewarm_semgrep_mcp,
     )
 
-    bot_loop.create_task(
+    SUPERVISOR.spawn(
         prewarm_semgrep_mcp(),
         name="prixok-v2-semgrep-prewarm",
     )
-    bot_loop.create_task(
+    SUPERVISOR.spawn(
         prewarm_remaining_code_plugins(),
         name="prixok-v2-mcp-prewarm",
     )
@@ -255,6 +259,12 @@ def run() -> None:
     except KeyboardInterrupt:
         LOGGER.info("PRIXOK_V2_SHUTDOWN keyboard_interrupt=1")
     finally:
+        try:
+            if not bot_loop.is_closed():
+                bot_loop.run_until_complete(SUPERVISOR.shutdown(timeout=10.0))
+        except Exception:
+            LOGGER.exception("PRIXOK_V2_TASK_SHUTDOWN_FAILED")
+
         try:
             if not bot_loop.is_closed():
                 bot_loop.run_until_complete(TgClient.stop())
