@@ -35,7 +35,6 @@ from bot.modules import (
     jd_leech,
     jd_mirror,
     leech,
-    log,
     mirror,
     nzb_leech,
     nzb_mirror,
@@ -51,7 +50,6 @@ from bot.modules import (
     select_type,
     send_bot_settings,
     send_user_settings,
-    start,
     status_pages,
     task_status,
     torrent_search,
@@ -65,7 +63,7 @@ from bot.modules.atri_free_tools import atri_free_tools_message
 from bot.modules.atri_media_direct import media_direct
 from bot.modules.atri_web_tools import atri_tools_message, sync_bot_command_menu
 
-from .commands.core import ping
+from .commands.core import log, ping, start
 from .registry import HandlerRegistry
 
 
