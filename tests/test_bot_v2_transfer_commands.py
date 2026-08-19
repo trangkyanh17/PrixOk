@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from bot_v2.commands import transfers
 from bot_v2.tasks import BackgroundTaskSupervisor
@@ -15,7 +15,7 @@ class FakeChat:
 @dataclass
 class FakeMessage:
     id: int = 777
-    chat: FakeChat = FakeChat()
+    chat: FakeChat = field(default_factory=FakeChat)
 
 
 class FakeOperation:
