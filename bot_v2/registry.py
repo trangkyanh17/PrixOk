@@ -15,6 +15,7 @@ class HandlerKey:
     group: int
     handler_type: str
     callback: str
+    commands: tuple[str, ...]
     filter_fingerprint: str
 
 
@@ -32,15 +33,29 @@ def _callable_name(callback: Any) -> str:
     return f"{module}:{qualname}"
 
 
-def _stable_value(value: Any, seen: set[int]) -> str:
-    """Build a deterministic structural representation for handler filters.
+def _object_attrs(value: Any) -> dict[str, Any]:
+    attrs: dict[str, Any] = {}
+    try:
+        attrs.update(vars(value))
+    except TypeError:
+        pass
 
-    Kurigram filter objects are small object graphs (command metadata, regex
-    patterns and AND/OR operands).  Using ``repr(filter)`` directly is unsafe
-    because some reprs include memory addresses.  A structural representation
-    lets v2 distinguish the same callback bound to different filters while
-    still suppressing a semantically repeated registration.
-    """
+    for cls in value.__class__.__mro__:
+        slots = getattr(cls, "__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        for slot in slots:
+            if slot in {"__dict__", "__weakref__"} or slot in attrs:
+                continue
+            try:
+                attrs[slot] = getattr(value, slot)
+            except Exception:
+                continue
+    return attrs
+
+
+def _stable_value(value: Any, seen: set[int]) -> str:
+    """Build a deterministic structural representation for handler filters."""
 
     if value is None:
         return "none"
@@ -93,24 +108,7 @@ def _stable_value(value: Any, seen: set[int]) -> str:
         finally:
             seen.discard(marker)
 
-    attrs: dict[str, Any] = {}
-    try:
-        attrs.update(vars(value))
-    except TypeError:
-        pass
-
-    for cls in value.__class__.__mro__:
-        slots = getattr(cls, "__slots__", ())
-        if isinstance(slots, str):
-            slots = (slots,)
-        for slot in slots:
-            if slot in {"__dict__", "__weakref__"} or slot in attrs:
-                continue
-            try:
-                attrs[slot] = getattr(value, slot)
-            except Exception:
-                continue
-
+    attrs = _object_attrs(value)
     class_name = f"{value.__class__.__module__}:{value.__class__.__qualname__}"
     if not attrs:
         return class_name
@@ -133,6 +131,54 @@ def _filter_fingerprint(handler: Any) -> str:
     return hashlib.sha256(structural.encode("utf-8")).hexdigest()[:20]
 
 
+def _extract_commands(value: Any, seen: set[int] | None = None) -> set[str]:
+    """Collect command names embedded in Kurigram/Pyrogram filter graphs."""
+
+    if seen is None:
+        seen = set()
+    if value is None or isinstance(value, (bool, int, float, str, bytes)):
+        return set()
+
+    marker = id(value)
+    if marker in seen:
+        return set()
+    seen.add(marker)
+
+    try:
+        if isinstance(value, dict):
+            found: set[str] = set()
+            for key, item in value.items():
+                found.update(_extract_commands(key, seen))
+                found.update(_extract_commands(item, seen))
+            return found
+
+        if isinstance(value, (list, tuple, set, frozenset)):
+            found: set[str] = set()
+            for item in value:
+                found.update(_extract_commands(item, seen))
+            return found
+
+        attrs = _object_attrs(value)
+        found: set[str] = set()
+        raw_commands = attrs.get("commands")
+        if isinstance(raw_commands, str):
+            found.add(raw_commands)
+        elif isinstance(raw_commands, (list, tuple, set, frozenset)):
+            found.update(
+                str(item)
+                for item in raw_commands
+                if isinstance(item, str) and item
+            )
+
+        for name, item in attrs.items():
+            if name == "commands":
+                continue
+            found.update(_extract_commands(item, seen))
+        return found
+    finally:
+        seen.discard(marker)
+
+
 def make_handler_key(handler: Any, group: int) -> HandlerKey:
     callback = getattr(handler, "callback", None)
     if callback is None:
@@ -146,6 +192,7 @@ def make_handler_key(handler: Any, group: int) -> HandlerKey:
         group=int(group),
         handler_type=handler_type,
         callback=_callable_name(callback),
+        commands=tuple(sorted(_extract_commands(getattr(handler, "filters", None)))),
         filter_fingerprint=_filter_fingerprint(handler),
     )
 
@@ -154,9 +201,9 @@ class HandlerRegistry:
     """Single owner for every Telegram handler registered by the v2 runtime.
 
     Registration identity includes group, handler type, callback and filter
-    semantics.  Therefore exact duplicates are suppressed without accidentally
-    deleting a legitimate second route that reuses the same callback under a
-    different command/filter.
+    semantics. Exact duplicates are suppressed without deleting a legitimate
+    second route that reuses one callback under a different filter. Command
+    names are also inventoried so startup contracts can detect dual ownership.
     """
 
     def __init__(self, client: Any, *, logger: Any | None = None) -> None:
@@ -190,10 +237,11 @@ class HandlerRegistry:
             if self.logger is not None:
                 self.logger.warning(
                     "PRIXOK_V2_HANDLER_DUPLICATE_BLOCKED "
-                    "group=%s handler=%s callback=%s filter=%s route=%s",
+                    "group=%s handler=%s callback=%s commands=%s filter=%s route=%s",
                     key.group,
                     key.handler_type,
                     key.callback,
+                    ",".join(key.commands) or "-",
                     key.filter_fingerprint,
                     route_id or "-",
                 )
@@ -210,10 +258,11 @@ class HandlerRegistry:
         if self.logger is not None:
             self.logger.info(
                 "PRIXOK_V2_HANDLER_REGISTERED "
-                "group=%s handler=%s callback=%s filter=%s route=%s",
+                "group=%s handler=%s callback=%s commands=%s filter=%s route=%s",
                 key.group,
                 key.handler_type,
                 key.callback,
+                ",".join(key.commands) or "-",
                 key.filter_fingerprint,
                 route_id or "-",
             )
@@ -222,6 +271,14 @@ class HandlerRegistry:
     def count_callback(self, callback: Callable[..., Any]) -> int:
         name = _callable_name(callback)
         return sum(1 for _, key in self._records if key.callback == name)
+
+    def command_owners(self, command: str) -> tuple[tuple[str | None, HandlerKey], ...]:
+        target = str(command)
+        return tuple(
+            (route_id, key)
+            for route_id, key in self._records
+            if target in key.commands
+        )
 
     def inventory_lines(self) -> tuple[str, ...]:
         lines: list[str] = []
@@ -233,6 +290,7 @@ class HandlerRegistry:
                         str(key.group),
                         key.handler_type,
                         key.callback,
+                        ",".join(key.commands) or "-",
                         key.filter_fingerprint,
                     )
                 )
