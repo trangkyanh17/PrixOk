@@ -2,23 +2,18 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Coroutine
+from time import monotonic
 from typing import Any
 
 from bot import LOGGER
 
 
 class BackgroundTaskSupervisor:
-    """Track fire-and-forget work owned by the v2 runtime.
-
-    Legacy command entrypoints often called ``bot_loop.create_task`` directly,
-    which made task multiplicity and failures hard to audit.  v2 routes long
-    running transfer work through this supervisor so every spawned task has a
-    deterministic name, is retained until completion, and is cancelled during
-    runtime shutdown.
-    """
+    """Track and de-duplicate background work owned by the v2 runtime."""
 
     def __init__(self) -> None:
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._claims: dict[str, float] = {}
 
     @property
     def tasks(self) -> tuple[asyncio.Task[Any], ...]:
@@ -41,6 +36,45 @@ class BackgroundTaskSupervisor:
             len(self._tasks),
         )
         return task
+
+    def spawn_once(
+        self,
+        coroutine: Coroutine[Any, Any, Any],
+        *,
+        name: str,
+        claim: str,
+        ttl: float = 600.0,
+    ) -> asyncio.Task[Any] | None:
+        """Spawn at most once for a stable update claim within ``ttl`` seconds.
+
+        Transfer commands are not safe to execute twice for the same Telegram
+        message.  A retained claim protects against an accidental replay after
+        the first task has already finished, while the runtime singleton still
+        protects against a second worker process.
+        """
+
+        now = monotonic()
+        expired = [
+            key
+            for key, created_at in self._claims.items()
+            if now - created_at > ttl
+        ]
+        for key in expired:
+            self._claims.pop(key, None)
+
+        created_at = self._claims.get(claim)
+        if created_at is not None and now - created_at <= ttl:
+            coroutine.close()
+            LOGGER.warning(
+                "PRIXOK_V2_TASK_DUPLICATE_BLOCKED claim=%s age=%.3f ttl=%.3f",
+                claim,
+                now - created_at,
+                ttl,
+            )
+            return None
+
+        self._claims[claim] = now
+        return self.spawn(coroutine, name=name)
 
     def _on_done(self, task: asyncio.Task[Any]) -> None:
         self._tasks.discard(task)
