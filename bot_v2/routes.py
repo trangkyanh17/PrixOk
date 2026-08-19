@@ -25,20 +25,10 @@ from bot.modules import (
     edit_bot_settings,
     edit_user_settings,
     execute,
-    gallery_dl,
-    gallery_dl_leech,
     gdrive_search,
     get_rss_menu,
     get_users_settings,
     hydra_search,
-    jd_leech,
-    jd_mirror,
-    leech,
-    mirror,
-    nzb_leech,
-    nzb_mirror,
-    qb_leech,
-    qb_mirror,
     remove_from_queue,
     remove_sudo,
     restart_bot,
@@ -54,16 +44,28 @@ from bot.modules import (
     torrent_search,
     torrent_search_update,
     unauthorize,
-    ytdl,
-    ytdl_leech,
 )
 from bot.modules.atri_ai import atri_accept_message, atri_message
 from bot.modules.atri_free_tools import atri_free_tools_message
-from bot.modules.atri_media_direct import media_direct
 from bot.modules.atri_web_tools import atri_tools_message, sync_bot_command_menu
 
 from .commands.core import log, ping, start
 from .commands.system import bot_stats
+from .commands.transfers import (
+    gallery_dl,
+    gallery_dl_leech,
+    jd_leech,
+    jd_mirror,
+    leech,
+    media_direct,
+    mirror,
+    nzb_leech,
+    nzb_mirror,
+    qb_leech,
+    qb_mirror,
+    ytdl,
+    ytdl_leech,
+)
 from .registry import HandlerRegistry
 
 
@@ -130,8 +132,9 @@ def _callback(
 def register_core_routes(registry: HandlerRegistry) -> None:
     """Register each business callback under one explicit v2 owner.
 
-    Most business implementations are migrated incrementally. Handler ownership
-    is already native v2 and never calls ``bot.core.handlers.add_handlers``.
+    Handler ownership is native v2 and never calls
+    ``bot.core.handlers.add_handlers``. Long-running transfer entrypoints are
+    also native v2 wrappers and use the supervised task registry.
     """
 
     _message(registry, "auth.authorize", authorize, BotCommands.AuthorizeCommand, CustomFilters.sudo)
