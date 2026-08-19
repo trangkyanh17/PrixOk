@@ -4,20 +4,39 @@ from pyrogram import filters
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 
 from bot.modules import atri_command_ui as command_ui
+from bot.modules import atri_unified_menu as unified_menu
 
 from .registry import HandlerRegistry
+
+
+def register_atri_unified_menu_routes(registry: HandlerRegistry) -> None:
+    """Give the v2 runtime explicit ownership of unified menu/help routes."""
+
+    registry.add(
+        MessageHandler(
+            unified_menu.unified_menu_command,
+            filters=filters.command(list(unified_menu.HUB_COMMANDS)),
+        ),
+        group=-21,
+        route_id="atri.unified_menu.command",
+    )
+    registry.add(
+        CallbackQueryHandler(
+            unified_menu.unified_menu_callback,
+            filters=filters.regex(r"^aucm:"),
+        ),
+        group=-21,
+        route_id="atri.unified_menu.callback",
+    )
 
 
 def register_atri_command_ui_routes(registry: HandlerRegistry) -> None:
     """Register the non-overlapping Atri Command UI routes for v2.
 
     The legacy ``add_atri_command_ui_handlers`` registrar also owns ``/menu``
-    and ``/amenu``.  In v2 those commands are owned exclusively by the unified
+    and ``/amenu``. In v2 those commands are owned exclusively by the unified
     command center (group -21), so registering the legacy command-center entry
     point would create a second command owner in group -20.
-
-    The remaining command UI routes are still useful and are registered here
-    explicitly so every route has one deterministic owner.
     """
 
     command_ui._init_notes_sync()
