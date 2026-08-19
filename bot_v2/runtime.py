@@ -80,7 +80,8 @@ async def _start_application_services() -> None:
     from bot.helper.ext_utils.files_utils import clean_all
     from bot.helper.ext_utils.telegraph_helper import telegraph
     from bot.helper.mirror_leech_utils.rclone_utils.serve import rclone_serve_booter
-    from bot.modules import get_packages_version, initiate_search_tools, restart_notification
+    from bot.modules import initiate_search_tools, restart_notification
+    from .commands.system import refresh_package_versions
 
     await load_settings()
     await gather(TgClient.start_bot(), TgClient.start_user())
@@ -98,7 +99,7 @@ async def _start_application_services() -> None:
         jdownloader.boot(),
         clean_all(),
         initiate_search_tools(),
-        get_packages_version(),
+        refresh_package_versions(),
         restart_notification(),
         telegraph.create_account(),
         rclone_serve_booter(),
@@ -270,8 +271,6 @@ async def bootstrap() -> HandlerRegistry:
 
     _register_extension_handlers(registry)
 
-    # Import after all runtime patch layers so these modules capture patched
-    # Atri callback aliases rather than stale pre-patch references.
     from .atri_routes import (
         register_atri_command_ui_routes,
         register_atri_unified_menu_routes,
