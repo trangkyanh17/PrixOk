@@ -111,7 +111,7 @@ jobs:
           python-version: "3.13"
 
       - name: Compile Python source with production Python
-        run: python -m compileall -q bot scripts tests
+        run: python -m compileall -q bot bot_v2 scripts tests
 
   validate:
     name: validate
@@ -148,7 +148,7 @@ jobs:
           fi
 
       - name: Compile Python source
-        run: python -m compileall -q bot scripts tests
+        run: python -m compileall -q bot bot_v2 scripts tests
 
       - name: Validate shell scripts
         shell: bash
