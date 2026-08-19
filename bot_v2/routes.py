@@ -12,7 +12,6 @@ from bot.modules import (
     aioexecute,
     arg_usage,
     authorize,
-    bot_stats,
     cancel,
     cancel_all_buttons,
     cancel_all_update,
@@ -64,6 +63,7 @@ from bot.modules.atri_media_direct import media_direct
 from bot.modules.atri_web_tools import atri_tools_message, sync_bot_command_menu
 
 from .commands.core import log, ping, start
+from .commands.system import bot_stats
 from .registry import HandlerRegistry
 
 
