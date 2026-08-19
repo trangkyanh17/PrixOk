@@ -141,7 +141,7 @@ def _write_inventory(registry: HandlerRegistry) -> None:
     )
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".tmp")
-    body = "route_id\tgroup\thandler_type\tcallback\n"
+    body = "route_id\tgroup\thandler_type\tcallback\tfilter_fingerprint\n"
     lines = registry.inventory_lines()
     if lines:
         body += "\n".join(lines) + "\n"
