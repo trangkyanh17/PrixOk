@@ -31,6 +31,17 @@ class FakeFilter:
         self.case_sensitive = case_sensitive
 
 
+class FakeAndFilter:
+    def __init__(self, base, other):
+        self.base = base
+        self.other = other
+
+
+class FakePermissionFilter:
+    def __init__(self, name):
+        self.name = name
+
+
 class FakeClient:
     def __init__(self):
         self.added = []
@@ -75,6 +86,20 @@ def test_same_callback_with_different_filters_is_not_dropped():
     assert registry.add(help_, group=0, route_id="help") is True
     assert len(client.added) == 2
     assert len(registry.records) == 2
+
+
+def test_command_inventory_survives_compound_permission_filter():
+    client = FakeClient()
+    registry = HandlerRegistry(client)
+    compound = FakeAndFilter(FakeFilter("ping"), FakePermissionFilter("authorized"))
+
+    registry.add(MessageHandler(callback_a, compound), route_id="core.ping")
+
+    owners = registry.command_owners("ping")
+    assert len(owners) == 1
+    route_id, key = owners[0]
+    assert route_id == "core.ping"
+    assert key.commands == ("ping",)
 
 
 def test_same_callback_can_exist_in_different_handler_type_or_group():
@@ -124,7 +149,7 @@ def test_guarded_client_forces_extension_registration_through_registry():
     assert guarded.identity == "fake-client"
 
 
-def test_inventory_is_stable_countable_and_contains_filter_fingerprint():
+def test_inventory_is_stable_countable_and_contains_commands_and_filter():
     client = FakeClient()
     registry = HandlerRegistry(client)
 
@@ -147,8 +172,10 @@ def test_inventory_is_stable_countable_and_contains_filter_fingerprint():
     second = registry.inventory_lines()[1].split("\t")
     assert first[0] == "a"
     assert first[1] == "2"
+    assert first[4] == "ping"
     assert second[0] == "b"
     assert second[1] == "3"
-    assert len(first) == 5
+    assert second[4] == "help"
+    assert len(first) == 6
     assert len(first[-1]) == 20
     assert first[-1] != second[-1]
