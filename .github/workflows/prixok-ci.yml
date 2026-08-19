@@ -111,7 +111,58 @@ jobs:
           python-version: "3.13"
 
       - name: Compile Python source with production Python
-        run: python -m compileall -q bot scripts tests
+        run: python -m compileall -q bot bot_v2 scripts tests
+
+  python-v2-triple-pass:
+    name: python-v2-triple-pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build production Docker image
+        run: docker build --tag "prixok-v2-ci:${GITHUB_SHA}" .
+
+      - name: Run Python v2 and Mirror regression suite three times
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --entrypoint bash \
+            "prixok-v2-ci:${GITHUB_SHA}" \
+            -s <<'DOCKER_TEST'
+          set -euo pipefail
+          deps="$(mktemp -d /tmp/prixok-v2-deps.XXXXXX)"
+          cache="$(mktemp -d /tmp/prixok-v2-pip.XXXXXX)"
+          before="$(env -u PYTHONPATH mltbenv/bin/python -m pip freeze --all | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+
+          PIP_CACHE_DIR="$cache" \
+            mltbenv/bin/python -m pip install \
+              --disable-pip-version-check \
+              --no-input \
+              --no-compile \
+              --only-binary=:all: \
+              --target "$deps" \
+              -r requirements-lifecycle.txt
+
+          export PYTHONPATH="$deps"
+          export PYTHONNOUSERSITE=1
+          export PYTHONDONTWRITEBYTECODE=1
+
+          for pass in 1 2 3; do
+            echo "===== PRIXOK PYTHON V2 PASS ${pass}/3 ====="
+            mltbenv/bin/python -m pytest -q \
+              tests/test_bot_v2_*.py \
+              tests/test_gofile_uploader_v2_contract.py
+          done
+
+          after="$(env -u PYTHONPATH mltbenv/bin/python -m pip freeze --all | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+          test "$before" = "$after"
+          echo "PRIXOK_PYTHON_V2_TRIPLE_PASS=PASS"
+          echo "RUNTIME_PYTHON_ENV_UNCHANGED=PASS"
+          DOCKER_TEST
 
   validate:
     name: validate
@@ -148,7 +199,7 @@ jobs:
           fi
 
       - name: Compile Python source
-        run: python -m compileall -q bot scripts tests
+        run: python -m compileall -q bot bot_v2 scripts tests
 
       - name: Validate shell scripts
         shell: bash
