@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pyrogram import filters
-from pyrogram.handlers import MessageHandler
+from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 
 from bot_v2.registry import HandlerRegistry, make_handler_key
 
@@ -57,3 +57,22 @@ def test_equivalent_real_filters_dedupe_but_different_commands_do_not():
     assert len(registry.records) == 2
     assert len(registry.command_owners("ping")) == 1
     assert len(registry.command_owners("help")) == 1
+
+
+def test_real_regex_filters_have_stable_and_distinct_fingerprints():
+    first_a = CallbackQueryHandler(callback, filters=filters.regex(r"^first:"))
+    first_b = CallbackQueryHandler(callback, filters=filters.regex(r"^first:"))
+    second = CallbackQueryHandler(callback, filters=filters.regex(r"^second:"))
+
+    key_a = make_handler_key(first_a, -10)
+    key_b = make_handler_key(first_b, -10)
+    key_second = make_handler_key(second, -10)
+
+    assert key_a.filter_fingerprint == key_b.filter_fingerprint
+    assert key_a.filter_fingerprint != key_second.filter_fingerprint
+
+    registry = HandlerRegistry(FakeClient())
+    assert registry.add(first_a, group=-10) is True
+    assert registry.add(first_b, group=-10) is False
+    assert registry.add(second, group=-10) is True
+    assert len(registry.records) == 2
