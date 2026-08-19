@@ -141,7 +141,10 @@ def _write_inventory(registry: HandlerRegistry) -> None:
     )
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".tmp")
-    body = "route_id\tgroup\thandler_type\tcallback\tfilter_fingerprint\n"
+    body = (
+        "route_id\tgroup\thandler_type\tcallback\tcommands\t"
+        "filter_fingerprint\n"
+    )
     lines = registry.inventory_lines()
     if lines:
         body += "\n".join(lines) + "\n"
@@ -154,6 +157,35 @@ def _write_inventory(registry: HandlerRegistry) -> None:
         target,
         len(registry.records),
     )
+
+
+def _command_name(base: str) -> str:
+    suffix = str(getattr(Config, "CMD_SUFFIX", "") or "")
+    return f"{base}{suffix}"
+
+
+def _require_single_command_owner(
+    registry: HandlerRegistry,
+    command: str,
+    callback_suffix: str,
+) -> None:
+    owners = registry.command_owners(command)
+    if len(owners) != 1:
+        rendered = ", ".join(
+            f"{route_id or '-'}:{key.group}:{key.callback}"
+            for route_id, key in owners
+        ) or "none"
+        raise RuntimeError(
+            "PRIXOK_V2_ROUTE_CONTRACT_FAILED: command "
+            f"/{command} expected exactly one owner, got {len(owners)} [{rendered}]"
+        )
+
+    _, key = owners[0]
+    if not key.callback.endswith(callback_suffix):
+        raise RuntimeError(
+            "PRIXOK_V2_ROUTE_CONTRACT_FAILED: command "
+            f"/{command} owner={key.callback}, expected *{callback_suffix}"
+        )
 
 
 def _validate_route_contract(registry: HandlerRegistry) -> None:
@@ -170,17 +202,6 @@ def _validate_route_contract(registry: HandlerRegistry) -> None:
             "/help must be owned only by the unified command center"
         )
 
-    ping_callbacks = [
-        callback
-        for callback in callbacks
-        if callback.endswith("bot.modules.services:ping")
-    ]
-    if len(ping_callbacks) != 1:
-        raise RuntimeError(
-            "PRIXOK_V2_ROUTE_CONTRACT_FAILED: expected exactly one services.ping "
-            f"handler, got {len(ping_callbacks)}"
-        )
-
     command_center_callbacks = [
         callback
         for callback in callbacks
@@ -192,9 +213,21 @@ def _validate_route_contract(registry: HandlerRegistry) -> None:
             "/menu and /amenu must be owned only by atri_unified_menu"
         )
 
+    _require_single_command_owner(
+        registry,
+        _command_name("ping"),
+        "bot.modules.services:ping",
+    )
+    for base in ("help", "menu", "amenu"):
+        _require_single_command_owner(
+            registry,
+            _command_name(base),
+            "bot.modules.atri_unified_menu:unified_menu_command",
+        )
+
     LOGGER.info(
-        "PRIXOK_V2_ROUTE_CONTRACT_PASS ping_owner=1 legacy_help=0 "
-        "legacy_command_center=0 handlers=%s",
+        "PRIXOK_V2_ROUTE_CONTRACT_PASS ping=1 help=1 menu=1 amenu=1 "
+        "legacy_help=0 legacy_command_center=0 handlers=%s",
         len(registry.records),
     )
 
