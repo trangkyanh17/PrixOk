@@ -14,9 +14,10 @@ def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_v2_does_not_call_legacy_command_ui_registrar():
+def test_v2_does_not_call_legacy_atri_menu_registrars():
     runtime = _text(RUNTIME)
     assert "add_atri_command_ui_handlers" not in runtime
+    assert "add_atri_unified_menu_handlers" not in runtime
 
 
 def test_v2_never_registers_legacy_command_center_callback():
@@ -36,6 +37,7 @@ def test_v2_never_registers_legacy_command_center_callback():
             callbacks.append(callback.attr)
 
     assert "command_center" not in callbacks
+    assert "unified_menu_command" in callbacks
     assert {
         "command_search",
         "command_detail",
@@ -50,18 +52,21 @@ def test_menu_and_amenu_are_intentionally_single_owner_in_v2():
     command_ui = _text(COMMAND_UI)
     atri_routes = _text(ATRI_ROUTES)
 
-    # Legacy source contains the historical dual ownership.  v2 fixes it by
-    # retaining only the unified-menu registrar for these command names.
+    # Legacy source contains historical dual ownership. v2 does not call either
+    # legacy registrar and instead installs only the unified command callback
+    # for menu/amenu through one explicit route id.
     assert '_cmd("menu")' in unified
     assert '_cmd("amenu")' in unified
     assert 'MENU_COMMANDS = [_cmd("menu"), _cmd("amenu")]' in command_ui
     assert "command_center" not in atri_routes
+    assert 'route_id="atri.unified_menu.command"' in atri_routes
 
 
-def test_help_remains_owned_by_unified_menu_not_command_ui_v2_adapter():
+def test_help_remains_owned_by_unified_menu_not_legacy_help():
     unified = _text(UNIFIED_MENU)
     atri_routes = _text(ATRI_ROUTES)
 
     assert '_cmd("help")' in unified
+    assert "unified_menu.unified_menu_command" in atri_routes
     assert "bot_help" not in atri_routes
     assert "HelpCommand" not in atri_routes
