@@ -11,6 +11,7 @@ from bot.core.config_manager import Config
 from bot.core.telegram_manager import TgClient
 from bot.modules.atri_network_egress_guard import install_atri_early_network_guard
 
+from .atri_services import start_free_tools
 from .contracts import validate_route_contract
 from .registry import GuardedClient, HandlerRegistry
 from .tasks import SUPERVISOR
@@ -18,6 +19,7 @@ from .tasks import SUPERVISOR
 
 DEFAULT_LOCK_PATH = Path("/app/.atri-prixok-bot-v133.lock")
 DEFAULT_INVENTORY_PATH = Path("/app/atri_data/prixok_v2_handler_inventory.tsv")
+_BOOTSTRAP_CLAIMED = False
 
 
 class RuntimeLock:
@@ -61,6 +63,15 @@ class RuntimeLock:
         finally:
             self.handle.close()
             self.handle = None
+
+
+def claim_bootstrap_once() -> None:
+    global _BOOTSTRAP_CLAIMED
+    if _BOOTSTRAP_CLAIMED:
+        raise RuntimeError(
+            "PRIXOK_V2_BOOTSTRAP_DUPLICATE: bootstrap may run only once per process"
+        )
+    _BOOTSTRAP_CLAIMED = True
 
 
 async def _start_application_services() -> None:
@@ -160,6 +171,7 @@ def _write_inventory(registry: HandlerRegistry) -> None:
 async def bootstrap() -> HandlerRegistry:
     """Boot business services and install the v2 Telegram route graph once."""
 
+    claim_bootstrap_once()
     install_atri_early_network_guard()
     await _start_application_services()
 
@@ -169,7 +181,6 @@ async def bootstrap() -> HandlerRegistry:
         add_capability_runtime_handlers,
         install_capability_runtime,
     )
-    from bot.modules.atri_free_tools import start_free_tools
     from bot.modules.atri_message_idempotency_v1672 import (
         install_atri_message_idempotency_v1672,
     )
@@ -206,10 +217,7 @@ async def bootstrap() -> HandlerRegistry:
     register_atri_unified_menu_routes(registry)
     register_atri_command_ui_routes(registry)
     register_core_routes(registry)
-    SUPERVISOR.spawn(
-        start_free_tools(guarded),
-        name="prixok-v2-free-tools",
-    )
+    await start_free_tools(guarded)
     add_capability_runtime_handlers(guarded)
     install_atri_system_post_import_guard()
     add_v150_shadow_handlers(guarded)
