@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable
@@ -14,6 +15,7 @@ class HandlerKey:
     group: int
     handler_type: str
     callback: str
+    filter_fingerprint: str
 
 
 def _callable_name(callback: Any) -> str:
@@ -30,6 +32,107 @@ def _callable_name(callback: Any) -> str:
     return f"{module}:{qualname}"
 
 
+def _stable_value(value: Any, seen: set[int]) -> str:
+    """Build a deterministic structural representation for handler filters.
+
+    Kurigram filter objects are small object graphs (command metadata, regex
+    patterns and AND/OR operands).  Using ``repr(filter)`` directly is unsafe
+    because some reprs include memory addresses.  A structural representation
+    lets v2 distinguish the same callback bound to different filters while
+    still suppressing a semantically repeated registration.
+    """
+
+    if value is None:
+        return "none"
+    if isinstance(value, (bool, int, float, str, bytes)):
+        return repr(value)
+    if isinstance(value, partial):
+        return (
+            "partial("
+            + _callable_name(value.func)
+            + ",args="
+            + _stable_value(value.args, seen)
+            + ",keywords="
+            + _stable_value(value.keywords or {}, seen)
+            + ")"
+        )
+    if callable(value):
+        return "callable:" + _callable_name(value)
+
+    marker = id(value)
+    if marker in seen:
+        return f"cycle:{value.__class__.__module__}:{value.__class__.__qualname__}"
+
+    if isinstance(value, dict):
+        seen.add(marker)
+        try:
+            items = sorted(
+                (
+                    _stable_value(key, seen),
+                    _stable_value(item, seen),
+                )
+                for key, item in value.items()
+            )
+            return "dict{" + ",".join(f"{key}:{item}" for key, item in items) + "}"
+        finally:
+            seen.discard(marker)
+
+    if isinstance(value, (set, frozenset)):
+        seen.add(marker)
+        try:
+            items = sorted(_stable_value(item, seen) for item in value)
+            return value.__class__.__name__ + "{" + ",".join(items) + "}"
+        finally:
+            seen.discard(marker)
+
+    if isinstance(value, (list, tuple)):
+        seen.add(marker)
+        try:
+            items = [_stable_value(item, seen) for item in value]
+            return value.__class__.__name__ + "[" + ",".join(items) + "]"
+        finally:
+            seen.discard(marker)
+
+    attrs: dict[str, Any] = {}
+    try:
+        attrs.update(vars(value))
+    except TypeError:
+        pass
+
+    for cls in value.__class__.__mro__:
+        slots = getattr(cls, "__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        for slot in slots:
+            if slot in {"__dict__", "__weakref__"} or slot in attrs:
+                continue
+            try:
+                attrs[slot] = getattr(value, slot)
+            except Exception:
+                continue
+
+    class_name = f"{value.__class__.__module__}:{value.__class__.__qualname__}"
+    if not attrs:
+        return class_name
+
+    seen.add(marker)
+    try:
+        parts = [
+            f"{name}={_stable_value(attrs[name], seen)}"
+            for name in sorted(attrs)
+            if not name.startswith("__")
+        ]
+        return class_name + "(" + ",".join(parts) + ")"
+    finally:
+        seen.discard(marker)
+
+
+def _filter_fingerprint(handler: Any) -> str:
+    value = getattr(handler, "filters", None)
+    structural = _stable_value(value, set())
+    return hashlib.sha256(structural.encode("utf-8")).hexdigest()[:20]
+
+
 def make_handler_key(handler: Any, group: int) -> HandlerKey:
     callback = getattr(handler, "callback", None)
     if callback is None:
@@ -43,16 +146,17 @@ def make_handler_key(handler: Any, group: int) -> HandlerKey:
         group=int(group),
         handler_type=handler_type,
         callback=_callable_name(callback),
+        filter_fingerprint=_filter_fingerprint(handler),
     )
 
 
 class HandlerRegistry:
     """Single owner for every Telegram handler registered by the v2 runtime.
 
-    Pyrogram/Kurigram permits the same callback to be registered repeatedly. The
-    legacy runtime accumulated registrations from several bootstrap functions,
-    which makes duplicate-response bugs hard to reason about. This registry
-    makes registration idempotent and exposes a deterministic inventory.
+    Registration identity includes group, handler type, callback and filter
+    semantics.  Therefore exact duplicates are suppressed without accidentally
+    deleting a legitimate second route that reuses the same callback under a
+    different command/filter.
     """
 
     def __init__(self, client: Any, *, logger: Any | None = None) -> None:
@@ -86,10 +190,11 @@ class HandlerRegistry:
             if self.logger is not None:
                 self.logger.warning(
                     "PRIXOK_V2_HANDLER_DUPLICATE_BLOCKED "
-                    "group=%s handler=%s callback=%s route=%s",
+                    "group=%s handler=%s callback=%s filter=%s route=%s",
                     key.group,
                     key.handler_type,
                     key.callback,
+                    key.filter_fingerprint,
                     route_id or "-",
                 )
             if route_id:
@@ -105,10 +210,11 @@ class HandlerRegistry:
         if self.logger is not None:
             self.logger.info(
                 "PRIXOK_V2_HANDLER_REGISTERED "
-                "group=%s handler=%s callback=%s route=%s",
+                "group=%s handler=%s callback=%s filter=%s route=%s",
                 key.group,
                 key.handler_type,
                 key.callback,
+                key.filter_fingerprint,
                 route_id or "-",
             )
         return True
@@ -127,6 +233,7 @@ class HandlerRegistry:
                         str(key.group),
                         key.handler_type,
                         key.callback,
+                        key.filter_fingerprint,
                     )
                 )
             )
@@ -144,8 +251,6 @@ class GuardedClient:
 
     def add_handler(self, handler: Any, group: int = 0):
         self._registry.add(handler, group=group)
-        # Preserve the normal Pyrogram/Kurigram compatibility shape even when
-        # the registry suppresses an exact duplicate registration.
         return handler, group
 
     def __getattr__(self, name: str) -> Any:
