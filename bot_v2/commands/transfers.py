@@ -26,13 +26,20 @@ def _chat_id(message) -> int:
 def _spawn(operation, *, route: str, message) -> None:
     chat_id = _chat_id(message)
     message_id = _message_id(message)
+    claim = f"transfer:{route}:{chat_id}:{message_id}"
     task_name = f"prixok-v2:{route}:{chat_id}:{message_id}"
-    SUPERVISOR.spawn(operation.new_event(), name=task_name)
+    task = SUPERVISOR.spawn_once(
+        operation.new_event(),
+        name=task_name,
+        claim=claim,
+        ttl=600.0,
+    )
     LOGGER.info(
-        "PRIXOK_V2_TRANSFER_DISPATCH route=%s chat=%s message=%s",
+        "PRIXOK_V2_TRANSFER_DISPATCH route=%s chat=%s message=%s accepted=%s",
         route,
         chat_id,
         message_id,
+        int(task is not None),
     )
 
 
