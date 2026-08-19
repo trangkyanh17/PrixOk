@@ -11,6 +11,7 @@ from bot.core.config_manager import Config
 from bot.core.telegram_manager import TgClient
 from bot.modules.atri_network_egress_guard import install_atri_early_network_guard
 
+from .contracts import validate_route_contract
 from .registry import GuardedClient, HandlerRegistry
 
 
@@ -19,11 +20,7 @@ DEFAULT_INVENTORY_PATH = Path("/app/atri_data/prixok_v2_handler_inventory.tsv")
 
 
 class RuntimeLock:
-    """Hold the same singleton lock as production v1 for the whole process.
-
-    v2 must never run beside the legacy Telegram worker. Reusing the existing
-    lock path gives a hard mutual-exclusion boundary during migration.
-    """
+    """Hold the same singleton lock as production v1 for the whole process."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -81,6 +78,7 @@ async def _start_application_services() -> None:
     from bot.helper.ext_utils.telegraph_helper import telegraph
     from bot.helper.mirror_leech_utils.rclone_utils.serve import rclone_serve_booter
     from bot.modules import initiate_search_tools, restart_notification
+
     from .commands.system import refresh_package_versions
 
     await load_settings()
@@ -158,79 +156,6 @@ def _write_inventory(registry: HandlerRegistry) -> None:
     )
 
 
-def _command_name(base: str) -> str:
-    suffix = str(getattr(Config, "CMD_SUFFIX", "") or "")
-    return f"{base}{suffix}"
-
-
-def _require_single_command_owner(
-    registry: HandlerRegistry,
-    command: str,
-    callback_suffix: str,
-) -> None:
-    owners = registry.command_owners(command)
-    if len(owners) != 1:
-        rendered = ", ".join(
-            f"{route_id or '-'}:{key.group}:{key.callback}"
-            for route_id, key in owners
-        ) or "none"
-        raise RuntimeError(
-            "PRIXOK_V2_ROUTE_CONTRACT_FAILED: command "
-            f"/{command} expected exactly one owner, got {len(owners)} [{rendered}]"
-        )
-
-    _, key = owners[0]
-    if not key.callback.endswith(callback_suffix):
-        raise RuntimeError(
-            "PRIXOK_V2_ROUTE_CONTRACT_FAILED: command "
-            f"/{command} owner={key.callback}, expected *{callback_suffix}"
-        )
-
-
-def _validate_route_contract(registry: HandlerRegistry) -> None:
-    callbacks = [key.callback for _, key in registry.records]
-
-    legacy_help = [
-        callback
-        for callback in callbacks
-        if callback.endswith("bot.modules.help:bot_help")
-    ]
-    if legacy_help:
-        raise RuntimeError(
-            "PRIXOK_V2_ROUTE_CONTRACT_FAILED: legacy bot_help registered; "
-            "/help must be owned only by the unified command center"
-        )
-
-    command_center_callbacks = [
-        callback
-        for callback in callbacks
-        if callback.endswith("bot.modules.atri_command_ui:command_center")
-    ]
-    if command_center_callbacks:
-        raise RuntimeError(
-            "PRIXOK_V2_ROUTE_CONTRACT_FAILED: legacy command_center registered; "
-            "/menu and /amenu must be owned only by atri_unified_menu"
-        )
-
-    _require_single_command_owner(
-        registry,
-        _command_name("ping"),
-        "bot_v2.commands.core:ping",
-    )
-    for base in ("help", "menu", "amenu"):
-        _require_single_command_owner(
-            registry,
-            _command_name(base),
-            "bot.modules.atri_unified_menu:unified_menu_command",
-        )
-
-    LOGGER.info(
-        "PRIXOK_V2_ROUTE_CONTRACT_PASS ping=1 help=1 menu=1 amenu=1 "
-        "legacy_help=0 legacy_command_center=0 handlers=%s",
-        len(registry.records),
-    )
-
-
 async def bootstrap() -> HandlerRegistry:
     """Boot business services and install the v2 Telegram route graph once."""
 
@@ -291,7 +216,7 @@ async def bootstrap() -> HandlerRegistry:
 
     install_atri_runtime_hardening_v1671()
 
-    _validate_route_contract(registry)
+    validate_route_contract(registry)
     _write_inventory(registry)
 
     from bot.modules.atri_tools.code_plugins import (
