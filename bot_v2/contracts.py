@@ -131,8 +131,6 @@ def validate_route_contract(registry: HandlerRegistry) -> None:
 
     assert_no_duplicate_message_commands(registry)
 
-    # Every command and alias declared by the legacy public BotCommands surface
-    # must have exactly one v2 MessageHandler owner at runtime.
     declared = all_declared_bot_commands()
     for command in declared:
         require_single_message_command_owner(registry, command)
@@ -141,6 +139,7 @@ def validate_route_contract(registry: HandlerRegistry) -> None:
         (BotCommands.StartCommand, "bot_v2.commands.core:start"),
         (BotCommands.LogCommand, "bot_v2.commands.core:log"),
         (BotCommands.PingCommand, "bot_v2.commands.core:ping"),
+        (BotCommands.RestartCommand, "bot_v2.commands.restart:restart_bot"),
         (BotCommands.StatsCommand, "bot_v2.commands.system:bot_stats"),
         (BotCommands.MirrorCommand, "bot_v2.commands.transfers:mirror"),
         (BotCommands.QbMirrorCommand, "bot_v2.commands.transfers:qb_mirror"),
@@ -171,7 +170,7 @@ def validate_route_contract(registry: HandlerRegistry) -> None:
 
     LOGGER.info(
         "PRIXOK_V2_ROUTE_CONTRACT_PASS declared_commands=%s unique=1 "
-        "native_transfers=13 help=1 menu=1 amenu=1 "
+        "native_restart=1 native_transfers=13 help=1 menu=1 amenu=1 "
         "legacy_help=0 legacy_command_center=0 handlers=%s",
         len(declared),
         len(registry.records),
