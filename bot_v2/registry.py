@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable
@@ -71,7 +72,7 @@ def _stable_value(value: Any, seen: set[int]) -> str:
             + _stable_value(value.keywords or {}, seen)
             + ")"
         )
-    if callable(value):
+    if inspect.isfunction(value) or inspect.ismethod(value) or inspect.isbuiltin(value):
         return "callable:" + _callable_name(value)
 
     marker = id(value)
