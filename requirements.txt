@@ -48,4 +48,4 @@ playwright
 
 mcp>=2,<3
 uv
-sentry-sdk>=2,<3
+sentry-sdk>=2.67.1,<3
