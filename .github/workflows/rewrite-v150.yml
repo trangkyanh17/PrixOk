@@ -139,7 +139,7 @@ jobs:
             printf "READY\n" >"$tmp"
             wait_for_log_pattern "$tmp" READY 1
           '
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.23.x'
           cache: false
